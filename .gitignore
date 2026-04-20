@@ -1,0 +1,24 @@
+# Dependencies and generated build output
+node_modules
+dist
+apps/*/dist
+apps/web/.vite
+coverage
+
+# Local environment files can contain passwords, cookie secrets, and hosting keys.
+.env
+.env.*
+!.env.example
+
+# Local machine noise
+.DS_Store
+*.log
+.codex
+
+# Large generated map cache
+apps/api/offline-imagery-cache
+
+# Local spreadsheet plans may contain real farm details. Keep examples/templates
+# tracked separately from local working data.
+demo data/*.xlsx
+demo data/*.ods
