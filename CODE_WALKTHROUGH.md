@@ -1,11 +1,11 @@
-# FarmMan Code Walkthrough
+# Farmfield Valley Code Walkthrough
 
 This document explains how the prototype is put together for someone who is new
 to the code. It is meant to be read before making changes.
 
 ## What The App Does
 
-FarmMan is a local-first prototype for planning vegetable farm work on a map.
+Farmfield Valley is a local-first prototype for planning vegetable farm work on a map.
 The core idea is:
 
 1. Draw the farm layout on aerial imagery.

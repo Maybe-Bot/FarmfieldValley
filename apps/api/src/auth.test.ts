@@ -18,7 +18,7 @@ test("setSessionCookie includes HttpOnly and SameSite attributes", () => {
   } as never, "session-token");
 
   const cookie = headers.get("Set-Cookie") ?? "";
-  assert.match(cookie, /farmman_session=session-token/);
+  assert.match(cookie, /farmfield_valley_session=session-token/);
   assert.match(cookie, /HttpOnly/);
   assert.match(cookie, /SameSite=Lax/);
 });

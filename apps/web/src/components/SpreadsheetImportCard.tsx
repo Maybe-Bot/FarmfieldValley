@@ -22,6 +22,7 @@ const templateHeaders = [
   "Catalog number",
   "Start date",
   "Plant count",
+  "Bed length (ft)",
   "Transplant date",
   "Tray count",
   "Cells per tray",
@@ -30,11 +31,53 @@ const templateHeaders = [
   "Row spacing",
   "Rows per bed",
   "Dead at frost (y/n)",
+  "Bed cover (plastic/bare)",
   "Field",
   "Block",
   "Bed",
   "Notes"
 ];
+
+const templateExampleRow = [
+  "Johnny's",
+  "Lettuce",
+  "Salanova Green",
+  "2712G",
+  "2026-03-15",
+  "256",
+  "",
+  "2026-04-20",
+  "2",
+  "128",
+  "55",
+  "10",
+  "12",
+  "4",
+  "n",
+  "bare",
+  "East Field",
+  "B1",
+  "Bed 1",
+  "Example row: replace field, block, and bed names with names already on your map."
+];
+
+function csvCell(value: string) {
+  return `"${value.replace(/"/g, '""')}"`;
+}
+
+function downloadTemplate() {
+  const csv = [
+    templateHeaders.map(csvCell).join(","),
+    templateExampleRow.map(csvCell).join(",")
+  ].join("\n");
+  const blob = new Blob([csv], { type: "text/csv;charset=utf-8" });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = "farmfield-valley-planting-import-template.csv";
+  link.click();
+  URL.revokeObjectURL(url);
+}
 
 // Planner-facing spreadsheet importer. It intentionally supports only one
 // strict planting-plan template so users can prepare predictable data before upload.
@@ -60,7 +103,10 @@ export function SpreadsheetImportCard({ onImported }: { onImported: () => Promis
         contentBase64
       });
       await onImported();
-      setStatus(`Imported ${result.importedPlantings} planting${result.importedPlantings === 1 ? "" : "s"} from ${result.parsedRows} parsed row${result.parsedRows === 1 ? "" : "s"}.`);
+      const incompleteMessage = result.incompleteRows > 0
+        ? ` ${result.incompleteRows} row${result.incompleteRows === 1 ? "" : "s"} need manual completion.`
+        : "";
+      setStatus(`Imported ${result.importedPlantings} planting${result.importedPlantings === 1 ? "" : "s"} from ${result.parsedRows} parsed row${result.parsedRows === 1 ? "" : "s"}.${incompleteMessage}`);
     } catch (error) {
       setStatus(error instanceof Error ? error.message : "Spreadsheet import failed.");
     } finally {
@@ -75,6 +121,11 @@ export function SpreadsheetImportCard({ onImported }: { onImported: () => Promis
         Strict prototype importer: use the exact header row below. It imports planting plans and seed records only, maps rows to existing fields/blocks/beds, and replaces the previous spreadsheet import for this farm.
       </p>
       <form className="form-grid" onSubmit={(event) => void importSpreadsheet(event)}>
+        <div className="button-row full-span">
+          <button type="button" className="secondary-button" onClick={downloadTemplate}>
+            Download CSV template
+          </button>
+        </div>
         <label className="full-span">
           <span>Spreadsheet file</span>
           <input
@@ -89,7 +140,7 @@ export function SpreadsheetImportCard({ onImported }: { onImported: () => Promis
         <div className="instruction-box full-span">
           <strong>Required header row:</strong>
           <code className="template-header-line">{templateHeaders.join(",")}</code>
-          Dates must be YYYY-MM-DD. Spacing numbers are inches. Leave Transplant date, Tray count, and Cells per tray blank for direct-seeded crops. Bed may be blank, but Field and Block must match existing map names.
+          Dates must be YYYY-MM-DD. Spacing numbers are inches. Bed length is feet. Bed cover may be blank, plastic, or bare. For direct-seeded crops, you can leave Plant count blank and fill in Bed length instead. Leave Transplant date, Tray count, and Cells per tray blank for direct-seeded crops. If important cells are blank, the row still imports with a red review marker so you can edit it later.
         </div>
         {status && <p className="muted full-span"><strong>{status}</strong></p>}
         <button className="primary-button full-span" disabled={importing || !selectedFile}>

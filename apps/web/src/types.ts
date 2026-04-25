@@ -124,6 +124,10 @@ export type Planting = {
   seedName: string | null;
   title: string;
   status: string;
+  intendedFieldId: number | null;
+  intendedFieldName: string | null;
+  intendedBlockId: number | null;
+  intendedBlockName: string | null;
   intendedBedId: number | null;
   intendedBedName: string | null;
   taskFlowTemplateId: number | null;
@@ -133,6 +137,13 @@ export type Planting = {
   bedLengthUsedM: number | null;
   trayLocation: string | null;
   trayCount: number | null;
+  cellsPerTray: number | null;
+  daysToHarvest: number | null;
+  fieldSpacingInRow: number | null;
+  rowSpacing: number | null;
+  rowsPerBed: number | null;
+  deadAtFrost: boolean | null;
+  bedCover: string | null;
   notes: string | null;
   plannedSowDate: string | null;
   plannedTransplantDate: string | null;

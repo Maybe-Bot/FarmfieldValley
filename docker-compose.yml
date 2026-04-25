@@ -1,14 +1,14 @@
 services:
   postgres:
     image: postgis/postgis:16-3.4
-    container_name: farmman-postgres
+    container_name: farmfield-valley-postgres
     restart: unless-stopped
     ports:
       - "5432:5432"
     environment:
-      POSTGRES_DB: farmman
-      POSTGRES_USER: farmman
-      POSTGRES_PASSWORD: farmman
+      POSTGRES_DB: farmfield_valley
+      POSTGRES_USER: farmfield_valley
+      POSTGRES_PASSWORD: farmfield_valley
     volumes:
       - postgres_data:/var/lib/postgresql/data
 

@@ -47,15 +47,15 @@ export const config = {
   isProduction: process.env.NODE_ENV === "production",
   port: Number(process.env.PORT ?? 4000),
   databaseUrl:
-    process.env.DATABASE_URL ?? "postgres://farmman:farmman@localhost:5432/farmman",
+    process.env.DATABASE_URL ?? "postgres://farmfield_valley:farmfield_valley@localhost:5432/farmfield_valley",
   corsAllowedOrigins: parseCsv(process.env.CORS_ALLOWED_ORIGINS, [
     "http://localhost:5173",
     "http://127.0.0.1:5173"
   ]),
   csrfSecret:
     process.env.CSRF_SECRET ??
-    (process.env.NODE_ENV === "production" ? "" : "farmman-local-dev-csrf-secret"),
-  sessionCookieName: process.env.SESSION_COOKIE_NAME ?? "farmman_session",
+    (process.env.NODE_ENV === "production" ? "" : "farmfield-valley-local-dev-csrf-secret"),
+  sessionCookieName: process.env.SESSION_COOKIE_NAME ?? "farmfield_valley_session",
   sessionMaxAgeDays: Number(process.env.SESSION_MAX_AGE_DAYS ?? 14),
   sessionCookieSecure: parseBoolean(process.env.SESSION_COOKIE_SECURE, process.env.NODE_ENV === "production"),
   sessionCookieSameSite: parseSameSite(process.env.SESSION_COOKIE_SAMESITE),

@@ -2,7 +2,7 @@
  * Creates sample data for local demos.
  *
  * This script is useful for a fresh local demo database. It intentionally
- * truncates user and farm data, so it requires FARMMAN_CONFIRM_DESTRUCTIVE_SEED
+ * truncates user and farm data, so it requires FARMFIELD_VALLEY_CONFIRM_DESTRUCTIVE_SEED
  * unless the target database appears empty.
  */
 import { pool } from "../db";
@@ -29,7 +29,7 @@ export async function databaseHasExistingData(client: PoolClient) {
 }
 
 export async function assertDestructiveSeedAllowed(client: PoolClient) {
-  if (process.env.FARMMAN_CONFIRM_DESTRUCTIVE_SEED === "yes") {
+  if (process.env.FARMFIELD_VALLEY_CONFIRM_DESTRUCTIVE_SEED === "yes") {
     return;
   }
 
@@ -40,7 +40,7 @@ export async function assertDestructiveSeedAllowed(client: PoolClient) {
   throw new Error(
     "Refusing to run db:seed because this database already has user/farm data. " +
     "This seed script truncates most tables. If you intentionally want to wipe and reload demo data, run: " +
-    "FARMMAN_CONFIRM_DESTRUCTIVE_SEED=yes npm run db:seed"
+    "FARMFIELD_VALLEY_CONFIRM_DESTRUCTIVE_SEED=yes npm run db:seed"
   );
 }
 

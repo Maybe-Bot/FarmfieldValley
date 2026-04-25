@@ -1,5 +1,5 @@
 /*
- * Main stylesheet for the FarmMan frontend.
+ * Main stylesheet for the Farmfield Valley frontend.
  *
  * The app uses CSS variables for colors so light/dark themes can swap values
  * without duplicating every component style. Layout styles, map controls, forms,
@@ -749,6 +749,7 @@ textarea {
   font-size: 0.82rem;
   text-transform: capitalize;
   background: #e8eadf;
+  color: #1e241c;
 }
 
 .status-planned,
@@ -788,6 +789,31 @@ textarea {
 .table-subtle {
   color: var(--table-subtle);
   font-size: 0.9rem;
+}
+
+.crop-name-with-review,
+.field-label-with-review,
+.detail-term-with-review {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+}
+
+.review-square {
+  display: inline-flex;
+  width: 0.78rem;
+  height: 0.78rem;
+  border-radius: 4px;
+  flex: 0 0 auto;
+  box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.18);
+}
+
+.review-square-major {
+  background: #d33a2c;
+}
+
+.review-square-minor {
+  background: #f0c541;
 }
 
 .two-col {
@@ -1055,6 +1081,15 @@ textarea {
 
 .nested-table {
   margin: 0;
+}
+
+.plan-select-cell {
+  width: 2.5rem;
+}
+
+.plan-select-cell input {
+  width: 1rem;
+  height: 1rem;
 }
 
 .link-button {

@@ -50,7 +50,7 @@ export function registerSpreadsheetImportRoutes(app: express.Express, deps: Spre
       throw new Error("Spreadsheet upload is too large for this prototype");
     }
 
-    const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "farmman-spreadsheet-"));
+    const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "farmfield-valley-spreadsheet-"));
     const tempFile = path.join(tempDir, `upload${extension}`);
     const client = await pool.connect();
 

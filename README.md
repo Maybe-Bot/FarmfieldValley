@@ -1,4 +1,4 @@
-# FarmMan Prototype
+# Farmfield Valley
 
 Local prototype for farm project management and annual crop planning.
 
@@ -74,7 +74,7 @@ The API runs on `http://localhost:4000`.
 
 The web app reads its backend URL from Vite's `VITE_API_BASE_URL`.
 
-For local development, this is optional because [api.ts](/home/name/Documents/Projects/FarmMan/apps/web/src/api.ts) defaults to:
+For local development, this is optional because [api.ts](/home/name/Documents/Projects/Farmfield Valley/apps/web/src/api.ts) defaults to:
 
 ```env
 VITE_API_BASE_URL=http://localhost:4000
@@ -110,14 +110,20 @@ The app has a strict crop-plan uploader in the Planning area. It accepts `.xlsx`
 `.ods`, or `.csv` files whose first row exactly matches this header:
 
 ```csv
-Seed supplier,Crop,Variety,Catalog number,Start date,Plant count,Transplant date,Tray count,Cells per tray,Days to harvest,Field spacing in row,Row spacing,Rows per bed,Dead at frost (y/n),Field,Block,Bed,Notes
+Seed supplier,Crop,Variety,Catalog number,Start date,Plant count,Transplant date,Tray count,Cells per tray,Days to harvest,Field spacing in row,Row spacing,Rows per bed,Dead at frost (y/n),Bed cover (plastic/bare),Field,Block,Bed,Notes
 ```
 
 Dates must use `YYYY-MM-DD`. Spacing numbers are inches. Leave `Transplant date`,
-`Tray count`, and `Cells per tray` blank for direct-seeded crops. `Field` and
-`Block` must match existing map names; `Bed` may be blank if the exact bed is not
-assigned yet. Each upload replaces the previous planting-spreadsheet import for
-that farm, but regular manually created plantings are left alone.
+`Tray count`, and `Cells per tray` blank for direct-seeded crops. `Bed cover
+(plastic/bare)` may be blank, `plastic`, or `bare`. `Field` and `Block` must
+match existing map names; `Bed` may be blank if the exact bed is not assigned
+yet. Each upload replaces the previous planting-spreadsheet import for that
+farm, but regular manually created plantings are left alone.
+
+Rows with missing essentials such as Crop, Start date, Plant count, Field, or
+Block are still imported. The crop plan shows a red review marker for major
+problems and a yellow marker for optional missing details; their notes list what
+must be filled in manually.
 
 ## Spreadsheet demo import
 
@@ -187,7 +193,7 @@ Do **not** run `npm run db:seed` on a database with real or beta-user data. The 
 If you intentionally want to wipe everything and reload the demo farms, run:
 
 ```bash
-FARMMAN_CONFIRM_DESTRUCTIVE_SEED=yes npm run db:seed
+FARMFIELD_VALLEY_CONFIRM_DESTRUCTIVE_SEED=yes npm run db:seed
 ```
 
 ## Offline map workflow

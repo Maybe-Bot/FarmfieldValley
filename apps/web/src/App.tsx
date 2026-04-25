@@ -1,5 +1,5 @@
 /**
- * Main React application for the FarmMan prototype.
+ * Main React application for the Farmfield Valley prototype.
  *
  * This file currently owns screen routing, map interaction, planning forms,
  * task-flow editing, settings, and many small UI panels. It is
@@ -7,7 +7,7 @@
  * extraction targets are the map sidebar cards, planting forms, task-flow
  * editor, settings panels, and reusable date/unit controls.
  */
-import { CSSProperties, FormEvent, useEffect, useMemo, useRef, useState } from "react";
+import { CSSProperties, FormEvent, ReactNode, useEffect, useMemo, useRef, useState } from "react";
 import { LatLngTuple } from "leaflet";
 import { MapContainer, Marker, Polygon, Polyline, TileLayer, Tooltip, useMap, useMapEvents } from "react-leaflet";
 import { api } from "./api";
@@ -89,8 +89,8 @@ const emptyDashboard: DashboardData = {
 };
 
 // Local storage keeps lightweight UI preferences on this browser only.
-const VIEW_STORAGE_KEY = "farmman-map-view";
-const SETTINGS_STORAGE_KEY = "farmman-settings";
+const VIEW_STORAGE_KEY = "farmfield-valley-map-view";
+const SETTINGS_STORAGE_KEY = "farmfield-valley-settings";
 
 // Default center is only a starting point; saved farm geometry can fit/zoom the map later.
 const DEFAULT_CENTER: LatLngTuple = [40.0448, -76.2662];
@@ -798,11 +798,192 @@ function addDaysToDateString(value: string | null, days: number) {
   return date.toISOString().slice(0, 10);
 }
 
+function daysBetweenDateStrings(startDate: string | null, endDate: string | null) {
+  if (!startDate || !endDate) {
+    return null;
+  }
+
+  const start = new Date(`${startDate.slice(0, 10)}T00:00:00Z`);
+  const end = new Date(`${endDate.slice(0, 10)}T00:00:00Z`);
+  if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime())) {
+    return null;
+  }
+
+  const days = Math.round((end.getTime() - start.getTime()) / 86400000);
+  return days > 0 ? days : null;
+}
+
 function plantingCropVarietyLabel(planting: Planting) {
   if (planting.seedName) {
     return planting.seedName;
   }
   return planting.varietyName ? `${planting.cropName} / ${planting.varietyName}` : planting.cropName;
+}
+
+type PlantingReviewSeverity = "major" | "minor";
+
+type PlantingReviewInfo = {
+  severity: PlantingReviewSeverity | null;
+  majorFields: Set<string>;
+  minorFields: Set<string>;
+  majorIssues: string[];
+  minorIssues: string[];
+};
+
+type PlantingPlanningInput = "initial" | "plantCount" | "bedLengthUsed" | "trayCount" | "cellsPerTray" | "seedCellCount" | "expectedTrayPlants" | "germinationRate" | "spacing" | "rowsPerBed" | "bed";
+type PlantingDateInput = "initial" | "plannedSowDate" | "plannedTransplantDate" | "daysToHarvest" | "expectedHarvestStart" | "expectedHarvestEnd";
+
+function issueListFromNotes(notes: string | null | undefined, prefix: string) {
+  const line = (notes ?? "").split(/\r?\n/).find((item) => item.startsWith(prefix));
+  if (!line) {
+    return [];
+  }
+  return line
+    .slice(prefix.length)
+    .replace(/\.$/, "")
+    .split(";")
+    .map((item) => item.trim())
+    .filter(Boolean);
+}
+
+function fieldsForImportIssue(issue: string) {
+  const lower = issue.toLowerCase();
+  if (lower.includes("plant count or bed length")) return ["plantCount", "bedLengthUsed"];
+  if (lower.includes("crop")) return ["crop"];
+  if (lower.includes("variety")) return ["variety"];
+  if (lower.includes("start date")) return ["plannedSowDate"];
+  if (lower.includes("bed length")) return ["bedLengthUsed"];
+  if (lower.includes("plant count")) return ["plantCount"];
+  if (lower.includes("field/block")) return ["field", "block"];
+  if (lower.includes("rows per bed")) return ["rowsPerBed"];
+  if (lower.includes("field spacing") || lower.includes("row spacing")) return ["spacing"];
+  if (lower.includes("field")) return ["field"];
+  if (lower.includes("block")) return ["block"];
+  if (lower.includes("bed cover")) return ["bedCover"];
+  if (lower.includes("bed")) return ["bed"];
+  if (lower.includes("transplant date")) return ["plannedTransplantDate"];
+  if (lower.includes("days to harvest")) return ["daysToHarvest"];
+  if (lower.includes("catalog")) return ["notes"];
+  if (lower.includes("dead at frost")) return ["deadAtFrost"];
+  return ["notes"];
+}
+
+function plantingFieldStillNeedsReview(planting: Planting, fieldName: string) {
+  if (fieldName === "crop") return planting.cropName === "Needs crop";
+  if (fieldName === "title") return planting.title.startsWith("Needs completion - ");
+  if (fieldName === "variety") return planting.varietyName == null;
+  if (fieldName === "plannedSowDate") return planting.plannedSowDate == null;
+  if (fieldName === "plannedTransplantDate") return planting.plannedTransplantDate == null;
+  if (fieldName === "expectedHarvestStart") return planting.expectedHarvestStart == null;
+  if (fieldName === "expectedHarvestEnd") return planting.expectedHarvestEnd == null;
+  if (fieldName === "plantCount") return planting.plantCount == null || planting.plantCount === 1;
+  if (fieldName === "bedLengthUsed") return planting.bedLengthUsedM == null;
+  if (fieldName === "field") return planting.intendedFieldId == null;
+  if (fieldName === "block") return planting.intendedBlockId == null;
+  if (fieldName === "bed") return planting.intendedBedId == null;
+  if (fieldName === "spacing") return planting.spacing == null;
+  if (fieldName === "rowsPerBed") return planting.rowsPerBed == null;
+  if (fieldName === "daysToHarvest") return planting.daysToHarvest == null;
+  if (fieldName === "deadAtFrost") return planting.deadAtFrost == null;
+  if (fieldName === "bedCover") return planting.bedCover == null;
+  return true;
+}
+
+function plantingReviewInfo(planting: Planting): PlantingReviewInfo {
+  const majorIssues = issueListFromNotes(planting.notes, "Needs manual completion: ");
+  const minorIssues = issueListFromNotes(planting.notes, "Optional fields to review: ");
+  const majorFields = new Set<string>();
+  const minorFields = new Set<string>();
+
+  for (const issue of majorIssues) {
+    fieldsForImportIssue(issue).forEach((field) => {
+      if (plantingFieldStillNeedsReview(planting, field)) {
+        majorFields.add(field);
+      }
+    });
+  }
+  for (const issue of minorIssues) {
+    fieldsForImportIssue(issue).forEach((field) => {
+      if (plantingFieldStillNeedsReview(planting, field)) {
+        minorFields.add(field);
+      }
+    });
+  }
+
+  if (planting.title.startsWith("Needs completion - ")) {
+    majorFields.add("title");
+  }
+  if (planting.cropName === "Needs crop") {
+    majorFields.add("crop");
+  }
+
+  return {
+    severity: majorFields.size > 0 ? "major" : minorFields.size > 0 ? "minor" : null,
+    majorFields,
+    minorFields,
+    majorIssues,
+    minorIssues
+  };
+}
+
+function PlantingReviewBadge({ severity, title }: { severity: PlantingReviewSeverity; title: string }) {
+  return <span className={`review-square review-square-${severity}`} title={title} aria-label={title} />;
+}
+
+function PlantingReviewMarker({ review }: { review: PlantingReviewInfo }) {
+  if (review.severity === "major") {
+    return <PlantingReviewBadge severity="major" title={`Major spreadsheet issue: ${review.majorIssues.join("; ") || "review needed"}`} />;
+  }
+  if (review.severity === "minor") {
+    return <PlantingReviewBadge severity="minor" title={`Optional spreadsheet info missing: ${review.minorIssues.join("; ") || "review suggested"}`} />;
+  }
+  return null;
+}
+
+function fieldReviewSeverity(review: PlantingReviewInfo, fieldName: string): PlantingReviewSeverity | null {
+  if (review.majorFields.has(fieldName)) return "major";
+  if (review.minorFields.has(fieldName)) return "minor";
+  return null;
+}
+
+function FieldLabel({
+  children,
+  review,
+  fieldName,
+  severityOverride
+}: {
+  children: ReactNode;
+  review: PlantingReviewInfo;
+  fieldName: string;
+  severityOverride?: PlantingReviewSeverity | null;
+}) {
+  const severity = severityOverride ?? fieldReviewSeverity(review, fieldName);
+  return (
+    <span className="field-label-with-review">
+      {children}
+      {severity && (
+        <PlantingReviewBadge
+          severity={severity}
+          title={severity === "major" ? "Important spreadsheet value needs correction" : "Optional spreadsheet value is missing"}
+        />
+      )}
+    </span>
+  );
+}
+
+function DetailTerm({ review, fieldName, children }: { review: PlantingReviewInfo; fieldName: string; children: ReactNode }) {
+  const severity = fieldReviewSeverity(review, fieldName);
+  return (
+    <dt className="detail-term-with-review">
+      <span>{children}</span>
+      {severity && (
+        <PlantingReviewBadge
+          severity={severity}
+          title={severity === "major" ? "Important spreadsheet value needs correction" : "Optional spreadsheet value is missing"}
+        />
+      )}
+    </dt>
+  );
 }
 
 // Map labels should stay short. Some internal/default zone names include "area"
@@ -977,9 +1158,10 @@ function App() {
   const [showPlannedPlantingsLayer, setShowPlannedPlantingsLayer] = useState(true);
   const [showActualPlacementsLayer, setShowActualPlacementsLayer] = useState(true);
   const [showTaskLayer, setShowTaskLayer] = useState(true);
-  const [showOtherFarmMaps, setShowOtherFarmMaps] = useState(true);
+  const [showOtherFarmMaps, setShowOtherFarmMaps] = useState(false);
   const [selectedMapWeekStart, setSelectedMapWeekStart] = useState(() => startOfWeekDate(todayDateInputValue()));
   const [taskListWeekStart, setTaskListWeekStart] = useState(() => startOfWeekDate(todayDateInputValue()));
+  const [selectedPlanPlantingIds, setSelectedPlanPlantingIds] = useState<number[]>([]);
   const [isSavingMapObject, setIsSavingMapObject] = useState(false);
   const [feedbackOpen, setFeedbackOpen] = useState(false);
   const [feedbackComment, setFeedbackComment] = useState("");
@@ -989,6 +1171,8 @@ function App() {
   const canPlan = session?.authenticated === true && session.user.role === "planner";
   const isAdmin = session?.authenticated === true && session.user.isAdmin;
   const isAuthenticated = session?.authenticated === true;
+  const canViewOtherFarmMaps = isAdmin;
+  const effectiveShowOtherFarmMaps = canViewOtherFarmMaps && showOtherFarmMaps;
 
   function recordActivity(action: string, details?: Record<string, unknown>) {
     recentActivityRef.current = [
@@ -1094,10 +1278,20 @@ function App() {
   }, [canPlan]);
 
   useEffect(() => {
+    if (!canViewOtherFarmMaps && showOtherFarmMaps) {
+      setShowOtherFarmMaps(false);
+    }
+  }, [canViewOtherFarmMaps, showOtherFarmMaps]);
+
+  useEffect(() => {
     if (editingPlantingId != null && editingPlantingId !== selectedPlantingId) {
       setEditingPlantingId(null);
     }
   }, [editingPlantingId, selectedPlantingId]);
+
+  useEffect(() => {
+    setSelectedPlanPlantingIds((current) => current.filter((id) => data.plantings.some((planting) => planting.id === id)));
+  }, [data.plantings]);
 
   useEffect(() => {
     recordActivity("view changed", { view });
@@ -1116,20 +1310,20 @@ function App() {
   }, [selection]);
 
   const visibleFields = useMemo(
-    () => showOtherFarmMaps ? data.fields : data.fields.filter((field) => field.farmId === data.farm?.id),
-    [data.fields, data.farm?.id, showOtherFarmMaps]
+    () => effectiveShowOtherFarmMaps ? data.fields : data.fields.filter((field) => field.farmId === data.farm?.id),
+    [data.fields, data.farm?.id, effectiveShowOtherFarmMaps]
   );
   const visibleBlocks = useMemo(
-    () => showOtherFarmMaps ? data.blocks : data.blocks.filter((block) => block.farmId === data.farm?.id),
-    [data.blocks, data.farm?.id, showOtherFarmMaps]
+    () => effectiveShowOtherFarmMaps ? data.blocks : data.blocks.filter((block) => block.farmId === data.farm?.id),
+    [data.blocks, data.farm?.id, effectiveShowOtherFarmMaps]
   );
   const visibleBlockZones = useMemo(
-    () => showOtherFarmMaps ? data.blockZones : data.blockZones.filter((zone) => zone.farmId === data.farm?.id),
-    [data.blockZones, data.farm?.id, showOtherFarmMaps]
+    () => effectiveShowOtherFarmMaps ? data.blockZones : data.blockZones.filter((zone) => zone.farmId === data.farm?.id),
+    [data.blockZones, data.farm?.id, effectiveShowOtherFarmMaps]
   );
   const visibleBeds = useMemo(
-    () => showOtherFarmMaps ? data.beds : data.beds.filter((bed) => bed.farmId === data.farm?.id),
-    [data.beds, data.farm?.id, showOtherFarmMaps]
+    () => effectiveShowOtherFarmMaps ? data.beds : data.beds.filter((bed) => bed.farmId === data.farm?.id),
+    [data.beds, data.farm?.id, effectiveShowOtherFarmMaps]
   );
   const ownFields = useMemo(
     () => data.fields.filter((field) => field.farmId === data.farm?.id),
@@ -1473,14 +1667,14 @@ function App() {
   }, [mapMode, bedLineSource, selectedBed, selectedBlockContext]);
 
   useEffect(() => {
-    if (showOtherFarmMaps || !selection) {
+    if (effectiveShowOtherFarmMaps || !selection) {
       return;
     }
 
     if (selectedMapItem && selectedMapItem.farmId !== data.farm?.id) {
       setSelection(null);
     }
-  }, [showOtherFarmMaps, selection, selectedMapItem, data.farm?.id]);
+  }, [effectiveShowOtherFarmMaps, selection, selectedMapItem, data.farm?.id]);
 
   async function submitFeedback(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -1512,7 +1706,7 @@ function App() {
         showPlannedPlantingsLayer,
         showActualPlacementsLayer,
         showTaskLayer,
-        showOtherFarmMaps
+        showOtherFarmMaps: effectiveShowOtherFarmMaps
       },
       browser: typeof window === "undefined" ? null : {
         url: window.location.href,
@@ -1572,6 +1766,36 @@ function App() {
       setMapNotice("Planting deleted.");
     } catch (err) {
       setMapNotice(err instanceof Error ? err.message : "Delete failed.");
+    }
+  }
+
+  async function deleteSelectedPlantings() {
+    if (!canPlan) {
+      setMapNotice("Planner access required.");
+      return;
+    }
+    if (selectedPlanPlantingIds.length === 0) {
+      setMapNotice("Select plantings to delete.");
+      return;
+    }
+
+    const selectedPlantings = data.plantings.filter((planting) => selectedPlanPlantingIds.includes(planting.id));
+    const confirmed = window.confirm(`Delete ${selectedPlantings.length} selected planting${selectedPlantings.length === 1 ? "" : "s"}?`);
+    if (!confirmed) {
+      return;
+    }
+
+    try {
+      setMapNotice("Deleting selected plantings...");
+      await Promise.all(selectedPlanPlantingIds.map((plantingId) => api.deletePlanting(plantingId)));
+      setSelectedPlanPlantingIds([]);
+      const remaining = data.plantings.filter((item) => !selectedPlanPlantingIds.includes(item.id));
+      setSelectedPlantingId(remaining[0]?.id ?? null);
+      await load(canPlan);
+      setView("plan");
+      setMapNotice("Selected plantings deleted.");
+    } catch (err) {
+      setMapNotice(err instanceof Error ? err.message : "Bulk delete failed.");
     }
   }
 
@@ -2336,7 +2560,7 @@ function App() {
   }
 
   if (sessionLoading) {
-    return <div className={`auth-shell theme-${themeMode}`}><div className="card auth-card"><h2>Loading</h2><p className="muted">Checking your FarmMan session.</p></div></div>;
+    return <div className={`auth-shell theme-${themeMode}`}><div className="card auth-card"><h2>Loading</h2><p className="muted">Checking your Farmfield Valley session.</p></div></div>;
   }
 
   if (!session?.authenticated) {
@@ -2368,7 +2592,7 @@ function App() {
     <div className={`app-shell theme-${themeMode}`}>
       <aside className="sidebar">
         <div>
-          <p className="eyebrow">FarmMan Prototype</p>
+          <p className="eyebrow">Farmfield Valley</p>
           <h1>{data.farm?.name ?? "Farm planner"}</h1>
           <p className="muted">Plan the season, record actual work, and shift future task timing automatically.</p>
         </div>
@@ -2960,14 +3184,16 @@ function App() {
                     />
                     <span>Tasks due this week</span>
                   </label>
-                  <label className="layer-toggle">
-                    <input
-                      type="checkbox"
-                      checked={showOtherFarmMaps}
-                      onChange={(event) => setShowOtherFarmMaps(event.target.checked)}
-                    />
-                    <span>Show other farms</span>
-                  </label>
+                  {canViewOtherFarmMaps && (
+                    <label className="layer-toggle">
+                      <input
+                        type="checkbox"
+                        checked={showOtherFarmMaps}
+                        onChange={(event) => setShowOtherFarmMaps(event.target.checked)}
+                      />
+                      <span>Show other farms</span>
+                    </label>
+                  )}
                 </div>
               </div>
             </div>
@@ -3364,10 +3590,23 @@ function App() {
         {view === "plan" && (
           <section className="content-grid split-grid">
             <div className="card">
-              <h2>Annual crop plan</h2>
+              <div className="section-header">
+                <div>
+                  <h2>Annual crop plan</h2>
+                  {canPlan && selectedPlanPlantingIds.length > 0 && (
+                    <p className="muted">{selectedPlanPlantingIds.length} selected</p>
+                  )}
+                </div>
+                {canPlan && selectedPlanPlantingIds.length > 0 && (
+                  <button type="button" className="danger-button compact-button" onClick={() => void deleteSelectedPlantings()}>
+                    Delete selected
+                  </button>
+                )}
+              </div>
               <table className="data-table">
                 <thead>
                   <tr>
+                    {canPlan && <th>Pick</th>}
                     <th>Planting</th>
                     <th>Status</th>
                     <th>Planned sow</th>
@@ -3382,38 +3621,58 @@ function App() {
                     .sort(([a], [b]) => b - a)
                     .map(([year, plantings]) => (
                       <tr key={year}>
-                        <td colSpan={7} className="table-year-cell">
+                        <td colSpan={canPlan ? 8 : 7} className="table-year-cell">
                           <details open={year >= Number(todayDateInputValue().slice(0, 4))}>
                             <summary>{year} crop plan ({plantings.length})</summary>
                             <table className="data-table nested-table">
                               <tbody>
-                                {plantings.map((planting) => (
-                                  <tr key={planting.id} onClick={() => { setSelectedPlantingId(planting.id); setView("planting"); }}>
-                                    <td>
-                                      <strong>{planting.title}</strong>
-                                      <div className="table-subtle">{planting.seedName ?? `${planting.cropName}${planting.varietyName ? ` / ${planting.varietyName}` : ""}`}</div>
-                                    </td>
-                                    <td><span className={`status-pill status-${planting.status}`}>{planting.status.replaceAll("_", " ")}</span></td>
-                                    <td>{formatDate(planting.plannedSowDate)}</td>
-                                    <td>{formatDate(planting.plannedTransplantDate)}</td>
-                                    <td>{formatDate(planting.expectedHarvestStart)} to {formatDate(planting.expectedHarvestEnd)}</td>
-                                    <td>{planting.intendedBedName ?? "—"}</td>
-                                    <td>
-                                      {canPlan ? (
-                                        <button
-                                          type="button"
-                                          className="danger-button compact-button"
-                                          onClick={(event) => {
-                                            event.stopPropagation();
-                                            void deletePlanting(planting.id);
-                                          }}
-                                        >
-                                          Delete
-                                        </button>
-                                      ) : "—"}
-                                    </td>
-                                  </tr>
-                                ))}
+                                {plantings.map((planting) => {
+                                  const review = plantingReviewInfo(planting);
+                                  const isSelected = selectedPlanPlantingIds.includes(planting.id);
+                                  return (
+                                    <tr key={planting.id} onClick={() => { setSelectedPlantingId(planting.id); setView("planting"); }}>
+                                      {canPlan && (
+                                        <td onClick={(event) => event.stopPropagation()} className="plan-select-cell">
+                                          <input
+                                            type="checkbox"
+                                            checked={isSelected}
+                                            aria-label={`Select ${planting.title}`}
+                                            onChange={(event) => {
+                                              const checked = event.target.checked;
+                                              setSelectedPlanPlantingIds((current) => checked ? [...current, planting.id] : current.filter((id) => id !== planting.id));
+                                            }}
+                                          />
+                                        </td>
+                                      )}
+                                      <td>
+                                        <strong>{planting.title.replace(/^Needs completion - /, "")}</strong>
+                                        <div className="table-subtle crop-name-with-review">
+                                          <PlantingReviewMarker review={review} />
+                                          <span>{planting.seedName ?? `${planting.cropName}${planting.varietyName ? ` / ${planting.varietyName}` : ""}`}</span>
+                                        </div>
+                                      </td>
+                                      <td><span className={`status-pill status-${planting.status}`}>{planting.status.replaceAll("_", " ")}</span></td>
+                                      <td>{formatDate(planting.plannedSowDate)}</td>
+                                      <td>{formatDate(planting.plannedTransplantDate)}</td>
+                                      <td>{formatDate(planting.expectedHarvestStart)} to {formatDate(planting.expectedHarvestEnd)}</td>
+                                      <td>{[planting.intendedFieldName, planting.intendedBlockName, planting.intendedBedName].filter(Boolean).join(" / ") || "—"}</td>
+                                      <td>
+                                        {canPlan ? (
+                                          <button
+                                            type="button"
+                                            className="danger-button compact-button"
+                                            onClick={(event) => {
+                                              event.stopPropagation();
+                                              void deletePlanting(planting.id);
+                                            }}
+                                          >
+                                            Delete
+                                          </button>
+                                        ) : "—"}
+                                      </td>
+                                    </tr>
+                                  );
+                                })}
                               </tbody>
                             </table>
                           </details>
@@ -3463,8 +3722,11 @@ function App() {
               <div className="card">
                 <div className="section-header">
                   <div className="title-block">
-                    <h2>{selectedPlanting.title}</h2>
-                    <p className="muted">{selectedPlanting.seedName ?? `${selectedPlanting.cropName}${selectedPlanting.varietyName ? ` / ${selectedPlanting.varietyName}` : ""}`}</p>
+                    <h2>{selectedPlanting.title.replace(/^Needs completion - /, "")}</h2>
+                    <p className="muted crop-name-with-review">
+                      <PlantingReviewMarker review={plantingReviewInfo(selectedPlanting)} />
+                      <span>{selectedPlanting.seedName ?? `${selectedPlanting.cropName}${selectedPlanting.varietyName ? ` / ${selectedPlanting.varietyName}` : ""}`}</span>
+                    </p>
                   </div>
                   <div className="header-actions">
                     <span className={`status-pill status-${selectedPlanting.status}`}>{selectedPlanting.status.replaceAll("_", " ")}</span>
@@ -3489,12 +3751,12 @@ function App() {
                   <div>
                     <h3>Milestones</h3>
                     <dl className="detail-list">
-                      <div><dt>Planned sow</dt><dd>{formatDate(selectedPlanting.plannedSowDate)}</dd></div>
+                      <div><DetailTerm review={plantingReviewInfo(selectedPlanting)} fieldName="plannedSowDate">Planned sow</DetailTerm><dd>{formatDate(selectedPlanting.plannedSowDate)}</dd></div>
                       <div><dt>Actual tray seeding</dt><dd>{formatDate(selectedPlanting.actualTraySeedingDate)}</dd></div>
                       <div><dt>Actual direct seeding</dt><dd>{formatDate(selectedPlanting.actualDirectSeedingDate)}</dd></div>
-                      <div><dt>Planned transplant</dt><dd>{formatDate(selectedPlanting.plannedTransplantDate)}</dd></div>
+                      <div><DetailTerm review={plantingReviewInfo(selectedPlanting)} fieldName="plannedTransplantDate">Planned transplant</DetailTerm><dd>{formatDate(selectedPlanting.plannedTransplantDate)}</dd></div>
                       <div><dt>Actual transplant</dt><dd>{formatDate(selectedPlanting.actualTransplantDate)}</dd></div>
-                      <div><dt>Expected harvest</dt><dd>{formatDate(selectedPlanting.expectedHarvestStart)} to {formatDate(selectedPlanting.expectedHarvestEnd)}</dd></div>
+                      <div><DetailTerm review={plantingReviewInfo(selectedPlanting)} fieldName="expectedHarvestStart">Expected harvest</DetailTerm><dd>{formatDate(selectedPlanting.expectedHarvestStart)} to {formatDate(selectedPlanting.expectedHarvestEnd)}</dd></div>
                       <div><dt>Actual harvest</dt><dd>{formatDate(selectedPlanting.actualHarvestDate)}</dd></div>
                       <div><dt>Actual finish</dt><dd>{formatDate(selectedPlanting.actualFinishDate)}</dd></div>
                     </dl>
@@ -3504,14 +3766,24 @@ function App() {
                     <dl className="detail-list">
                       <div><dt>Status</dt><dd>{selectedPlanting.status.replaceAll("_", " ")}</dd></div>
                       <div><dt>Seed genetics</dt><dd>{selectedPlanting.seedName ?? "—"}</dd></div>
-                      <div><dt>Spacing</dt><dd>{formatSpacing(selectedPlanting.spacing, distanceUnit)}</dd></div>
-                      <div><dt>Plant count</dt><dd>{selectedPlanting.plantCount ?? "—"}</dd></div>
-                      <div><dt>Bed length used</dt><dd>{formatLength(selectedPlanting.bedLengthUsedM, distanceUnit)}</dd></div>
+                      <div><DetailTerm review={plantingReviewInfo(selectedPlanting)} fieldName="spacing">Spacing</DetailTerm><dd>{formatSpacing(selectedPlanting.spacing, distanceUnit)}</dd></div>
+                      <div><dt>In-row spacing</dt><dd>{selectedPlanting.fieldSpacingInRow == null ? "—" : `${selectedPlanting.fieldSpacingInRow} in`}</dd></div>
+                      <div><dt>Row spacing</dt><dd>{selectedPlanting.rowSpacing == null ? "—" : `${selectedPlanting.rowSpacing} in`}</dd></div>
+                      <div><DetailTerm review={plantingReviewInfo(selectedPlanting)} fieldName="rowsPerBed">Rows per bed</DetailTerm><dd>{selectedPlanting.rowsPerBed ?? "—"}</dd></div>
+                      <div><DetailTerm review={plantingReviewInfo(selectedPlanting)} fieldName="daysToHarvest">Days to harvest</DetailTerm><dd>{selectedPlanting.daysToHarvest ?? "—"}</dd></div>
+                      <div><DetailTerm review={plantingReviewInfo(selectedPlanting)} fieldName="bedCover">Bed cover</DetailTerm><dd>{selectedPlanting.bedCover ?? "—"}</dd></div>
+                      <div><DetailTerm review={plantingReviewInfo(selectedPlanting)} fieldName="deadAtFrost">Dead at frost</DetailTerm><dd>{selectedPlanting.deadAtFrost == null ? "—" : selectedPlanting.deadAtFrost ? "Yes" : "No"}</dd></div>
+                      <div><DetailTerm review={plantingReviewInfo(selectedPlanting)} fieldName="plantCount">Plant count</DetailTerm><dd>{selectedPlanting.plantCount ?? "—"}</dd></div>
+                      <div><DetailTerm review={plantingReviewInfo(selectedPlanting)} fieldName="bedLengthUsed">Bed length used</DetailTerm><dd>{formatLength(selectedPlanting.bedLengthUsedM, distanceUnit)}</dd></div>
                       <div><dt>Tray location</dt><dd>{selectedPlanting.trayLocation ?? "—"}</dd></div>
                       <div><dt>Tray count</dt><dd>{selectedPlanting.trayCount ?? "—"}</dd></div>
+                      <div><dt>Cells per tray</dt><dd>{selectedPlanting.cellsPerTray ?? "—"}</dd></div>
+                      <div><DetailTerm review={plantingReviewInfo(selectedPlanting)} fieldName="field">Intended field</DetailTerm><dd>{selectedPlanting.intendedFieldName ?? "—"}</dd></div>
+                      <div><DetailTerm review={plantingReviewInfo(selectedPlanting)} fieldName="block">Intended block</DetailTerm><dd>{selectedPlanting.intendedBlockName ?? "—"}</dd></div>
+                      <div><DetailTerm review={plantingReviewInfo(selectedPlanting)} fieldName="bed">Intended bed</DetailTerm><dd>{selectedPlanting.intendedBedName ?? "—"}</dd></div>
                       <div><dt>Task flow</dt><dd>{selectedPlanting.taskFlowTemplateName ?? "Automatic default"}</dd></div>
-                      <div><dt>Intended location</dt><dd>{selectedPlanting.intendedBedName ?? "—"}</dd></div>
-                      <div><dt>Notes</dt><dd>{selectedPlanting.notes ?? "—"}</dd></div>
+                      <div><dt>Intended location</dt><dd>{[selectedPlanting.intendedFieldName, selectedPlanting.intendedBlockName, selectedPlanting.intendedBedName].filter(Boolean).join(" / ") || "—"}</dd></div>
+                      <div><DetailTerm review={plantingReviewInfo(selectedPlanting)} fieldName="notes">Notes</DetailTerm><dd>{selectedPlanting.notes ?? "—"}</dd></div>
                     </dl>
                   </div>
                 </div>
@@ -3907,13 +4179,13 @@ function PlantingEditCard({
   const bedById = useMemo(() => new Map(data.beds.map((bed) => [bed.id, bed])), [data.beds]);
   const blockById = useMemo(() => new Map(data.blocks.map((block) => [block.id, block])), [data.blocks]);
   const initialBed = planting.intendedBedId != null ? bedById.get(planting.intendedBedId) ?? null : null;
-  const initialBlock = initialBed ? blockById.get(initialBed.blockId) ?? null : null;
+  const initialBlock = initialBed ? blockById.get(initialBed.blockId) ?? null : planting.intendedBlockId != null ? blockById.get(planting.intendedBlockId) ?? null : null;
   const initialSpacing = parseSpacingPairForUnit(planting.spacing, distanceUnit);
   const [cropId, setCropId] = useState(String(planting.cropId));
   const [varietyId, setVarietyId] = useState(planting.varietyId == null ? "" : String(planting.varietyId));
   const [title, setTitle] = useState(planting.title);
   const [statusValue, setStatusValue] = useState(planting.status);
-  const [fieldId, setFieldId] = useState(initialBlock ? String(initialBlock.fieldId) : "");
+  const [fieldId, setFieldId] = useState(initialBlock ? String(initialBlock.fieldId) : planting.intendedFieldId != null ? String(planting.intendedFieldId) : "");
   const [blockId, setBlockId] = useState(initialBed ? String(initialBed.blockId) : "");
   const [bedId, setBedId] = useState(initialBed ? String(initialBed.id) : "");
   const [taskFlowTemplateId, setTaskFlowTemplateId] = useState(planting.taskFlowTemplateId == null ? "" : String(planting.taskFlowTemplateId));
@@ -3923,10 +4195,20 @@ function PlantingEditCard({
   const [bedLengthUsed, setBedLengthUsed] = useState(formatLengthInputValue(planting.bedLengthUsedM, distanceUnit));
   const [trayLocation, setTrayLocation] = useState(planting.trayLocation ?? "");
   const [trayCount, setTrayCount] = useState(planting.trayCount == null ? "" : String(planting.trayCount));
+  const [cellsPerTray, setCellsPerTray] = useState(planting.cellsPerTray == null ? "" : String(planting.cellsPerTray));
+  const [germinationRate, setGerminationRate] = useState("90");
+  const [seedCellCount, setSeedCellCount] = useState("");
+  const [expectedTrayPlants, setExpectedTrayPlants] = useState("");
+  const [lastPlanningInput, setLastPlanningInput] = useState<PlantingPlanningInput>("initial");
+  const [daysToHarvest, setDaysToHarvest] = useState(planting.daysToHarvest == null ? "" : String(planting.daysToHarvest));
+  const [rowsPerBed, setRowsPerBed] = useState(planting.rowsPerBed == null ? "" : String(planting.rowsPerBed));
+  const [deadAtFrost, setDeadAtFrost] = useState(planting.deadAtFrost == null ? "" : planting.deadAtFrost ? "yes" : "no");
+  const [bedCover, setBedCover] = useState(planting.bedCover ?? "");
   const [plannedSowDate, setPlannedSowDate] = useState(dateInputValue(planting.plannedSowDate));
   const [plannedTransplantDate, setPlannedTransplantDate] = useState(dateInputValue(planting.plannedTransplantDate));
   const [expectedHarvestStart, setExpectedHarvestStart] = useState(dateInputValue(planting.expectedHarvestStart));
   const [expectedHarvestEnd, setExpectedHarvestEnd] = useState(dateInputValue(planting.expectedHarvestEnd));
+  const [lastDateInput, setLastDateInput] = useState<PlantingDateInput>("initial");
   const [notes, setNotes] = useState(planting.notes ?? "");
   const [message, setMessage] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
@@ -3939,16 +4221,215 @@ function PlantingEditCard({
     : fieldId
       ? plantableBeds.filter((bed) => blockIdsForField.has(bed.blockId))
       : plantableBeds;
+  const review = useMemo<PlantingReviewInfo>(() => {
+    const currentReview = plantingReviewInfo(planting);
+    const majorFields = new Set(currentReview.majorFields);
+    const minorFields = new Set(currentReview.minorFields);
+
+    if (!title.trim()) majorFields.add("title");
+    if (!plannedSowDate.trim()) majorFields.add("plannedSowDate");
+    if (!plantCount.trim() && !bedLengthUsed.trim()) {
+      majorFields.add("plantCount");
+      majorFields.add("bedLengthUsed");
+    }
+    if (!fieldId) majorFields.add("field");
+    if (!blockId) majorFields.add("block");
+    if (!rowsPerBed.trim()) minorFields.add("rowsPerBed");
+    if (!daysToHarvest.trim() && !expectedHarvestStart.trim()) minorFields.add("daysToHarvest");
+    if (!bedCover) minorFields.add("bedCover");
+    if (!deadAtFrost) minorFields.add("deadAtFrost");
+
+    const severity: PlantingReviewSeverity | null = majorFields.size > 0 ? "major" : minorFields.size > 0 ? "minor" : null;
+    return {
+      ...currentReview,
+      severity,
+      majorFields,
+      minorFields
+    };
+  }, [planting, title, plannedSowDate, plantCount, bedLengthUsed, fieldId, blockId, rowsPerBed, daysToHarvest, expectedHarvestStart, bedCover, deadAtFrost]);
+  const selectedBedForCalc = bedId ? bedById.get(Number(bedId)) ?? null : null;
+  const calcTrayCount = Number(trayCount);
+  const calcCellsPerTray = Number(cellsPerTray);
+  const calcGerminationRate = Number(germinationRate);
+  const calcPlantCount = Number(plantCount);
+  const calcRowsPerBed = Number(rowsPerBed);
+  const calcInRowSpacingM = spacingInputToMeters(spacingInRow, distanceUnit);
+  const enteredBedLengthM = parseLengthInputValue(bedLengthUsed || null, distanceUnit);
+  const availableBedLengthM = enteredBedLengthM ?? selectedBedForCalc?.bedLengthM ?? null;
+  const germinationRateDecimal = Number.isFinite(calcGerminationRate) && calcGerminationRate > 0 && calcGerminationRate <= 100
+    ? calcGerminationRate / 100
+    : null;
+  const cellsSeededFromTrays = Number.isFinite(calcTrayCount) && calcTrayCount > 0 && Number.isFinite(calcCellsPerTray) && calcCellsPerTray > 0
+    ? Math.round(calcTrayCount * calcCellsPerTray)
+    : null;
+  const plantsFromTrays = cellsSeededFromTrays != null && germinationRateDecimal != null
+    ? Math.max(1, Math.round(cellsSeededFromTrays * germinationRateDecimal))
+    : null;
+  const plantsForBedLength = availableBedLengthM != null && availableBedLengthM > 0 && calcInRowSpacingM != null && Number.isFinite(calcRowsPerBed) && calcRowsPerBed > 0
+    ? Math.max(1, Math.floor((availableBedLengthM * calcRowsPerBed) / calcInRowSpacingM))
+    : null;
+  const traysForBedLength = plantsForBedLength != null && Number.isFinite(calcCellsPerTray) && calcCellsPerTray > 0
+    && germinationRateDecimal != null
+    ? Math.ceil(plantsForBedLength / (calcCellsPerTray * germinationRateDecimal))
+    : null;
+  const cellsToSeedForBedLength = plantsForBedLength != null && germinationRateDecimal != null
+    ? Math.ceil(plantsForBedLength / germinationRateDecimal)
+    : null;
+  const setNumberStringIfChanged = (setter: (value: string) => void, currentValue: string, nextValue: number | null, precision = 0) => {
+    if (nextValue == null || !Number.isFinite(nextValue) || nextValue <= 0) {
+      return;
+    }
+    const formatted = precision === 0 ? String(Math.round(nextValue)) : String(Number(nextValue.toFixed(precision)));
+    if (currentValue !== formatted) {
+      setter(formatted);
+    }
+  };
+
+  useEffect(() => {
+    if (lastPlanningInput === "initial") {
+      return;
+    }
+
+    const validPlantCount = Number.isFinite(calcPlantCount) && calcPlantCount > 0 ? calcPlantCount : null;
+    const validBedLengthM = enteredBedLengthM != null && enteredBedLengthM > 0 ? enteredBedLengthM : selectedBedForCalc?.bedLengthM ?? null;
+    const validSeedCells = Number(seedCellCount);
+    const usableSeedCells = Number.isFinite(validSeedCells) && validSeedCells > 0 ? validSeedCells : cellsSeededFromTrays;
+    let nextPlantCount: number | null = null;
+    let nextBedLengthM: number | null = null;
+    let nextSeedCells: number | null = null;
+    let nextTrayCount: number | null = null;
+    let nextExpectedTrayPlants: number | null = null;
+
+    if (lastPlanningInput === "trayCount" || lastPlanningInput === "cellsPerTray" || lastPlanningInput === "germinationRate") {
+      nextSeedCells = cellsSeededFromTrays;
+      nextPlantCount = plantsFromTrays;
+      nextExpectedTrayPlants = plantsFromTrays;
+    } else if (lastPlanningInput === "seedCellCount") {
+      nextPlantCount = usableSeedCells != null && germinationRateDecimal != null ? Math.max(1, Math.round(usableSeedCells * germinationRateDecimal)) : null;
+      nextExpectedTrayPlants = nextPlantCount;
+      nextTrayCount = usableSeedCells != null && Number.isFinite(calcCellsPerTray) && calcCellsPerTray > 0 ? Math.ceil(usableSeedCells / calcCellsPerTray) : null;
+    } else if (lastPlanningInput === "expectedTrayPlants") {
+      const expectedPlants = Number(expectedTrayPlants);
+      nextPlantCount = Number.isFinite(expectedPlants) && expectedPlants > 0 ? Math.round(expectedPlants) : null;
+      nextSeedCells = nextPlantCount != null && germinationRateDecimal != null ? Math.ceil(nextPlantCount / germinationRateDecimal) : null;
+      nextTrayCount = nextSeedCells != null && Number.isFinite(calcCellsPerTray) && calcCellsPerTray > 0 ? Math.ceil(nextSeedCells / calcCellsPerTray) : null;
+    } else if (lastPlanningInput === "bedLengthUsed" || lastPlanningInput === "bed") {
+      nextPlantCount = plantsForBedLength;
+      nextExpectedTrayPlants = plantsForBedLength;
+      nextSeedCells = cellsToSeedForBedLength;
+      nextTrayCount = traysForBedLength;
+    } else if (lastPlanningInput === "plantCount") {
+      nextPlantCount = validPlantCount;
+      nextExpectedTrayPlants = validPlantCount;
+      nextSeedCells = validPlantCount != null && germinationRateDecimal != null ? Math.ceil(validPlantCount / germinationRateDecimal) : null;
+      nextTrayCount = nextSeedCells != null && Number.isFinite(calcCellsPerTray) && calcCellsPerTray > 0 ? Math.ceil(nextSeedCells / calcCellsPerTray) : null;
+    } else if (lastPlanningInput === "spacing" || lastPlanningInput === "rowsPerBed") {
+      if (validPlantCount != null) {
+        nextPlantCount = validPlantCount;
+      } else if (validBedLengthM != null) {
+        nextPlantCount = plantsForBedLength;
+      }
+    }
+
+    const plantCountForLength = nextPlantCount ?? validPlantCount;
+    if (lastPlanningInput === "bed" && validBedLengthM != null) {
+      nextBedLengthM = validBedLengthM;
+    } else if (plantCountForLength != null && calcInRowSpacingM != null && Number.isFinite(calcRowsPerBed) && calcRowsPerBed > 0) {
+      nextBedLengthM = (plantCountForLength * calcInRowSpacingM) / calcRowsPerBed;
+    }
+
+    if (lastPlanningInput !== "seedCellCount") {
+      setNumberStringIfChanged(setSeedCellCount, seedCellCount, nextSeedCells);
+    }
+    if (lastPlanningInput !== "expectedTrayPlants") {
+      setNumberStringIfChanged(setExpectedTrayPlants, expectedTrayPlants, nextExpectedTrayPlants);
+    }
+    if (lastPlanningInput !== "plantCount") {
+      setNumberStringIfChanged(setPlantCount, plantCount, nextPlantCount);
+    }
+    if (lastPlanningInput !== "bedLengthUsed") {
+      setNumberStringIfChanged(setBedLengthUsed, bedLengthUsed, nextBedLengthM == null ? null : Number(formatLengthInputValue(nextBedLengthM, distanceUnit)), 1);
+    }
+    if (lastPlanningInput !== "trayCount") {
+      setNumberStringIfChanged(setTrayCount, trayCount, nextTrayCount);
+    }
+  }, [
+    lastPlanningInput,
+    calcPlantCount,
+    enteredBedLengthM,
+    selectedBedForCalc,
+    seedCellCount,
+    cellsSeededFromTrays,
+    plantsFromTrays,
+    plantsForBedLength,
+    germinationRateDecimal,
+    calcCellsPerTray,
+    expectedTrayPlants,
+    cellsToSeedForBedLength,
+    traysForBedLength,
+    calcInRowSpacingM,
+    calcRowsPerBed,
+    plantCount,
+    bedLengthUsed,
+    trayCount,
+    distanceUnit
+  ]);
+
+  useEffect(() => {
+    if (lastDateInput === "initial") {
+      return;
+    }
+
+    const harvestBaseDate = plannedTransplantDate || plannedSowDate;
+    const numericDaysToHarvest = Number(daysToHarvest);
+    const validDaysToHarvest = Number.isFinite(numericDaysToHarvest) && numericDaysToHarvest > 0
+      ? Math.round(numericDaysToHarvest)
+      : null;
+
+    if (lastDateInput === "expectedHarvestStart") {
+      const calculatedDays = daysBetweenDateStrings(harvestBaseDate || null, expectedHarvestStart || null);
+      if (calculatedDays != null && daysToHarvest !== String(calculatedDays)) {
+        setDaysToHarvest(String(calculatedDays));
+      }
+      if (expectedHarvestStart && !expectedHarvestEnd) {
+        setExpectedHarvestEnd(expectedHarvestStart);
+      }
+      return;
+    }
+
+    if (lastDateInput === "expectedHarvestEnd") {
+      if (expectedHarvestEnd && !expectedHarvestStart) {
+        setExpectedHarvestStart(expectedHarvestEnd);
+      }
+      return;
+    }
+
+    if (!harvestBaseDate || validDaysToHarvest == null) {
+      return;
+    }
+
+    const calculatedHarvestDate = addDaysToDateString(harvestBaseDate, validDaysToHarvest);
+    if (!calculatedHarvestDate) {
+      return;
+    }
+
+    if (expectedHarvestStart !== calculatedHarvestDate) {
+      setExpectedHarvestStart(calculatedHarvestDate);
+    }
+    if (!expectedHarvestEnd || expectedHarvestEnd < calculatedHarvestDate) {
+      setExpectedHarvestEnd(calculatedHarvestDate);
+    }
+  }, [lastDateInput, plannedSowDate, plannedTransplantDate, daysToHarvest, expectedHarvestStart, expectedHarvestEnd]);
 
   useEffect(() => {
     const nextBed = planting.intendedBedId != null ? bedById.get(planting.intendedBedId) ?? null : null;
-    const nextBlock = nextBed ? blockById.get(nextBed.blockId) ?? null : null;
+    const nextBlock = nextBed ? blockById.get(nextBed.blockId) ?? null : planting.intendedBlockId != null ? blockById.get(planting.intendedBlockId) ?? null : null;
     const nextSpacing = parseSpacingPairForUnit(planting.spacing, distanceUnit);
     setCropId(String(planting.cropId));
     setVarietyId(planting.varietyId == null ? "" : String(planting.varietyId));
     setTitle(planting.title);
     setStatusValue(planting.status);
-    setFieldId(nextBlock ? String(nextBlock.fieldId) : "");
+    setFieldId(nextBlock ? String(nextBlock.fieldId) : planting.intendedFieldId != null ? String(planting.intendedFieldId) : "");
     setBlockId(nextBed ? String(nextBed.blockId) : "");
     setBedId(nextBed ? String(nextBed.id) : "");
     setTaskFlowTemplateId(planting.taskFlowTemplateId == null ? "" : String(planting.taskFlowTemplateId));
@@ -3958,10 +4439,20 @@ function PlantingEditCard({
     setBedLengthUsed(formatLengthInputValue(planting.bedLengthUsedM, distanceUnit));
     setTrayLocation(planting.trayLocation ?? "");
     setTrayCount(planting.trayCount == null ? "" : String(planting.trayCount));
+    setCellsPerTray(planting.cellsPerTray == null ? "" : String(planting.cellsPerTray));
+    setGerminationRate("90");
+    setSeedCellCount("");
+    setExpectedTrayPlants("");
+    setLastPlanningInput("initial");
+    setDaysToHarvest(planting.daysToHarvest == null ? "" : String(planting.daysToHarvest));
+    setRowsPerBed(planting.rowsPerBed == null ? "" : String(planting.rowsPerBed));
+    setDeadAtFrost(planting.deadAtFrost == null ? "" : planting.deadAtFrost ? "yes" : "no");
+    setBedCover(planting.bedCover ?? "");
     setPlannedSowDate(dateInputValue(planting.plannedSowDate));
     setPlannedTransplantDate(dateInputValue(planting.plannedTransplantDate));
     setExpectedHarvestStart(dateInputValue(planting.expectedHarvestStart));
     setExpectedHarvestEnd(dateInputValue(planting.expectedHarvestEnd));
+    setLastDateInput("initial");
     setNotes(planting.notes ?? "");
     setMessage(null);
   }, [planting, distanceUnit, bedById, blockById]);
@@ -3972,6 +4463,9 @@ function PlantingEditCard({
     const plantCountValue = plantCount.trim() ? Number(plantCount) : null;
     const bedLengthUsedM = parseLengthInputValue(bedLengthUsed || null, distanceUnit);
     const trayCountValue = trayCount.trim() ? Number(trayCount) : null;
+    const cellsPerTrayValue = cellsPerTray.trim() ? Number(cellsPerTray) : null;
+    const daysToHarvestValue = daysToHarvest.trim() ? Number(daysToHarvest) : null;
+    const rowsPerBedValue = rowsPerBed.trim() ? Number(rowsPerBed) : null;
     const spacing = formatSpacingPair(spacingInRow, spacingBetweenRows, distanceUnit);
 
     if (!Number.isFinite(cropIdValue)) {
@@ -3996,6 +4490,18 @@ function PlantingEditCard({
     }
     if (trayCountValue != null && (!Number.isInteger(trayCountValue) || trayCountValue <= 0)) {
       setMessage("Tray count must be a whole number above zero.");
+      return;
+    }
+    if (cellsPerTrayValue != null && (!Number.isInteger(cellsPerTrayValue) || cellsPerTrayValue <= 0)) {
+      setMessage("Cells per tray must be a whole number above zero.");
+      return;
+    }
+    if (daysToHarvestValue != null && (!Number.isInteger(daysToHarvestValue) || daysToHarvestValue <= 0)) {
+      setMessage("Days to harvest must be a whole number above zero.");
+      return;
+    }
+    if (rowsPerBedValue != null && (!Number.isInteger(rowsPerBedValue) || rowsPerBedValue <= 0)) {
+      setMessage("Rows per bed must be a whole number above zero.");
       return;
     }
     if (spacingInRow.trim() && spacingInputToMeters(spacingInRow, distanceUnit) == null) {
@@ -4024,6 +4530,8 @@ function PlantingEditCard({
         seedItemId: planting.seedItemId,
         title: title.trim(),
         status: statusValue,
+        intendedFieldId: fieldId ? Number(fieldId) : null,
+        intendedBlockId: blockId ? Number(blockId) : null,
         intendedBedId: bedId ? Number(bedId) : null,
         taskFlowTemplateId: taskFlowTemplateId ? Number(taskFlowTemplateId) : null,
         spacing,
@@ -4031,6 +4539,13 @@ function PlantingEditCard({
         bedLengthUsedM,
         trayLocation: trayLocation.trim() || null,
         trayCount: trayCountValue,
+        cellsPerTray: cellsPerTrayValue,
+        daysToHarvest: daysToHarvestValue,
+        fieldSpacingInRow: spacingInRow.trim() ? Number(spacingInRow) : null,
+        rowSpacing: spacingBetweenRows.trim() ? Number(spacingBetweenRows) : null,
+        rowsPerBed: rowsPerBedValue,
+        deadAtFrost: deadAtFrost ? deadAtFrost === "yes" : null,
+        bedCover: bedCover || null,
         notes: notes.trim() || null,
         plannedSowDate: plannedSowDate || null,
         plannedTransplantDate: plannedTransplantDate || null,
@@ -4056,7 +4571,7 @@ function PlantingEditCard({
       </div>
       <form className="form-grid" onSubmit={(event) => void savePlantingEdit(event)}>
         <label>
-          <span>Crop</span>
+          <FieldLabel review={review} fieldName="crop">Crop</FieldLabel>
           <select
             value={cropId}
             onChange={(event) => {
@@ -4068,14 +4583,14 @@ function PlantingEditCard({
           </select>
         </label>
         <label>
-          <span>Variety</span>
+          <FieldLabel review={review} fieldName="variety">Variety</FieldLabel>
           <select value={varietyId} onChange={(event) => setVarietyId(event.target.value)}>
             <option value="">None / decide later</option>
             {varietiesForCrop.map((variety) => <option key={variety.id} value={variety.id}>{variety.name}</option>)}
           </select>
         </label>
         <label className="full-span">
-          <span>Title</span>
+          <FieldLabel review={review} fieldName="title">Title</FieldLabel>
           <input value={title} onChange={(event) => setTitle(event.target.value)} maxLength={160} required />
         </label>
         <label>
@@ -4093,7 +4608,7 @@ function PlantingEditCard({
         </label>
 
         <label>
-          <span>Field</span>
+          <FieldLabel review={review} fieldName="field">Field</FieldLabel>
           <select
             value={fieldId}
             onChange={(event) => {
@@ -4107,7 +4622,7 @@ function PlantingEditCard({
           </select>
         </label>
         <label>
-          <span>Block</span>
+          <FieldLabel review={review} fieldName="block">Block</FieldLabel>
           <select
             value={blockId}
             onChange={(event) => {
@@ -4120,12 +4635,13 @@ function PlantingEditCard({
           </select>
         </label>
         <label className="full-span">
-          <span>Intended bed</span>
+          <FieldLabel review={review} fieldName="bed">Intended bed</FieldLabel>
           <select
             value={bedId}
             onChange={(event) => {
               const nextBedId = event.target.value;
               setBedId(nextBedId);
+              setLastPlanningInput("bed");
               const nextBed = nextBedId ? bedById.get(Number(nextBedId)) ?? null : null;
               const nextBlock = nextBed ? blockById.get(nextBed.blockId) ?? null : null;
               if (nextBed) {
@@ -4141,26 +4657,223 @@ function PlantingEditCard({
           </select>
         </label>
 
-        <label><span>Planned sow</span><input type="date" value={plannedSowDate} onChange={(event) => setPlannedSowDate(event.target.value)} /></label>
-        <label><span>Planned transplant</span><input type="date" value={plannedTransplantDate} onChange={(event) => setPlannedTransplantDate(event.target.value)} /></label>
-        <label><span>Harvest start</span><input type="date" value={expectedHarvestStart} onChange={(event) => setExpectedHarvestStart(event.target.value)} /></label>
-        <label><span>Harvest end</span><input type="date" value={expectedHarvestEnd} onChange={(event) => setExpectedHarvestEnd(event.target.value)} /></label>
+        <label>
+          <FieldLabel review={review} fieldName="plannedSowDate">Planned sow</FieldLabel>
+          <input
+            type="date"
+            value={plannedSowDate}
+            onChange={(event) => {
+              setPlannedSowDate(event.target.value);
+              setLastDateInput("plannedSowDate");
+            }}
+          />
+        </label>
+        <label>
+          <FieldLabel review={review} fieldName="plannedTransplantDate">Planned transplant</FieldLabel>
+          <input
+            type="date"
+            value={plannedTransplantDate}
+            onChange={(event) => {
+              setPlannedTransplantDate(event.target.value);
+              setLastDateInput("plannedTransplantDate");
+            }}
+          />
+        </label>
+        <label>
+          <FieldLabel review={review} fieldName="expectedHarvestStart">Harvest start</FieldLabel>
+          <input
+            type="date"
+            value={expectedHarvestStart}
+            onChange={(event) => {
+              setExpectedHarvestStart(event.target.value);
+              setLastDateInput("expectedHarvestStart");
+            }}
+          />
+        </label>
+        <label>
+          <FieldLabel review={review} fieldName="expectedHarvestEnd">Harvest end</FieldLabel>
+          <input
+            type="date"
+            value={expectedHarvestEnd}
+            onChange={(event) => {
+              setExpectedHarvestEnd(event.target.value);
+              setLastDateInput("expectedHarvestEnd");
+            }}
+          />
+        </label>
 
         <div className="full-span spacing-pair">
           <label>
-            <span>In-row spacing ({spacingUnitLabel(distanceUnit)})</span>
-            <input type="number" min="0" step={distanceUnit === "ft" ? "0.5" : "1"} value={spacingInRow} onChange={(event) => setSpacingInRow(event.target.value)} placeholder={defaultSpacingExample(distanceUnit).split(" x ")[0]} />
+            <FieldLabel review={review} fieldName="spacing">In-row spacing ({spacingUnitLabel(distanceUnit)})</FieldLabel>
+            <input
+              type="number"
+              min="0"
+              step={distanceUnit === "ft" ? "0.5" : "1"}
+              value={spacingInRow}
+              onChange={(event) => {
+                setSpacingInRow(event.target.value);
+                setLastPlanningInput("spacing");
+              }}
+              placeholder={defaultSpacingExample(distanceUnit).split(" x ")[0]}
+            />
           </label>
           <label>
-            <span>Between-row spacing ({spacingUnitLabel(distanceUnit)})</span>
-            <input type="number" min="0" step={distanceUnit === "ft" ? "0.5" : "1"} value={spacingBetweenRows} onChange={(event) => setSpacingBetweenRows(event.target.value)} placeholder={defaultSpacingExample(distanceUnit).split(" x ")[1]} />
+            <FieldLabel review={review} fieldName="spacing">Between-row spacing ({spacingUnitLabel(distanceUnit)})</FieldLabel>
+            <input
+              type="number"
+              min="0"
+              step={distanceUnit === "ft" ? "0.5" : "1"}
+              value={spacingBetweenRows}
+              onChange={(event) => {
+                setSpacingBetweenRows(event.target.value);
+                setLastPlanningInput("spacing");
+              }}
+              placeholder={defaultSpacingExample(distanceUnit).split(" x ")[1]}
+            />
           </label>
         </div>
-        <label><span>Plant count</span><input type="number" min="1" step="1" value={plantCount} onChange={(event) => setPlantCount(event.target.value)} /></label>
-        <label><span>Bed length used ({distanceUnit})</span><input type="number" min="0" step="0.1" value={bedLengthUsed} onChange={(event) => setBedLengthUsed(event.target.value)} /></label>
-        <label><span>Tray count</span><input type="number" min="1" step="1" value={trayCount} onChange={(event) => setTrayCount(event.target.value)} /></label>
+        <label>
+          <FieldLabel review={review} fieldName="plantCount">Plant count</FieldLabel>
+          <input
+            type="number"
+            min="1"
+            step="1"
+            value={plantCount}
+            onChange={(event) => {
+              setPlantCount(event.target.value);
+              setLastPlanningInput("plantCount");
+            }}
+          />
+        </label>
+        <label>
+          <FieldLabel review={review} fieldName="bedLengthUsed">Bed length used ({distanceUnit})</FieldLabel>
+          <input
+            type="number"
+            min="0"
+            step="0.1"
+            value={bedLengthUsed}
+            onChange={(event) => {
+              setBedLengthUsed(event.target.value);
+              setLastPlanningInput("bedLengthUsed");
+            }}
+          />
+        </label>
+        <label>
+          <FieldLabel review={review} fieldName="rowsPerBed">Rows per bed</FieldLabel>
+          <input
+            type="number"
+            min="1"
+            step="1"
+            value={rowsPerBed}
+            onChange={(event) => {
+              setRowsPerBed(event.target.value);
+              setLastPlanningInput("rowsPerBed");
+            }}
+          />
+        </label>
+        <label>
+          <FieldLabel review={review} fieldName="daysToHarvest">Days to harvest</FieldLabel>
+          <input
+            type="number"
+            min="1"
+            step="1"
+            value={daysToHarvest}
+            onChange={(event) => {
+              setDaysToHarvest(event.target.value);
+              setLastDateInput("daysToHarvest");
+            }}
+          />
+        </label>
+        <label>
+          <FieldLabel review={review} fieldName="bedCover">Bed cover</FieldLabel>
+          <select value={bedCover} onChange={(event) => setBedCover(event.target.value)}>
+            <option value="">Not set</option>
+            <option value="bare">Bare</option>
+            <option value="plastic">Plastic</option>
+          </select>
+        </label>
+        <label>
+          <FieldLabel review={review} fieldName="deadAtFrost">Dead at frost</FieldLabel>
+          <select value={deadAtFrost} onChange={(event) => setDeadAtFrost(event.target.value)}>
+            <option value="">Not set</option>
+            <option value="yes">Yes</option>
+            <option value="no">No</option>
+          </select>
+        </label>
+        <label>
+          <span>Tray count</span>
+          <input
+            type="number"
+            min="1"
+            step="1"
+            value={trayCount}
+            onChange={(event) => {
+              setTrayCount(event.target.value);
+              setLastPlanningInput("trayCount");
+            }}
+          />
+        </label>
+        <label>
+          <span>Cells per tray</span>
+          <input
+            type="number"
+            min="1"
+            step="1"
+            value={cellsPerTray}
+            onChange={(event) => {
+              setCellsPerTray(event.target.value);
+              setLastPlanningInput("cellsPerTray");
+            }}
+          />
+        </label>
+        <label>
+          <span>Germination rate (%)</span>
+          <input
+            type="number"
+            min="1"
+            max="100"
+            step="1"
+            value={germinationRate}
+            onChange={(event) => {
+              setGerminationRate(event.target.value);
+              setLastPlanningInput("germinationRate");
+            }}
+          />
+        </label>
+        <label>
+          <span>Seed cells needed</span>
+          <input
+            type="number"
+            min="1"
+            step="1"
+            value={seedCellCount}
+            onChange={(event) => {
+              setSeedCellCount(event.target.value);
+              setLastPlanningInput("seedCellCount");
+            }}
+          />
+        </label>
+        <label>
+          <span>Expected usable plants</span>
+          <input
+            type="number"
+            min="1"
+            step="1"
+            value={expectedTrayPlants}
+            onChange={(event) => {
+              setExpectedTrayPlants(event.target.value);
+              setLastPlanningInput("expectedTrayPlants");
+            }}
+          />
+        </label>
+        <div className="instruction-box full-span">
+          Fill in the numbers you know. The form will use spacing, rows per bed, germination rate, trays, cells, plant count, and bed length to fill related fields.
+          {selectedBedForCalc && !bedLengthUsed.trim() && (
+            <span> Selected bed length available: {selectedBedForCalc.name}, {formatLength(selectedBedForCalc.bedLengthM, distanceUnit)}.</span>
+          )}
+        </div>
         <label><span>Tray location</span><input value={trayLocation} onChange={(event) => setTrayLocation(event.target.value)} /></label>
-        <label className="full-span"><span>Notes</span><textarea rows={3} value={notes} onChange={(event) => setNotes(event.target.value)} /></label>
+        <label className="full-span"><FieldLabel review={review} fieldName="notes">Notes</FieldLabel><textarea rows={3} value={notes} onChange={(event) => setNotes(event.target.value)} /></label>
         {message && <p className="muted full-span"><strong>{message}</strong></p>}
         <button className="primary-button full-span" disabled={saving}>{saving ? "Saving..." : "Save planting changes"}</button>
       </form>

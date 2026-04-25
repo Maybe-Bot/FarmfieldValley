@@ -18,7 +18,7 @@ class AppErrorBoundary extends React.Component<{ children: React.ReactNode }, { 
   }
 
   componentDidCatch(error: Error) {
-    console.error("FarmMan UI crashed", error);
+    console.error("Farmfield Valley UI crashed", error);
   }
 
   render() {

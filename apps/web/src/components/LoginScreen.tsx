@@ -116,7 +116,7 @@ export function LoginScreen({
         </div>
       )}
       <div className="card auth-card">
-        <p className="eyebrow">FarmMan Prototype</p>
+        <p className="eyebrow">Farmfield Valley</p>
         <h2>{mode === "login" ? "Farm login" : mode === "admin" ? "Create first admin" : "Create farm account"}</h2>
         <p className="muted">
           {mode === "login"

@@ -1,5 +1,5 @@
 /**
- * Main API server for the FarmMan prototype.
+ * Main API server for the Farmfield Valley prototype.
  *
  * This file wires Express routes to PostgreSQL/PostGIS. In broad terms it:
  * - validates incoming JSON with zod schemas,
@@ -198,6 +198,8 @@ const plantingSchema = z
     varietyId: z.number().nullable().optional(),
     title: z.string().min(1),
     status: plantingStatusSchema,
+    intendedFieldId: z.number().nullable().optional(),
+    intendedBlockId: z.number().nullable().optional(),
     intendedBedId: z.number().nullable().optional(),
     seedItemId: z.number().nullable().optional(),
     taskFlowTemplateId: z.number().nullable().optional(),
@@ -206,6 +208,13 @@ const plantingSchema = z
     bedLengthUsedM: z.number().positive().nullable().optional(),
     trayLocation: z.string().nullable().optional(),
     trayCount: z.number().int().positive().nullable().optional(),
+    cellsPerTray: z.number().int().positive().nullable().optional(),
+    daysToHarvest: z.number().int().positive().nullable().optional(),
+    fieldSpacingInRow: z.number().positive().nullable().optional(),
+    rowSpacing: z.number().positive().nullable().optional(),
+    rowsPerBed: z.number().int().positive().nullable().optional(),
+    deadAtFrost: z.boolean().nullable().optional(),
+    bedCover: z.enum(["plastic", "bare"]).nullable().optional(),
     notes: z.string().nullable().optional(),
     plannedSowDate: z.string().nullable().optional(),
     plannedTransplantDate: z.string().nullable().optional(),
@@ -1045,6 +1054,40 @@ async function blockIdForBed(client: PoolClient, bedId: number, farmId: number) 
     [bedId, farmId]
   );
   return result.rows[0]?.block_id ?? null;
+}
+
+async function fieldIdForBlock(client: PoolClient, blockId: number, farmId: number) {
+  const result = await client.query<{ field_id: number }>(
+    `
+      select block.field_id
+      from blocks block
+      join fields field on field.id = block.field_id
+      where block.id = $1 and field.farm_id = $2
+    `,
+    [blockId, farmId]
+  );
+  return result.rows[0]?.field_id ?? null;
+}
+
+async function plantingLocationIds(client: PoolClient, auth: AuthContext, body: z.infer<typeof plantingSchema>) {
+  let intendedFieldId = body.intendedFieldId ?? null;
+  let intendedBlockId = body.intendedBlockId ?? null;
+
+  if (body.intendedBedId != null) {
+    intendedBlockId = await blockIdForBed(client, body.intendedBedId, auth.farmId);
+  }
+  if (intendedBlockId != null) {
+    intendedFieldId = await fieldIdForBlock(client, intendedBlockId, auth.farmId);
+  }
+
+  if (intendedFieldId != null) {
+    await ensureFieldInFarm(client, intendedFieldId, auth.farmId);
+  }
+  if (intendedBlockId != null) {
+    await ensureBlockInFarm(client, intendedBlockId, auth.farmId);
+  }
+
+  return { intendedFieldId, intendedBlockId };
 }
 
 async function upsertBlockBedMakingTask(client: PoolClient, farmId: number, blockId: number) {
@@ -2290,7 +2333,7 @@ app.post("/api/auth/register", asyncHandler(async (req, res) => {
     const farmResult = await client.query<{ id: number; name: string }>(
       `
         insert into farms (name, notes)
-        values ($1, 'Created from the FarmMan landing page')
+        values ($1, 'Created from the Farmfield Valley landing page')
         returning id, name
       `,
       [body.farmName.trim()]
@@ -2370,7 +2413,7 @@ app.post("/api/admin/bootstrap", asyncHandler(async (req, res) => {
     const farmResult = await client.query<{ id: number; name: string }>(
       `
         insert into farms (name, notes, maps_private)
-        values ('FarmMan Administration', 'Internal admin account farm', true)
+        values ('Farmfield Valley Administration', 'Internal admin account farm', true)
         returning id, name
       `
     );
@@ -3116,6 +3159,10 @@ app.get("/api/dashboard", requireRole("worker"), asyncHandler(async (req, res) =
         concat_ws(' / ', seed.crop_type, seed.variety_name, seed.breed_name, seed.supplier, nullif(seed.lot_number, '')) as "seedName",
         p.title,
         p.status,
+        p.intended_field_id as "intendedFieldId",
+        pf.name as "intendedFieldName",
+        p.intended_block_id as "intendedBlockId",
+        pb.name as "intendedBlockName",
         p.intended_bed_id as "intendedBedId",
         ib.name as "intendedBedName",
         p.task_flow_template_id as "taskFlowTemplateId",
@@ -3125,6 +3172,13 @@ app.get("/api/dashboard", requireRole("worker"), asyncHandler(async (req, res) =
         p.bed_length_used_m as "bedLengthUsedM",
         p.tray_location as "trayLocation",
         p.tray_count as "trayCount",
+        p.cells_per_tray as "cellsPerTray",
+        p.days_to_harvest as "daysToHarvest",
+        p.field_spacing_in_row as "fieldSpacingInRow",
+        p.row_spacing as "rowSpacing",
+        p.rows_per_bed as "rowsPerBed",
+        p.dead_at_frost as "deadAtFrost",
+        p.bed_cover as "bedCover",
         p.notes,
         p.planned_sow_date as "plannedSowDate",
         p.planned_transplant_date as "plannedTransplantDate",
@@ -3140,6 +3194,8 @@ app.get("/api/dashboard", requireRole("worker"), asyncHandler(async (req, res) =
       join crops c on c.id = p.crop_id
       left join varieties v on v.id = p.variety_id
       left join seed_items seed on seed.id = p.seed_item_id
+      left join fields pf on pf.id = p.intended_field_id
+      left join blocks pb on pb.id = p.intended_block_id
       left join beds ib on ib.id = p.intended_bed_id
       left join task_flow_templates tft on tft.id = p.task_flow_template_id
       where p.farm_id = $1
@@ -4232,14 +4288,26 @@ app.post("/api/plantings", requireRole("planner"), asyncHandler(async (req, res)
     if (body.taskFlowTemplateId != null) {
       await ensureTaskFlowInFarm(client, body.taskFlowTemplateId, auth.farmId);
     }
+    const { intendedFieldId, intendedBlockId } = await plantingLocationIds(client, auth, body);
     await createUndoSnapshot(client, auth, "Create planting");
     const result = await client.query<{ id: number }>(
       `
         insert into plantings (
-          farm_id, crop_id, variety_id, seed_item_id, title, status, intended_bed_id, task_flow_template_id, spacing, plant_count, bed_length_used_m, notes,
-          tray_location, tray_count, planned_sow_date, planned_transplant_date, expected_harvest_start, expected_harvest_end
+          farm_id, crop_id, variety_id, seed_item_id, title, status,
+          intended_field_id, intended_block_id, intended_bed_id, task_flow_template_id,
+          spacing, plant_count, bed_length_used_m, notes,
+          tray_location, tray_count, cells_per_tray, days_to_harvest,
+          field_spacing_in_row, row_spacing, rows_per_bed, dead_at_frost, bed_cover,
+          planned_sow_date, planned_transplant_date, expected_harvest_start, expected_harvest_end
         )
-        values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18)
+        values (
+          $1, $2, $3, $4, $5, $6,
+          $7, $8, $9, $10,
+          $11, $12, $13, $14,
+          $15, $16, $17, $18,
+          $19, $20, $21, $22, $23,
+          $24, $25, $26, $27
+        )
         returning id
       `,
       [
@@ -4249,6 +4317,8 @@ app.post("/api/plantings", requireRole("planner"), asyncHandler(async (req, res)
         body.seedItemId ?? null,
         body.title,
         body.status,
+        intendedFieldId,
+        intendedBlockId,
         body.intendedBedId ?? null,
         body.taskFlowTemplateId ?? null,
         body.spacing ?? null,
@@ -4257,6 +4327,13 @@ app.post("/api/plantings", requireRole("planner"), asyncHandler(async (req, res)
         body.notes ?? null,
         body.trayLocation ?? null,
         body.trayCount ?? null,
+        body.cellsPerTray ?? null,
+        body.daysToHarvest ?? null,
+        body.fieldSpacingInRow ?? null,
+        body.rowSpacing ?? null,
+        body.rowsPerBed ?? null,
+        body.deadAtFrost ?? null,
+        body.bedCover ?? null,
         body.plannedSowDate ?? null,
         body.plannedTransplantDate ?? null,
         body.expectedHarvestStart ?? null,
@@ -4264,11 +4341,8 @@ app.post("/api/plantings", requireRole("planner"), asyncHandler(async (req, res)
       ]
     );
     await recalculatePlantingTasks(client, result.rows[0].id);
-    if (body.intendedBedId != null) {
-      const blockId = await blockIdForBed(client, body.intendedBedId, auth.farmId);
-      if (blockId != null) {
-        await upsertBlockBedMakingTask(client, auth.farmId, blockId);
-      }
+    if (intendedBlockId != null) {
+      await upsertBlockBedMakingTask(client, auth.farmId, intendedBlockId);
     }
     await pruneUndoSnapshots(client, auth);
     await client.query("commit");
@@ -4299,6 +4373,7 @@ app.put("/api/plantings/:id", requireRole("planner"), asyncHandler(async (req, r
     if (body.taskFlowTemplateId != null) {
       await ensureTaskFlowInFarm(client, body.taskFlowTemplateId, auth.farmId);
     }
+    const { intendedFieldId, intendedBlockId } = await plantingLocationIds(client, auth, body);
     await createUndoSnapshot(client, auth, "Update planting");
     await client.query(
       `
@@ -4309,20 +4384,29 @@ app.put("/api/plantings/:id", requireRole("planner"), asyncHandler(async (req, r
           seed_item_id = $4,
           title = $5,
           status = $6,
-          intended_bed_id = $7,
-          task_flow_template_id = $8,
-          spacing = $9,
-          plant_count = $10,
-          bed_length_used_m = $11,
-          notes = $12,
-          tray_location = $13,
-          tray_count = $14,
-          planned_sow_date = $15,
-          planned_transplant_date = $16,
-          expected_harvest_start = $17,
-          expected_harvest_end = $18,
+          intended_field_id = $7,
+          intended_block_id = $8,
+          intended_bed_id = $9,
+          task_flow_template_id = $10,
+          spacing = $11,
+          plant_count = $12,
+          bed_length_used_m = $13,
+          notes = $14,
+          tray_location = $15,
+          tray_count = $16,
+          cells_per_tray = $17,
+          days_to_harvest = $18,
+          field_spacing_in_row = $19,
+          row_spacing = $20,
+          rows_per_bed = $21,
+          dead_at_frost = $22,
+          bed_cover = $23,
+          planned_sow_date = $24,
+          planned_transplant_date = $25,
+          expected_harvest_start = $26,
+          expected_harvest_end = $27,
           updated_at = now()
-        where id = $1 and farm_id = $19
+        where id = $1 and farm_id = $28
       `,
       [
         id,
@@ -4331,6 +4415,8 @@ app.put("/api/plantings/:id", requireRole("planner"), asyncHandler(async (req, r
         body.seedItemId ?? null,
         body.title,
         body.status,
+        intendedFieldId,
+        intendedBlockId,
         body.intendedBedId ?? null,
         body.taskFlowTemplateId ?? null,
         body.spacing ?? null,
@@ -4339,6 +4425,13 @@ app.put("/api/plantings/:id", requireRole("planner"), asyncHandler(async (req, r
         body.notes ?? null,
         body.trayLocation ?? null,
         body.trayCount ?? null,
+        body.cellsPerTray ?? null,
+        body.daysToHarvest ?? null,
+        body.fieldSpacingInRow ?? null,
+        body.rowSpacing ?? null,
+        body.rowsPerBed ?? null,
+        body.deadAtFrost ?? null,
+        body.bedCover ?? null,
         body.plannedSowDate ?? null,
         body.plannedTransplantDate ?? null,
         body.expectedHarvestStart ?? null,
@@ -4347,11 +4440,8 @@ app.put("/api/plantings/:id", requireRole("planner"), asyncHandler(async (req, r
       ]
     );
     await recalculatePlantingTasks(client, id);
-    if (body.intendedBedId != null) {
-      const blockId = await blockIdForBed(client, body.intendedBedId, auth.farmId);
-      if (blockId != null) {
-        await upsertBlockBedMakingTask(client, auth.farmId, blockId);
-      }
+    if (intendedBlockId != null) {
+      await upsertBlockBedMakingTask(client, auth.farmId, intendedBlockId);
     }
     await pruneUndoSnapshots(client, auth);
     await client.query("commit");
@@ -4439,20 +4529,26 @@ app.post("/api/tasks/:id/record", requireRole("worker"), asyncHandler(async (req
         if (body.intendedBedId != null) {
           await ensurePlantableBedInFarm(client, body.intendedBedId, auth.farmId);
         }
+        const adjustedBlockId = body.intendedBedId != null ? await blockIdForBed(client, body.intendedBedId, auth.farmId) : null;
+        const adjustedFieldId = adjustedBlockId != null ? await fieldIdForBlock(client, adjustedBlockId, auth.farmId) : null;
         await client.query(
           `
             update plantings
             set
-              intended_bed_id = case when $2::boolean then $3::integer else intended_bed_id end,
-              plant_count = case when $4::boolean then $5::integer else plant_count end,
-              bed_length_used_m = case when $6::boolean then $7::numeric else bed_length_used_m end,
-              spacing = case when $8::boolean then $9::text else spacing end,
+              intended_field_id = case when $2::boolean then $3::integer else intended_field_id end,
+              intended_block_id = case when $2::boolean then $4::integer else intended_block_id end,
+              intended_bed_id = case when $2::boolean then $5::integer else intended_bed_id end,
+              plant_count = case when $6::boolean then $7::integer else plant_count end,
+              bed_length_used_m = case when $8::boolean then $9::numeric else bed_length_used_m end,
+              spacing = case when $10::boolean then $11::text else spacing end,
               updated_at = now()
             where id = $1
           `,
           [
             task.planting_id,
             body.intendedBedId !== undefined,
+            adjustedFieldId,
+            adjustedBlockId,
             body.intendedBedId ?? null,
             body.plantCount !== undefined,
             body.plantCount ?? null,

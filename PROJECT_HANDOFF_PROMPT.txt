@@ -1,9 +1,9 @@
-You are helping continue development on FarmMan, a local-first-for-now farm project management and annual crop planning web app prototype.
+You are helping continue development on Farmfield Valley, a local-first-for-now farm project management and annual crop planning web app prototype.
 
 The user is building this as a practical vegetable-farm planning tool. They are not a professional software engineer, so communicate clearly, avoid over-engineering, and explain important setup or data-risk issues plainly. The user values visual/map-based workflows and wants the app to eventually become a serious farm planning and work-recording system.
 
 Current project location:
-/home/name/Documents/Projects/FarmMan
+<project-root>
 
 Current stack:
 - Frontend: React + TypeScript + Vite
@@ -12,7 +12,8 @@ Current stack:
 - Database: PostgreSQL + PostGIS
 - Local single-machine development right now
 - Multi-user accounts have been added, but this is still beta/prototype quality
-- No offline mode currently needed; previous offline imagery work was backed out or deprioritized
+- Optional offline imagery support exists again through a local tile cache served by the API. It is useful but not the current product priority unless the user asks about maps/offline work.
+- This folder is now a local Git repository on branch main. Initial baseline commit: e4dc8b4 "Initial Farmfield Valley project state". The repo has a local placeholder identity: Farmfield Valley Local <farmfield-valley-local@example.invalid>. Change this before pushing to a remote.
 
 Run commands:
 - Install: npm install
@@ -25,7 +26,8 @@ Run commands:
 - Production build check: npm run build
 
 Important warning:
-- Do not run db:seed against real user data unless the user explicitly asks and understands it can wipe demo/prototype tables. The project previously had a problem where reseeding could destroy user data.
+- Do not run db:seed against real user data unless the user explicitly asks and understands it can wipe demo/prototype tables. The seed script now has a destructive-confirmation guard, but still treat it as destructive.
+- Running npm run db:migrate is the right action after new migrations. Do not run seed just because a migration was added.
 
 Core product concept:
 Plan the season -> record what actually happened -> automatically shift future task timing when actual dates differ from planned dates.
@@ -77,12 +79,12 @@ Map system:
 - Crop labels should be short: crop + variety, not status clutter.
 - Old/past-year data should not clutter current allocation/task workflows unless the user intentionally looks back in time.
 
-Current map/bed-generator issues needing attention:
-- The bed generator still sometimes cuts generated beds short when zoomed into part of a field. The intended behavior is to generate full-length beds based on the selected block geometry, not the current viewport.
+Map/bed-generator notes and possible issues:
+- The bed generator previously sometimes cut generated beds short when zoomed into part of a field. Verify whether this still reproduces before assuming it is current. The intended behavior is to generate full-length beds based on the selected block geometry, not the current viewport.
 - The first-bed offset has been unstable. The backend uses one-sided PostGIS ST_Buffer with side=left/right, so the picked line should generally be treated as a bed edge, not a centerline.
-- If beds already exist in a block, adding a new bed should normally build off the last selected/existing bed, not start again from the block edge, unless the user selects “replace existing beds.”
-- The direction arrow is now confusing and probably should be removed or simplified, because the tool should know which direction is inward/next.
-- Deleting beds from the selection card currently appears not to work and needs debugging.
+- If beds already exist in a block, adding a new bed should normally build off the selected bed, not start again from the block edge, unless the user selects “replace existing beds.” Selected-bed extension exists; block-only behavior may still need UX review.
+- The direction arrow was reported as confusing. Verify current UI before changing it.
+- Bed deletion has a frontend call and backend route. If deletion fails, first check whether the bed has planned plantings, placements, or harvest records; those intentionally block deletion.
 - Road/path presets were added using bed_presets.is_road and beds.source = 'road'. Roads should show on the map but not be available for planting, placement, or harvest logging.
 - The bed generator UI should prefer a simple path:
   - Select block or bed.
@@ -107,6 +109,9 @@ Crop planning:
 - Current user-facing planting form should read “Plan Planting.”
 - Use “Planting date,” not “watered in date.”
 - Crop and variety dropdowns should be prominent.
+- Planting records now store intended_field_id, intended_block_id, and intended_bed_id separately. This fixed a bug where choosing a block while editing a planting did not save unless an exact bed was selected.
+- Planting records now also store spreadsheet/import agronomy details: days_to_harvest, field_spacing_in_row, row_spacing, rows_per_bed, cells_per_tray, dead_at_frost, and bed_cover.
+- Rows per bed is especially important to the user because it affects plant-count/bed-length thinking. Keep it visible and editable in planting records.
 - Lot number should be a free text field around 128 characters.
 - Seed/genetics structure desired:
   - Higher categories can be hidden or auto-filled.
@@ -177,8 +182,9 @@ Cover crop and field/block state:
 
 Spreadsheet import:
 - The first spreadsheet work was built around messy demo data. The user now wants a stricter simpler user-accessible uploader.
-- It is okay if spreadsheets must be perfectly formatted.
-- Desired columns:
+- The uploader is strict about the header row, but rows with missing essential data should still import as planting records and be flagged for review instead of aborting the whole upload.
+- The upload card now has a "Download CSV template" button with a correctly formatted example row.
+- Current exact columns:
   - Seed supplier
   - Crop
   - Variety
@@ -193,10 +199,16 @@ Spreadsheet import:
   - Row spacing
   - Rows per bed
   - Dead at frost (y/n)
+  - Bed cover (plastic/bare)
   - Field
   - Block
   - Bed
   - Notes may be useful
+- The importer accepts blank/plastic/bare for Bed cover.
+- Missing essentials currently include Crop, Start date, Plant count, Field, and Block. Those rows import, use harmless placeholders where required by the database, and add a "Needs manual completion:" line to notes.
+- Missing optional/review data adds an "Optional fields to review:" line to notes. The crop plan list and planting detail/edit screens show a small rounded square by the crop/field labels: red for major issues and yellow for optional missing details.
+- New imports should not put "Needs completion" in the planting title. Older imported rows may still have that prefix; the UI strips it visually where practical.
+- Spreadsheet-imported field/block/bed values are now stored in real planting location fields where they match existing map objects.
 - Fertility plans and records should NOT be imported yet. That is a future v0.0.2-style feature.
 
 Feedback/reporting:
@@ -219,11 +231,12 @@ Settings:
 
 Hosting/security:
 - The app was audited for free hosting. For a small beta, frontend/backend/database/maps/auth all need consideration.
-- API base URL was changed or should be changed to use Vite env var, not hardcoded localhost.
+- API base URL uses Vite env var VITE_API_BASE_URL with localhost fallback for local dev.
 - Production build should pass.
 - Public internet requires stricter CORS, secure cookies, CSRF secret, and better auth configuration.
 - If NODE_ENV=production, CSRF_SECRET is required.
 - User has had trouble editing .env by trying to execute it. Remind them .env is a text file to open/edit, not run.
+- Before pushing to GitHub/GitLab or connecting deployment, review demo credentials, .env handling, and anything that should not be public. Prefer a private remote first.
 
 Known local setup pain points:
 - Docker permission issues can happen if user is not in docker group.
@@ -238,6 +251,7 @@ Demo data:
 - User created demo accounts during development; do not assume current credentials are safe to share.
 - User has real-ish drawn fields/blocks they do not want deleted. Never run seed/import code that truncates data unless explicitly approved.
 - When using demo spreadsheet data, user wanted only certain fields/blocks such as B1-3 and H2-6, and wanted existing drawn fields/blocks preserved.
+- .gitignore keeps local demo spreadsheet plans (*.xlsx/*.ods), .env, node_modules, build output, and offline imagery cache out of Git. The tractor PNG asset is tracked.
 
 Coding guidance for the next assistant:
 - Inspect code before editing.
@@ -253,24 +267,28 @@ Coding guidance for the next assistant:
 - Avoid exposing developer terms like “child placement” in user-facing UI unless necessary.
 - If a feature has complex future implications, implement the simple version but leave code structured for extension.
 
-Most recent work before this handoff:
-- Added/adjusted road/path bed presets with bed_presets.is_road and beds.source = 'road'.
-- Road/path presets should be non-plantable.
-- Added default “Harvest road / path” preset in migration 024.
-- Added block bed-making task creation after generating plantable beds.
-- Added unscheduled task display in task list.
-- Tried to fix bed sizing by treating the line as a centerline, but user reported first bed too far from edge. This was reverted because PostGIS ST_Buffer uses side=left/right, so the line is a bed edge.
-- Added map label cleanup to hide trailing “Area” from labels.
+Recent work before this handoff:
+- Initialized a local Git repository on branch main and committed baseline e4dc8b4.
+- Tightened .gitignore so real .env files, node_modules, build output, offline imagery cache, and local demo spreadsheets do not get committed.
+- Added spreadsheet column Bed cover (plastic/bare), plus a downloadable CSV template with an example row.
+- Changed spreadsheet import so incomplete rows still import and are flagged for manual review instead of aborting the upload.
+- Added red/yellow rounded-square review markers in the crop plan list and planting edit form: red for major missing data, yellow for optional missing details.
+- Added migration 025_planting_location_and_import_details.sql. It adds intended_field_id, intended_block_id, and import/agronomy fields to plantings.
+- Fixed planting edit bug where selecting a block did not persist unless a bed was also selected. Plantings now store intended field/block/bed separately.
+- Added planting record fields/display/editing for days to harvest, field spacing in row, row spacing, rows per bed, cells per tray, dead at frost, and bed cover.
+- Ran npm run db:migrate after migration 025; it completed successfully.
+- Verification after the latest changes: npm test passed and npm run build passed.
 
-Current immediate issues from user:
-1. Beds still get cut short when zoomed into part of a field. The generation should use the full block geometry, not the viewport.
-2. Weird offset likely comes from existing beds in the block. User says new beds should build off the last bed rather than the block edge unless replacing all beds.
-3. Direction arrow is confusing and should likely be removed.
-4. Delete bed button in selection card does not work.
+Current known/stale-risk items:
+- Bed deletion now has a frontend call and backend route. If it appears not to work, first check whether deletion is intentionally blocked because the bed has planned plantings, placements, or harvest records.
+- Selected-bed generation exists and should auto-select the new bed after "Make one bed." Verify in the live UI if the user reports otherwise.
+- Block-only bed generation may still need UX refinement around whether it should automatically build from the last existing bed instead of an offset from the picked block edge.
+- The old reports about beds being cut short when zoomed into part of a field and the confusing direction arrow may or may not still reproduce; verify before assuming they are current.
+- planning.txt has an unrelated uncommitted user edit: "Direct seed SS". Do not discard it.
 
-Suggested next debugging steps:
-1. Find bed delete button in the selection card. Confirm frontend calls an API route, confirm route exists, confirm HTTP response, and confirm database constraints are not preventing delete.
-2. Confirm whether visibleBeds or map viewport filtering is being passed into bed generation. Bed generation should use selected block boundary from database/API, not the map viewport or currently visible bed subset.
+Suggested next debugging steps if bed generator comes up again:
+1. Reproduce in the browser with the user's exact block/zoom/selection path.
+2. Confirm the generate-beds request sends full picked line coordinates and not viewport-filtered geometry.
 3. Review bed generator state:
    - bedLineSource
    - selectedBedGuideLine
@@ -278,9 +296,6 @@ Suggested next debugging steps:
    - existingBeds
    - replaceExisting
    - fillWholeBlock
-   New behavior should be:
-   - If selected bed and not replace existing, guide line comes from selected bed edge and layoutStartIndex should create exactly the next adjacent bed/path.
-   - If replace existing or no beds, use picked block edge.
-4. Remove or hide direction arrow from normal bed generator UI once inward/next-bed direction is determined automatically.
-5. Add or update tests around bed generation geometry if feasible, but prioritize fixing the live workflow first.
-
+4. If user selects a bed and not replace existing, guide line should come from selected bed edge and layoutStartIndex should create the next adjacent bed/path.
+5. If replacing existing or no beds, use picked block edge.
+6. Keep PostGIS ST_Buffer side=left/right behavior in mind: the picked line is treated as a bed edge, not a centerline.
