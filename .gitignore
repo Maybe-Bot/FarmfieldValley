@@ -22,3 +22,4 @@ apps/api/offline-imagery-cache
 # tracked separately from local working data.
 demo data/*.xlsx
 demo data/*.ods
+planning.txt
