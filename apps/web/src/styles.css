@@ -550,6 +550,17 @@ textarea {
   width: min(560px, 100%);
 }
 
+.prototype-warning-dialog {
+  width: min(560px, 100%);
+  display: grid;
+  gap: 0.75rem;
+}
+
+.prototype-warning-dialog h2,
+.prototype-warning-dialog p {
+  margin: 0;
+}
+
 .feedback-list {
   display: grid;
   gap: 0.75rem;

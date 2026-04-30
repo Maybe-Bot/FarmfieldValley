@@ -98,6 +98,8 @@ const emptyDashboard: DashboardData = {
 const VIEW_STORAGE_KEY = "farmfield-valley-map-view";
 const SETTINGS_STORAGE_KEY = "farmfield-valley-settings";
 const MOBILE_MEDIA_QUERY = "(max-width: 760px)";
+const PROTOTYPE_WARNING_VERSION = "v1";
+const PROTOTYPE_WARNING_STORAGE_PREFIX = "farmfield-valley-prototype-warning";
 
 // Default center is only a starting point; saved farm geometry can fit/zoom the map later.
 const DEFAULT_CENTER: LatLngTuple = [40.0448, -76.2662];
@@ -386,6 +388,10 @@ function readSettings(): { distanceUnit: DistanceUnit; themeMode: ThemeMode } {
   } catch {
     return { distanceUnit: "m", themeMode: "light" };
   }
+}
+
+function prototypeWarningStorageKey(userId: number) {
+  return `${PROTOTYPE_WARNING_STORAGE_PREFIX}:${PROTOTYPE_WARNING_VERSION}:user-${userId}`;
 }
 
 // Map geometry helpers. These bridge Leaflet lat/lng data with simple projected
@@ -1180,6 +1186,7 @@ function App() {
   const [feedbackComment, setFeedbackComment] = useState("");
   const [feedbackStatus, setFeedbackStatus] = useState<string | null>(null);
   const [isSavingFeedback, setIsSavingFeedback] = useState(false);
+  const [prototypeWarningOpen, setPrototypeWarningOpen] = useState(false);
   const recentActivityRef = useRef<ActivityEntry[]>([]);
   const canPlan = session?.authenticated === true && session.user.role === "planner";
   const isAdmin = session?.authenticated === true && session.user.isAdmin;
@@ -1227,6 +1234,17 @@ function App() {
     mediaQuery.addEventListener("change", onChange);
     return () => mediaQuery.removeEventListener("change", onChange);
   }, []);
+
+  useEffect(() => {
+    if (!session?.authenticated || typeof window === "undefined") {
+      setPrototypeWarningOpen(false);
+      return;
+    }
+
+    setPrototypeWarningOpen(
+      window.localStorage.getItem(prototypeWarningStorageKey(session.user.id)) !== PROTOTYPE_WARNING_VERSION
+    );
+  }, [session]);
 
   async function load(
     includeAccounts = canPlan,
@@ -2637,6 +2655,14 @@ function App() {
     setMapNotice(null);
     setError(null);
     setLoading(false);
+    setPrototypeWarningOpen(false);
+  }
+
+  function dismissPrototypeWarning() {
+    if (session?.authenticated && typeof window !== "undefined") {
+      window.localStorage.setItem(prototypeWarningStorageKey(session.user.id), PROTOTYPE_WARNING_VERSION);
+    }
+    setPrototypeWarningOpen(false);
   }
 
   if (sessionLoading) {
@@ -2802,6 +2828,24 @@ function App() {
                   </button>
                 </div>
               </form>
+            </div>
+          </div>
+        )}
+
+        {prototypeWarningOpen && (
+          <div className="modal-backdrop" role="dialog" aria-modal="true" aria-labelledby="prototype-warning-title">
+            <div className="card prototype-warning-dialog">
+              <p className="eyebrow">Testing prototype</p>
+              <h2 id="prototype-warning-title">Use this only for testing</h2>
+              <p>
+                Farmfield Valley is an early prototype. It may break, give incorrect results, or lose data while it is being tested and changed.
+              </p>
+              <p>
+                Do not rely on it for real farm records, safety decisions, payroll, compliance, or anything important yet. Use it only to try the workflow and share feedback.
+              </p>
+              <button className="primary-button full-span" type="button" onClick={dismissPrototypeWarning}>
+                I understand
+              </button>
             </div>
           </div>
         )}
