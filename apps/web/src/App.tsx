@@ -9,7 +9,7 @@
  */
 import { CSSProperties, FormEvent, ReactNode, useEffect, useMemo, useRef, useState } from "react";
 import { LatLngTuple } from "leaflet";
-import { MapContainer, Marker, Polygon, Polyline, TileLayer, Tooltip, useMap, useMapEvents } from "react-leaflet";
+import { AttributionControl, Circle, CircleMarker, MapContainer, Marker, Polygon, Polyline, TileLayer, Tooltip, useMap, useMapEvents } from "react-leaflet";
 import { api } from "./api";
 import { roleLabel } from "./account-utils";
 import { buildBedAllocationPreview, estimatePlantCountFromPlan } from "./bed-allocation";
@@ -67,6 +67,12 @@ type BedAllocationPreview = {
   label: string;
 };
 
+type UserLocation = {
+  lat: number;
+  lng: number;
+  accuracyM: number | null;
+};
+
 const emptyDashboard: DashboardData = {
   farm: null,
   fields: [],
@@ -91,6 +97,7 @@ const emptyDashboard: DashboardData = {
 // Local storage keeps lightweight UI preferences on this browser only.
 const VIEW_STORAGE_KEY = "farmfield-valley-map-view";
 const SETTINGS_STORAGE_KEY = "farmfield-valley-settings";
+const MOBILE_MEDIA_QUERY = "(max-width: 760px)";
 
 // Default center is only a starting point; saved farm geometry can fit/zoom the map later.
 const DEFAULT_CENTER: LatLngTuple = [40.0448, -76.2662];
@@ -1118,7 +1125,9 @@ function App() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  const [mapWorkflowMode, setMapWorkflowMode] = useState<MapWorkflowMode>("planning");
+  const [mapWorkflowMode, setMapWorkflowMode] = useState<MapWorkflowMode>(() => (
+    typeof window !== "undefined" && window.matchMedia(MOBILE_MEDIA_QUERY).matches ? "field_work" : "planning"
+  ));
   const [mapMode, setMapMode] = useState<MapMode>("select");
   const [selection, setSelection] = useState<MapSelection>(null);
   const [draftCoordinates, setDraftCoordinates] = useState<CoordinateDraft[]>([]);
@@ -1155,10 +1164,14 @@ function App() {
   const [mapZoom, setMapZoom] = useState(initialView.zoom);
   const [distanceUnit, setDistanceUnit] = useState<DistanceUnit>(() => readSettings().distanceUnit);
   const [themeMode, setThemeMode] = useState<ThemeMode>(() => readSettings().themeMode);
+  const [isMobileViewport, setIsMobileViewport] = useState(() => (
+    typeof window !== "undefined" ? window.matchMedia(MOBILE_MEDIA_QUERY).matches : false
+  ));
   const [showPlannedPlantingsLayer, setShowPlannedPlantingsLayer] = useState(true);
   const [showActualPlacementsLayer, setShowActualPlacementsLayer] = useState(true);
   const [showTaskLayer, setShowTaskLayer] = useState(true);
   const [showOtherFarmMaps, setShowOtherFarmMaps] = useState(false);
+  const [userLocation, setUserLocation] = useState<UserLocation | null>(null);
   const [selectedMapWeekStart, setSelectedMapWeekStart] = useState(() => startOfWeekDate(todayDateInputValue()));
   const [taskListWeekStart, setTaskListWeekStart] = useState(() => startOfWeekDate(todayDateInputValue()));
   const [selectedPlanPlantingIds, setSelectedPlanPlantingIds] = useState<number[]>([]);
@@ -1200,7 +1213,26 @@ function App() {
     );
   }, [distanceUnit, themeMode]);
 
-  async function load(includeAccounts = canPlan, options?: { allowAuthReset?: boolean; authBootstrap?: boolean }) {
+  useEffect(() => {
+    if (typeof window === "undefined") {
+      return;
+    }
+
+    const mediaQuery = window.matchMedia(MOBILE_MEDIA_QUERY);
+    const onChange = (event: MediaQueryListEvent) => {
+      setIsMobileViewport(event.matches);
+    };
+
+    setIsMobileViewport(mediaQuery.matches);
+    mediaQuery.addEventListener("change", onChange);
+    return () => mediaQuery.removeEventListener("change", onChange);
+  }, []);
+
+  async function load(
+    includeAccounts = canPlan,
+    includeFeedback = isAdmin,
+    options?: { allowAuthReset?: boolean; authBootstrap?: boolean }
+  ) {
     const allowAuthReset = options?.allowAuthReset ?? true;
     const authBootstrap = options?.authBootstrap ?? false;
     setLoading(true);
@@ -1209,7 +1241,7 @@ function App() {
       const [next, nextAccounts, nextFeedbackReports, nextUndoSnapshots] = await Promise.all([
         api.getDashboard(),
         includeAccounts ? api.getAccounts().catch(() => []) : Promise.resolve([]),
-        includeAccounts ? api.getFeedbackReports().catch(() => []) : Promise.resolve([]),
+        includeFeedback ? api.getFeedbackReports().catch(() => []) : Promise.resolve([]),
         api.getUndoSnapshots().catch(() => ({ undo: [], redo: [] }))
       ]);
       setData(next);
@@ -1251,7 +1283,7 @@ function App() {
         const nextSession = await api.getSession();
         setSession(nextSession);
         if (nextSession.authenticated) {
-          await load(nextSession.user.role === "planner");
+          await load(nextSession.user.role === "planner", nextSession.user.isAdmin);
         } else {
           setLoading(false);
         }
@@ -1269,6 +1301,19 @@ function App() {
       setView("tasks");
     }
   }, [canPlan, view]);
+
+  useEffect(() => {
+    if (isMobileViewport && (view === "flows" || view === "admin" || view === "harvests")) {
+      setView("map");
+    }
+  }, [isMobileViewport, view]);
+
+  useEffect(() => {
+    if (isMobileViewport && mapWorkflowMode !== "field_work") {
+      resetMapDrafts("select");
+      setMapWorkflowMode("field_work");
+    }
+  }, [isMobileViewport, mapWorkflowMode]);
 
   useEffect(() => {
     if (!canPlan) {
@@ -1543,17 +1588,48 @@ function App() {
       return task.scheduledDate >= taskListWeekStart && task.scheduledDate <= taskListWeekEnd;
     });
   }, [data.tasks, taskListWeekStart, taskListWeekEnd]);
+  const planGroups = useMemo(() => {
+    const grouped = new Map<number, Planting[]>();
+    for (const planting of data.plantings) {
+      const year = plantingPlanYear(planting);
+      const current = grouped.get(year) ?? [];
+      current.push(planting);
+      grouped.set(year, current);
+    }
+    return [...grouped.entries()].sort(([leftYear], [rightYear]) => rightYear - leftYear);
+  }, [data.plantings]);
   const unscheduledTaskList = useMemo(() => (
     data.tasks
       .filter((task) => task.status !== "done" && task.scheduledDate == null)
       .sort((left, right) => left.title.localeCompare(right.title))
   ), [data.tasks]);
+  const recordTaskCandidate = selectedTask ?? data.tasks.find((task) => task.status !== "done") ?? data.tasks[0] ?? null;
+
+  function selectTask(task: Task, nextView?: View) {
+    setSelectedTaskId(task.id);
+    if (task.plantingId != null) {
+      setSelectedPlantingId(task.plantingId);
+    }
+    if (nextView) {
+      setView(nextView);
+    }
+  }
+
+  function focusPlantingOnMap(planting: Planting) {
+    setSelectedPlantingId(planting.id);
+    if (planting.intendedBedId != null) {
+      setSelection({ type: "bed", id: planting.intendedBedId });
+    } else if (planting.intendedBlockId != null) {
+      setSelection({ type: "block", id: planting.intendedBlockId });
+    } else if (planting.intendedFieldId != null) {
+      setSelection({ type: "field", id: planting.intendedFieldId });
+    }
+    setView("map");
+  }
+
   async function quickCompleteTask(task: Task) {
     if (taskNeedsRecordForm(task.taskType)) {
-      setSelectedTaskId(task.id);
-      if (task.plantingId != null) {
-        setSelectedPlantingId(task.plantingId);
-      }
+      selectTask(task);
       setMapNotice("This task changes crop state. Use the Record from task panel so the needed details are captured.");
       return;
     }
@@ -1727,7 +1803,7 @@ function App() {
       recordActivity("feedback submitted", { page: view });
       setFeedbackComment("");
       setFeedbackStatus("Feedback saved.");
-      if (canPlan) {
+      if (isAdmin) {
         setFeedbackReports(await api.getFeedbackReports().catch(() => feedbackReports));
       }
       window.setTimeout(() => {
@@ -1847,22 +1923,6 @@ function App() {
     }
   }
 
-  async function updateMapPrivacy(mapsPrivate: boolean) {
-    if (!canPlan) {
-      setMapNotice("Planner access required.");
-      return;
-    }
-
-    try {
-      setMapNotice("Saving privacy setting...");
-      await api.updateFarmSettings({ mapsPrivate });
-      await load(canPlan);
-      setMapNotice(mapsPrivate ? "Private map mode enabled." : "Map is visible to other users.");
-    } catch (err) {
-      setMapNotice(err instanceof Error ? err.message : "Could not save privacy setting.");
-    }
-  }
-
   function startNewTaskFlow() {
     if (!canPlan) {
       setMapNotice("Planner access required.");
@@ -1969,6 +2029,38 @@ function App() {
       resetMapDrafts("select");
       setMapNotice("Field Work mode is for selecting beds and recording work. Drawing tools are in Planning.");
     }
+  }
+
+  function locateUserOnMap() {
+    if (typeof navigator === "undefined" || !navigator.geolocation) {
+      setMapNotice("This browser does not provide GPS location.");
+      return;
+    }
+
+    setMapNotice("Finding your phone location...");
+    navigator.geolocation.getCurrentPosition(
+      (position) => {
+        setUserLocation({
+          lat: position.coords.latitude,
+          lng: position.coords.longitude,
+          accuracyM: Number.isFinite(position.coords.accuracy) ? position.coords.accuracy : null
+        });
+        setMapNotice("Phone location shown on the map.");
+      },
+      (geolocationError) => {
+        const message = geolocationError.code === geolocationError.PERMISSION_DENIED
+          ? "Location permission was blocked. Allow location access in the browser to use phone GPS."
+          : geolocationError.code === geolocationError.TIMEOUT
+            ? "Phone GPS took too long to respond. Try again near a window or outdoors."
+            : "Phone location is unavailable right now.";
+        setMapNotice(message);
+      },
+      {
+        enableHighAccuracy: true,
+        maximumAge: 10000,
+        timeout: 12000
+      }
+    );
   }
 
   function startDrawField() {
@@ -2512,34 +2604,22 @@ function App() {
     const nextSession = await api.login({ username, password });
     setSession(nextSession);
     if (nextSession.authenticated) {
-      await load(nextSession.user.role === "planner", { allowAuthReset: false, authBootstrap: true });
+      await load(nextSession.user.role === "planner", nextSession.user.isAdmin, { allowAuthReset: false, authBootstrap: true });
     }
   }
 
-  async function handleRegister(farmName: string, displayName: string, username: string, password: string) {
+  async function handleRegister(farmName: string, displayName: string, email: string, username: string, password: string) {
     setError(null);
     const nextSession = await api.register({
       farmName,
       displayName: displayName.trim() || null,
+      email,
       username,
       password
     });
     setSession(nextSession);
     if (nextSession.authenticated) {
-      await load(nextSession.user.role === "planner", { allowAuthReset: false, authBootstrap: true });
-    }
-  }
-
-  async function handleAdminBootstrap(displayName: string, username: string, password: string) {
-    setError(null);
-    const nextSession = await api.bootstrapAdmin({
-      displayName: displayName.trim() || null,
-      username,
-      password
-    });
-    setSession(nextSession);
-    if (nextSession.authenticated) {
-      await load(true, { allowAuthReset: false, authBootstrap: true });
+      await load(nextSession.user.role === "planner", nextSession.user.isAdmin, { allowAuthReset: false, authBootstrap: true });
     }
   }
 
@@ -2564,37 +2644,68 @@ function App() {
   }
 
   if (!session?.authenticated) {
-    return <LoginScreen error={error} onLogin={handleLogin} onRegister={handleRegister} onAdminBootstrap={handleAdminBootstrap} themeMode={themeMode} />;
+    return <LoginScreen error={error} onLogin={handleLogin} onRegister={handleRegister} themeMode={themeMode} />;
   }
 
-  const navItems = (canPlan
+  const navItems: Array<[View, string]> = isMobileViewport
     ? [
-        ["map", "Farm Map"],
-        ["plan", "Annual Crop Plan"],
-        ["planting", "Planting Detail"],
-        ["tasks", "Task List"],
-        ["flows", "Task Flows"],
-        ["record", "Record Work"],
-        ["harvests", "Harvest Log"],
-        ["settings", "Settings"]
+        ["map", "Map"],
+        ["tasks", "Tasks"]
       ]
-    : [
-        ["map", "Farm Map"],
-        ["plan", "Annual Crop Plan"],
-        ["planting", "Planting Detail"],
-        ["tasks", "Task List"],
-        ["record", "Record Work"],
-        ["harvests", "Harvest Log"],
-        ["settings", "Settings"]
-      ]).concat(isAdmin ? [["admin", "Admin"]] : []);
+    : (canPlan
+      ? [
+          ["map", "Farm Map"],
+          ["plan", "Annual Crop Plan"],
+          ["planting", "Planting Detail"],
+          ["tasks", "Task List"],
+          ["flows", "Task Flows"],
+          ["record", "Record Work"],
+          ["harvests", "Harvest Log"],
+          ["settings", "Settings"]
+        ]
+      : [
+          ["map", "Farm Map"],
+          ["plan", "Annual Crop Plan"],
+          ["planting", "Planting Detail"],
+          ["tasks", "Task List"],
+          ["record", "Record Work"],
+          ["harvests", "Harvest Log"],
+          ["settings", "Settings"]
+        ]);
+
+  if (!isMobileViewport && isAdmin) {
+    navItems.push(["admin", "Admin"]);
+  }
+
+  const viewTitle = view === "map"
+    ? "Farm Map"
+    : view === "plan"
+      ? "Annual Crop Plan"
+      : view === "planting"
+        ? "Planting Detail"
+        : view === "tasks"
+          ? "Task List"
+          : view === "flows"
+            ? "Task Flows"
+            : view === "record"
+              ? "Record Work"
+              : view === "settings"
+                ? "Settings"
+                : view === "admin"
+                  ? "Admin Control Panel"
+                  : "Harvest Log / Summary";
 
   return (
-    <div className={`app-shell theme-${themeMode}`}>
+    <div className={`app-shell theme-${themeMode}${isMobileViewport ? " mobile-shell" : ""}`}>
       <aside className="sidebar">
         <div>
           <p className="eyebrow">Farmfield Valley</p>
           <h1>{data.farm?.name ?? "Farm planner"}</h1>
-          <p className="muted">Plan the season, record actual work, and shift future task timing automatically.</p>
+          <p className="muted">
+            {isMobileViewport
+              ? "Mobile mode focuses on maps, plantings, tasks, and recording field work."
+              : "Plan the season, record actual work, and shift future task timing automatically."}
+          </p>
         </div>
 
         <nav className="nav-list">
@@ -2609,6 +2720,16 @@ function App() {
           ))}
         </nav>
 
+        {isMobileViewport && (
+          <button
+            type="button"
+            className={view === "settings" ? "mobile-settings-link active" : "mobile-settings-link"}
+            onClick={() => setView("settings")}
+          >
+            Settings
+          </button>
+        )}
+
               <div className="card small">
                 <h3>Prototype scope</h3>
           <p>Mouse-based field and block drawing on aerial imagery, plus generated bed layouts from reusable farm bed presets.</p>
@@ -2618,45 +2739,33 @@ function App() {
       <main className="main-panel">
         <header className="topbar">
           <div>
-            <strong>{view === "map" ? "Farm Map" : view === "plan" ? "Annual Crop Plan" : view === "planting" ? "Planting Detail" : view === "tasks" ? "Task List" : view === "flows" ? "Task Flows" : view === "record" ? "Record Work" : view === "settings" ? "Settings" : view === "admin" ? "Admin Control Panel" : "Harvest Log / Summary"}</strong>
+            <strong>{viewTitle}</strong>
             <p className="muted">{error ?? mapNotice ?? (loading ? "Loading data..." : "Local prototype connected to the API.")}</p>
           </div>
           <div className="header-actions">
             <span className="small-chip">
               {session.user.displayName ?? session.user.username} • {session.user.isAdmin ? "admin" : roleLabel(session.user.role)} • {session.user.farmName}
             </span>
-            <button
-              className="secondary-button"
-              disabled={undoSnapshots.length === 0}
-              title={undoSnapshots[0] ? `Undo: ${undoSnapshots[0].label}` : "Nothing to undo yet"}
-              onClick={() => void undoLastChange()}
-            >
-              Undo
-            </button>
-            <button
-              className="secondary-button"
-              disabled={redoSnapshots.length === 0}
-              title={redoSnapshots[0] ? `Redo: ${redoSnapshots[0].label}` : "Nothing to redo yet"}
-              onClick={() => void redoLastChange()}
-            >
-              Redo
-            </button>
-            <button className="secondary-button" onClick={() => void load()}>
-              Refresh
-            </button>
-            <button
-              className="secondary-button"
-              onClick={() => {
-                recordActivity("feedback dialog opened", { page: view });
-                setFeedbackStatus(null);
-                setFeedbackOpen(true);
-              }}
-            >
-              Suggestion/problem
-            </button>
-            <button className="secondary-button" onClick={() => void handleLogout()}>
-              Log out
-            </button>
+            {!isMobileViewport && (
+              <>
+                <button
+                  className="secondary-button"
+                  disabled={undoSnapshots.length === 0}
+                  title={undoSnapshots[0] ? `Undo: ${undoSnapshots[0].label}` : "Nothing to undo yet"}
+                  onClick={() => void undoLastChange()}
+                >
+                  Undo
+                </button>
+                <button
+                  className="secondary-button"
+                  disabled={redoSnapshots.length === 0}
+                  title={redoSnapshots[0] ? `Redo: ${redoSnapshots[0].label}` : "Nothing to redo yet"}
+                  onClick={() => void redoLastChange()}
+                >
+                  Redo
+                </button>
+              </>
+            )}
           </div>
         </header>
 
@@ -2706,14 +2815,17 @@ function App() {
                   zoom={initialView.zoom}
                   minZoom={3}
                   maxZoom={24}
+                  attributionControl={false}
                   style={{ height: "100%", width: "100%" }}
                   zoomSnap={0.25}
                 >
+                  <AttributionControl position="bottomright" prefix={false} />
                   <ResponsiveBasemap />
                   <MapZoomTracker onZoomChange={setMapZoom} />
                   <FitToFarm fields={visibleFields} blocks={visibleBlocks} />
                   <PersistMapView />
                   <FocusSelection selection={selection} fields={visibleFields} blocks={visibleBlocks} zones={visibleBlockZones} beds={visibleBeds} />
+                  <FocusUserLocation location={userLocation} />
                   <MapDrawingEvents
                     mode={mapMode}
                     onAddPoint={(point) => {
@@ -3027,6 +3139,40 @@ function App() {
                   </Marker>
                 ))}
 
+                {userLocation && (
+                  <>
+                    {userLocation.accuracyM != null && (
+                      <Circle
+                        center={[userLocation.lat, userLocation.lng]}
+                        radius={userLocation.accuracyM}
+                        interactive={false}
+                        pathOptions={{
+                          color: "#276fbf",
+                          fillColor: "#7bb8ff",
+                          fillOpacity: 0.12,
+                          opacity: 0.45,
+                          weight: 1.5
+                        }}
+                      />
+                    )}
+                    <CircleMarker
+                      center={[userLocation.lat, userLocation.lng]}
+                      radius={8}
+                      pathOptions={{
+                        color: "#ffffff",
+                        fillColor: "#1e78d6",
+                        fillOpacity: 1,
+                        opacity: 1,
+                        weight: 3
+                      }}
+                    >
+                      <Tooltip direction="top" className="polygon-label">
+                        You are here{userLocation.accuracyM != null ? `, within about ${Math.round(userLocation.accuracyM)} m` : ""}
+                      </Tooltip>
+                    </CircleMarker>
+                  </>
+                )}
+
                 {(mapMode === "draw_field" || mapMode === "draw_block" || mapMode === "draw_zone") && draftCoordinates.length > 0 && (
                   <>
                     <Polyline positions={polygonPositions(draftCoordinates)} pathOptions={{ color: "#f5f0d8", weight: 3 }} />
@@ -3134,12 +3280,22 @@ function App() {
               </MapContainer>
               </div>
               <div className="card map-controls-card">
+                <div className="map-location-panel">
+                  <button type="button" className="primary-button" onClick={locateUserOnMap}>
+                    Use phone GPS
+                  </button>
+                  {userLocation && (
+                    <p className="muted">
+                      Location shown{userLocation.accuracyM != null ? `, accuracy about ${Math.round(userLocation.accuracyM)} m` : ""}.
+                    </p>
+                  )}
+                </div>
                 <div className="timeline-panel">
                   <div className="timeline-header">
                     <strong>Map week</strong>
                     <span>{formatWeekRange(selectedMapWeekStart)}</span>
                   </div>
-                  <div className="button-row">
+                  <div className="button-row week-button-row">
                     <button type="button" className="secondary-button compact-button" onClick={() => setSelectedMapWeekStart((current) => addDaysToDate(current, -7))}>Previous week</button>
                     <button type="button" className="secondary-button compact-button" onClick={() => setSelectedMapWeekStart(startOfWeekDate(todayDateInputValue()))}>This week</button>
                     <button type="button" className="secondary-button compact-button" onClick={() => setSelectedMapWeekStart((current) => addDaysToDate(current, 7))}>Next week</button>
@@ -3199,6 +3355,7 @@ function App() {
             </div>
 
             <div className="stack">
+              {!isMobileViewport && (
               <div className="card">
                 <h2>Tools</h2>
                 <div className="map-workflow-toggle" aria-label="Map workflow">
@@ -3259,6 +3416,7 @@ function App() {
                 {!canPlan && <p className="muted">Worker accounts can view the map and record work, but planning changes require a planner account.</p>}
                 {canPlan && !selectedMapItemIsOwnFarm && <p className="muted">This selected map item belongs to another farm. You can view it, but editing is disabled.</p>}
               </div>
+              )}
 
               {mapWorkflowMode === "planning" && (mapMode === "draw_field" || mapMode === "draw_block" || zoneDraftActive || mapMode === "draw_zone" || mapMode === "draw_zone_split") && (
                 <div className="card">
@@ -3561,6 +3719,7 @@ function App() {
                       {selectedZone && selectedZone.plannedUse === "beds" && <div><dt>Beds in area</dt><dd>{data.beds.filter((bed) => bed.zoneId === selectedZone.id).length}</dd></div>}
                       <div><dt>Notes</dt><dd>{selectedMapItem.notes ?? "—"}</dd></div>
                     </dl>
+                    {!isMobileViewport && (
                     <div className="button-row">
                       {mapWorkflowMode === "planning" ? (
                         <>
@@ -3571,6 +3730,7 @@ function App() {
                         <button className="secondary-button" onClick={() => changeMapWorkflowMode("planning")} disabled={!canPlan}>Switch to Planning to edit</button>
                       )}
                     </div>
+                    )}
                   </>
                 ) : (
                   <p className="muted">Nothing selected.</p>
@@ -3603,23 +3763,89 @@ function App() {
                   </button>
                 )}
               </div>
-              <table className="data-table">
-                <thead>
-                  <tr>
-                    {canPlan && <th>Pick</th>}
-                    <th>Planting</th>
-                    <th>Status</th>
-                    <th>Planned sow</th>
-                    <th>Planned transplant</th>
-                    <th>Harvest window</th>
-                    <th>Intended bed</th>
-                    <th>Actions</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {[...new Map(data.plantings.map((planting) => [plantingPlanYear(planting), data.plantings.filter((item) => plantingPlanYear(item) === plantingPlanYear(planting))])).entries()]
-                    .sort(([a], [b]) => b - a)
-                    .map(([year, plantings]) => (
+              {isMobileViewport ? (
+                <div className="mobile-card-list">
+                  {planGroups.map(([year, plantings]) => (
+                    <div key={year} className="mobile-year-group">
+                      <div className="mobile-list-header">
+                        <h3>{year} crop plan</h3>
+                        <span className="small-chip">{plantings.length} plantings</span>
+                      </div>
+                      <div className="mobile-card-list">
+                        {plantings.map((planting) => {
+                          const review = plantingReviewInfo(planting);
+                          return (
+                            <article key={planting.id} className="card mobile-summary-card">
+                              <div className="mobile-list-header">
+                                <div>
+                                  <strong>{planting.title.replace(/^Needs completion - /, "")}</strong>
+                                  <div className="table-subtle crop-name-with-review">
+                                    <PlantingReviewMarker review={review} />
+                                    <span>{planting.seedName ?? `${planting.cropName}${planting.varietyName ? ` / ${planting.varietyName}` : ""}`}</span>
+                                  </div>
+                                </div>
+                                <span className={`status-pill status-${planting.status}`}>{planting.status.replaceAll("_", " ")}</span>
+                              </div>
+                              <div className="mobile-summary-grid">
+                                <div className="mobile-summary-row">
+                                  <span className="muted">Planned sow</span>
+                                  <strong>{formatDate(planting.plannedSowDate)}</strong>
+                                </div>
+                                <div className="mobile-summary-row">
+                                  <span className="muted">Transplant</span>
+                                  <strong>{formatDate(planting.plannedTransplantDate)}</strong>
+                                </div>
+                                <div className="mobile-summary-row">
+                                  <span className="muted">Harvest</span>
+                                  <strong>{formatDate(planting.expectedHarvestStart)} to {formatDate(planting.expectedHarvestEnd)}</strong>
+                                </div>
+                                <div className="mobile-summary-row">
+                                  <span className="muted">Location</span>
+                                  <strong>{[planting.intendedFieldName, planting.intendedBlockName, planting.intendedBedName].filter(Boolean).join(" / ") || "—"}</strong>
+                                </div>
+                              </div>
+                              <div className="button-row">
+                                <button
+                                  type="button"
+                                  className="secondary-button compact-button"
+                                  onClick={() => {
+                                    setSelectedPlantingId(planting.id);
+                                    setView("planting");
+                                  }}
+                                >
+                                  Open detail
+                                </button>
+                                <button
+                                  type="button"
+                                  className="secondary-button compact-button"
+                                  onClick={() => focusPlantingOnMap(planting)}
+                                >
+                                  Show on map
+                                </button>
+                              </div>
+                            </article>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <table className="data-table">
+                  <thead>
+                    <tr>
+                      {canPlan && <th>Pick</th>}
+                      <th>Planting</th>
+                      <th>Status</th>
+                      <th>Planned sow</th>
+                      <th>Planned transplant</th>
+                      <th>Harvest window</th>
+                      <th>Intended bed</th>
+                      <th>Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {planGroups.map(([year, plantings]) => (
                       <tr key={year}>
                         <td colSpan={canPlan ? 8 : 7} className="table-year-cell">
                           <details open={year >= Number(todayDateInputValue().slice(0, 4))}>
@@ -3679,8 +3905,9 @@ function App() {
                         </td>
                       </tr>
                     ))}
-                </tbody>
-              </table>
+                  </tbody>
+                </table>
+              )}
               {unscheduledTaskList.length > 0 && (
                 <div className="instruction-box">
                   <strong>Unscheduled tasks</strong>
@@ -3885,69 +4112,130 @@ function App() {
                   <h2>Tasks this week</h2>
                   <p className="muted">{formatWeekRange(taskListWeekStart)}</p>
                 </div>
-                <div className="button-row">
+                <div className="button-row week-button-row">
                   <button type="button" className="secondary-button compact-button" onClick={() => setTaskListWeekStart((current) => addDaysToDate(current, -7))}>Previous week</button>
                   <button type="button" className="secondary-button compact-button" onClick={() => setTaskListWeekStart(startOfWeekDate(todayDateInputValue()))}>This week</button>
                   <button type="button" className="secondary-button compact-button" onClick={() => setTaskListWeekStart((current) => addDaysToDate(current, 7))}>Next week</button>
                 </div>
               </div>
-              <table className="data-table">
-                <thead>
-                  <tr>
-                    <th>Date</th>
-                    <th>Task</th>
-                    <th>Planting</th>
-                    <th>Bed</th>
-                    <th>Status</th>
-                    <th>Depends on</th>
-                    <th>Rule</th>
-                    <th>Done</th>
-                  </tr>
-                </thead>
-                <tbody>
+              {isMobileViewport ? (
+                <div className="mobile-card-list">
                   {visibleTaskList.map((task) => (
-                    <tr
+                    <article
                       key={task.id}
-                      onClick={() => {
-                        setSelectedTaskId(task.id);
-                        if (task.plantingId != null) {
-                          setSelectedPlantingId(task.plantingId);
-                        }
-                      }}
+                      className="card mobile-summary-card"
+                      onClick={() => selectTask(task)}
                     >
-                      <td>{formatDate(task.scheduledDate)}</td>
-                      <td>
+                      <div className="mobile-list-header">
                         <div className="task-cell">
                           <TaskIconMark taskType={task.taskType} color={taskColor(task)} secondaryColor={task.iconSecondaryColor} mini />
-                          <span>{task.title}</span>
+                          <strong>{task.title}</strong>
                         </div>
-                      </td>
-                      <td>{task.plantingTitle ?? "—"}</td>
-                      <td>{task.bedName ?? "—"}</td>
-                      <td>{task.status}</td>
-                      <td>{task.dependsOnTaskIds.length > 0 ? task.dependsOnTaskIds.map((dependencyId) => tasksById.get(dependencyId)?.title ?? `Task ${dependencyId}`).join(", ") : "—"}</td>
-                      <td>{task.anchor ? `${task.anchor} ${task.offsetDays && task.offsetDays >= 0 ? "+" : ""}${task.offsetDays ?? 0}d` : "manual"}</td>
-                      <td>
-                        {task.status === "done" ? "Done" : (
+                        <span className={`status-pill status-${task.status}`}>{task.status}</span>
+                      </div>
+                      <div className="mobile-summary-grid">
+                        <div className="mobile-summary-row">
+                          <span className="muted">Date</span>
+                          <strong>{formatDate(task.scheduledDate)}</strong>
+                        </div>
+                        <div className="mobile-summary-row">
+                          <span className="muted">Planting</span>
+                          <strong>{task.plantingTitle ?? "—"}</strong>
+                        </div>
+                        <div className="mobile-summary-row">
+                          <span className="muted">Bed</span>
+                          <strong>{task.bedName ?? "—"}</strong>
+                        </div>
+                        <div className="mobile-summary-row">
+                          <span className="muted">Rule</span>
+                          <strong>{task.anchor ? `${task.anchor} ${task.offsetDays && task.offsetDays >= 0 ? "+" : ""}${task.offsetDays ?? 0}d` : "manual"}</strong>
+                        </div>
+                      </div>
+                      <div className="button-row">
+                        <button
+                          type="button"
+                          className="secondary-button compact-button"
+                          onClick={(event) => {
+                            event.stopPropagation();
+                            selectTask(task, "record");
+                          }}
+                        >
+                          {taskNeedsRecordForm(task.taskType) ? "Open record" : "Open task"}
+                        </button>
+                        {task.status !== "done" && (
                           <button
                             type="button"
                             className="primary-button compact-button"
                             onClick={(event) => {
                               event.stopPropagation();
+                              if (taskNeedsRecordForm(task.taskType)) {
+                                selectTask(task, "record");
+                                return;
+                              }
                               void quickCompleteTask(task);
                             }}
                           >
                             {taskNeedsRecordForm(task.taskType) ? "Record" : "Mark done"}
                           </button>
                         )}
-                      </td>
-                    </tr>
+                      </div>
+                    </article>
                   ))}
                   {visibleTaskList.length === 0 && (
-                    <tr><td colSpan={8}>No tasks scheduled for this week.</td></tr>
+                    <p className="muted mobile-empty-state">No tasks scheduled for this week.</p>
                   )}
-                </tbody>
-              </table>
+                </div>
+              ) : (
+                <table className="data-table">
+                  <thead>
+                    <tr>
+                      <th>Date</th>
+                      <th>Task</th>
+                      <th>Planting</th>
+                      <th>Bed</th>
+                      <th>Status</th>
+                      <th>Depends on</th>
+                      <th>Rule</th>
+                      <th>Done</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {visibleTaskList.map((task) => (
+                      <tr key={task.id} onClick={() => selectTask(task)}>
+                        <td>{formatDate(task.scheduledDate)}</td>
+                        <td>
+                          <div className="task-cell">
+                            <TaskIconMark taskType={task.taskType} color={taskColor(task)} secondaryColor={task.iconSecondaryColor} mini />
+                            <span>{task.title}</span>
+                          </div>
+                        </td>
+                        <td>{task.plantingTitle ?? "—"}</td>
+                        <td>{task.bedName ?? "—"}</td>
+                        <td>{task.status}</td>
+                        <td>{task.dependsOnTaskIds.length > 0 ? task.dependsOnTaskIds.map((dependencyId) => tasksById.get(dependencyId)?.title ?? `Task ${dependencyId}`).join(", ") : "—"}</td>
+                        <td>{task.anchor ? `${task.anchor} ${task.offsetDays && task.offsetDays >= 0 ? "+" : ""}${task.offsetDays ?? 0}d` : "manual"}</td>
+                        <td>
+                          {task.status === "done" ? "Done" : (
+                            <button
+                              type="button"
+                              className="primary-button compact-button"
+                              onClick={(event) => {
+                                event.stopPropagation();
+                                void quickCompleteTask(task);
+                              }}
+                            >
+                              {taskNeedsRecordForm(task.taskType) ? "Record" : "Mark done"}
+                            </button>
+                          )}
+                        </td>
+                      </tr>
+                    ))}
+                    {visibleTaskList.length === 0 && (
+                      <tr><td colSpan={8}>No tasks scheduled for this week.</td></tr>
+                    )}
+                  </tbody>
+                </table>
+              )}
             </div>
             <div className="stack">
             <TaskRecordCard
@@ -3973,7 +4261,7 @@ function App() {
         {view === "record" && (
           <section className="content-grid split-grid">
             <TaskRecordCard
-              task={selectedTask ?? data.tasks.find((task) => task.status !== "done") ?? data.tasks[0] ?? null}
+              task={recordTaskCandidate}
               plantings={data.plantings}
               placements={data.placements}
               fields={ownFields}
@@ -4081,7 +4369,7 @@ function App() {
         {view === "admin" && isAdmin && (
           <AdminPanel
             reports={feedbackReports}
-            onRefresh={() => load(true)}
+            onRefresh={() => load(true, true)}
             onOpenFeedback={() => {
               recordActivity("feedback dialog opened", { page: view });
               setFeedbackStatus(null);
@@ -4121,6 +4409,17 @@ function App() {
                   <div><dt>Theme</dt><dd>{themeMode === "dark" ? "Dark" : "Light"}</dd></div>
                 </dl>
               </div>
+              <div className="card">
+                <h2>Account</h2>
+                <dl className="detail-list">
+                  <div><dt>User</dt><dd>{session.user.displayName ?? session.user.username}</dd></div>
+                  <div><dt>Farm</dt><dd>{session.user.farmName}</dd></div>
+                  <div><dt>Role</dt><dd>{session.user.isAdmin ? "admin" : roleLabel(session.user.role)}</dd></div>
+                </dl>
+                <button className="secondary-button full-span" onClick={() => void handleLogout()}>
+                  Log out
+                </button>
+              </div>
               {canPlan ? (
                 <TeamAccountsCard
                   farmName={session.user.farmName}
@@ -4142,22 +4441,25 @@ function App() {
               <div className="card">
                 <h2>Map privacy</h2>
                 <p className="muted">
-                  By default, your field/block/bed map is visible to other logged-in users. Crop plans, tasks, harvests, and account details stay scoped to your farm.
+                  Farm maps are currently private by default while hosted sharing rules are being tightened up.
                 </p>
-                <label className="layer-toggle">
-                  <input
-                    type="checkbox"
-                    checked={data.farm?.mapsPrivate ?? false}
-                    disabled={!canPlan || data.farm == null}
-                    onChange={(event) => void updateMapPrivacy(event.target.checked)}
-                  />
-                  <span>Private mode: only this farm's users can see this map</span>
-                </label>
-                {!canPlan && <p className="muted">Only planner accounts can change map privacy.</p>}
               </div>
             </div>
           </section>
         )}
+        <footer className="page-feedback-bar">
+          <button
+            className="secondary-button"
+            type="button"
+            onClick={() => {
+              recordActivity("feedback dialog opened", { page: view });
+              setFeedbackStatus(null);
+              setFeedbackOpen(true);
+            }}
+          >
+            Suggestion/problem
+          </button>
+        </footer>
       </main>
     </div>
   );
@@ -4978,6 +5280,23 @@ function FocusSelection({
   return null;
 }
 
+// Centers the Leaflet map after the browser returns a phone GPS location.
+function FocusUserLocation({ location }: { location: UserLocation | null }) {
+  const map = useMap();
+
+  useEffect(() => {
+    if (!location) {
+      return;
+    }
+
+    map.setView([location.lat, location.lng], Math.max(map.getZoom(), 18), {
+      animate: true
+    });
+  }, [location, map]);
+
+  return null;
+}
+
 // Keeps React state aware of Leaflet zoom so labels/layers can simplify at
 // different map scales.
 function MapZoomTracker({ onZoomChange }: { onZoomChange: (zoom: number) => void }) {
@@ -5008,25 +5327,17 @@ function ResponsiveBasemap() {
     };
   }, [map]);
 
+  const basemap = zoom < 15 ? basemaps.worldLight : basemaps.usAerial;
+
   return (
-    <>
-      <TileLayer
-        url={basemaps.worldLight.url}
-        attribution={basemaps.worldLight.attribution}
-        maxNativeZoom={19}
-        maxZoom={24}
-        opacity={zoom < 15 ? 1 : 0}
-        keepBuffer={8}
-      />
-      <TileLayer
-        url={basemaps.usAerial.url}
-        attribution={basemaps.usAerial.attribution}
-        maxNativeZoom={19}
-        maxZoom={24}
-        opacity={zoom >= 15 ? 1 : 0}
-        keepBuffer={8}
-      />
-    </>
+    <TileLayer
+      key={basemap.key}
+      url={basemap.url}
+      attribution={basemap.attribution}
+      maxNativeZoom={19}
+      maxZoom={24}
+      keepBuffer={8}
+    />
   );
 }
 

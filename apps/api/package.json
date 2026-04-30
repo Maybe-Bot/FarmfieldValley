@@ -8,6 +8,7 @@
     "start": "node dist/server.js",
     "db:migrate": "tsx src/scripts/migrate.ts",
     "db:seed": "tsx src/scripts/seed.ts",
+    "admin:create": "tsx src/scripts/create-admin.ts",
     "db:import-demo": "tsx src/scripts/import-demo-data.ts",
     "map:cache": "tsx src/scripts/cache-imagery.ts"
   },

@@ -13,6 +13,7 @@ type TeamAccountsCardProps = {
 // Farm-level account creation. Planner accounts can change plans; worker
 // accounts are limited to recording field work.
 export function TeamAccountsCard({ farmName, accounts, onCreated }: TeamAccountsCardProps) {
+  const [email, setEmail] = useState("");
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [displayName, setDisplayName] = useState("");
@@ -51,7 +52,7 @@ export function TeamAccountsCard({ farmName, accounts, onCreated }: TeamAccounts
         onSubmit={(event) => {
           event.preventDefault();
           void (async () => {
-            const validationError = validateAccountInputs({ username, password });
+            const validationError = validateAccountInputs({ email, username, password });
             if (validationError) {
               setStatus(validationError);
               return;
@@ -61,11 +62,13 @@ export function TeamAccountsCard({ farmName, accounts, onCreated }: TeamAccounts
               setSaving(true);
               setStatus("Creating account...");
               await api.createAccount({
+                email,
                 username,
                 password,
                 displayName: displayName.trim() || null,
                 role
               });
+              setEmail("");
               setUsername("");
               setPassword("");
               setDisplayName("");
@@ -83,6 +86,17 @@ export function TeamAccountsCard({ farmName, accounts, onCreated }: TeamAccounts
         <label>
           <span>Display name</span>
           <input value={displayName} onChange={(event) => setDisplayName(event.target.value)} placeholder="Alex Rivera" />
+        </label>
+        <label>
+          <span>Email</span>
+          <input
+            value={email}
+            onChange={(event) => setEmail(event.target.value)}
+            type="email"
+            placeholder="alex@example.com"
+            autoComplete="email"
+            required
+          />
         </label>
         <label>
           <span>Username</span>

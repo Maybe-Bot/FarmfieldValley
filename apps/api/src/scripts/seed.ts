@@ -325,32 +325,32 @@ async function run() {
 
     const riverOwner = await client.query<{ id: number }>(
       `
-        insert into app_users (username, password_hash, display_name)
-        values ('river_owner', $1, 'River Owner')
+        insert into app_users (email, username, password_hash, display_name)
+        values ('river_owner@farmfield-valley.local', 'river_owner', $1, 'River Owner')
         returning id
       `,
       [hashPassword("river123")]
     );
     const riverCrew = await client.query<{ id: number }>(
       `
-        insert into app_users (username, password_hash, display_name)
-        values ('river_crew', $1, 'River Crew')
+        insert into app_users (email, username, password_hash, display_name)
+        values ('river_crew@farmfield-valley.local', 'river_crew', $1, 'River Crew')
         returning id
       `,
       [hashPassword("river123")]
     );
     const cedarOwner = await client.query<{ id: number }>(
       `
-        insert into app_users (username, password_hash, display_name)
-        values ('cedar_owner', $1, 'Cedar Owner')
+        insert into app_users (email, username, password_hash, display_name)
+        values ('cedar_owner@farmfield-valley.local', 'cedar_owner', $1, 'Cedar Owner')
         returning id
       `,
       [hashPassword("cedar123")]
     );
     const cedarCrew = await client.query<{ id: number }>(
       `
-        insert into app_users (username, password_hash, display_name)
-        values ('cedar_crew', $1, 'Cedar Crew')
+        insert into app_users (email, username, password_hash, display_name)
+        values ('cedar_crew@farmfield-valley.local', 'cedar_crew', $1, 'Cedar Crew')
         returning id
       `,
       [hashPassword("cedar123")]

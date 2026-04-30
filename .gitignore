@@ -23,3 +23,4 @@ apps/api/offline-imagery-cache
 demo data/*.xlsx
 demo data/*.ods
 planning.txt
+PROJECT_HANDOFF_PROMPT.txt

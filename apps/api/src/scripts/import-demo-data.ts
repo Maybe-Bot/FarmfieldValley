@@ -601,16 +601,17 @@ function sourceLabel(row: DemoRow) {
 async function prepareDemoAccount(client: DbClient) {
   const user = await client.query<{ id: number }>(
     `
-      insert into app_users (username, password_hash, display_name, is_active)
-      values ($1, $2, 'Demo B/H Planner', true)
+      insert into app_users (email, username, password_hash, display_name, is_active)
+      values ($1, $2, $3, 'Demo B/H Planner', true)
       on conflict (username) do update
-      set password_hash = excluded.password_hash,
+      set email = excluded.email,
+          password_hash = excluded.password_hash,
           display_name = excluded.display_name,
           is_active = true,
           updated_at = now()
       returning id
     `,
-    [demoUsername, hashPassword(demoPassword)]
+    [`${demoUsername}@farmfield-valley.local`, demoUsername, hashPassword(demoPassword)]
   );
   const userId = user.rows[0].id;
 

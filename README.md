@@ -68,6 +68,12 @@ Local prototype for farm project management and annual crop planning.
 
 If you want a brand-new farm instead of the seeded demo farms, use `Create account` on the landing page to create a new farm and its first planner login.
 
+If you need the first global admin account for the admin panel, create it from the terminal instead of the public login page:
+
+```bash
+ADMIN_CREATE_PASSWORD="YourPassword123" npm run admin:create -- --email you@example.com --username your_admin_name --display-name "Your Name"
+```
+
 The API runs on `http://localhost:4000`.
 
 ## Frontend API URL
@@ -104,13 +110,17 @@ Use `SESSION_COOKIE_SAMESITE=None` only if the frontend and API are on different
 
 The API now rejects browser requests from origins not listed in `CORS_ALLOWED_ORIGINS`, marks cookies `Secure` in production by default, and requires an `X-CSRF-Token` header for logged-in write requests. The web app receives that token from `/api/session` or login/register responses and sends it automatically.
 
+The first admin account is no longer created from the public website. Create it with the one-time terminal command above before exposing the site publicly.
+
+The admin password is read from the `ADMIN_CREATE_PASSWORD` environment variable so it does not need to be passed on the command line.
+
 ## User spreadsheet import
 
 The app has a strict crop-plan uploader in the Planning area. It accepts `.xlsx`,
 `.ods`, or `.csv` files whose first row exactly matches this header:
 
 ```csv
-Seed supplier,Crop,Variety,Catalog number,Start date,Plant count,Transplant date,Tray count,Cells per tray,Days to harvest,Field spacing in row,Row spacing,Rows per bed,Dead at frost (y/n),Bed cover (plastic/bare),Field,Block,Bed,Notes
+Seed supplier,Crop,Variety,Catalog number,Start date,Plant count,Bed length (ft),Transplant date,Tray count,Cells per tray,Days to harvest,Field spacing in row,Row spacing,Rows per bed,Dead at frost (y/n),Bed cover (plastic/bare),Field,Block,Bed,Notes
 ```
 
 Dates must use `YYYY-MM-DD`. Spacing numbers are inches. Leave `Transplant date`,
@@ -120,10 +130,10 @@ match existing map names; `Bed` may be blank if the exact bed is not assigned
 yet. Each upload replaces the previous planting-spreadsheet import for that
 farm, but regular manually created plantings are left alone.
 
-Rows with missing essentials such as Crop, Start date, Plant count, Field, or
-Block are still imported. The crop plan shows a red review marker for major
-problems and a yellow marker for optional missing details; their notes list what
-must be filled in manually.
+Rows with missing essentials such as Crop, Start date, Plant count or Bed length,
+Field, or Block are still imported. The crop plan shows a red review marker for
+major problems and a yellow marker for optional missing details; their notes list
+what must be filled in manually.
 
 ## Spreadsheet demo import
 

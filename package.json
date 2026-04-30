@@ -16,6 +16,7 @@
     "test": "node --import tsx --test \"apps/**/*.test.ts\"",
     "db:migrate": "npm --workspace apps/api run db:migrate",
     "db:seed": "npm --workspace apps/api run db:seed",
+    "admin:create": "npm --workspace apps/api run admin:create --",
     "db:import-demo": "npm --workspace apps/api run db:import-demo",
     "map:cache": "npm --workspace apps/api run map:cache"
   },

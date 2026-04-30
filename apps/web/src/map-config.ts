@@ -9,7 +9,7 @@ export const basemaps = {
     key: "worldLight",
     name: "World Light",
     url: "https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png",
-    attribution: "&copy; OpenStreetMap contributors"
+    attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
   },
   usAerial: {
     key: "usAerial",

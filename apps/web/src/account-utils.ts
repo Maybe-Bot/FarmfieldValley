@@ -10,11 +10,20 @@ export function roleLabel(role: FarmRole) {
 // Mirrors the backend account rules so users see helpful messages before submit.
 export function validateAccountInputs(options: {
   farmName?: string;
+  email?: string;
   username: string;
   password: string;
 }) {
   if (options.farmName !== undefined && !options.farmName.trim()) {
     return "Farm name is required.";
+  }
+  if (options.email !== undefined) {
+    if (!options.email.trim()) {
+      return "Email is required.";
+    }
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(options.email.trim())) {
+      return "Enter a valid email address.";
+    }
   }
   if (!options.username.trim()) {
     return "Username is required.";

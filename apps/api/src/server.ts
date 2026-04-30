@@ -53,7 +53,116 @@ app.use(cors({
   }
 }));
 // Spreadsheet uploads are sent as base64 JSON so the prototype does not need a multipart parser.
-app.use(express.json({ limit: "12mb" }));
+app.use("/api/import/spreadsheet", express.json({ limit: "12mb" }));
+app.use(express.json({ limit: "512kb" }));
+
+type RateLimitBucket = {
+  count: number;
+  resetAt: number;
+};
+
+type LoginLockoutBucket = {
+  failures: number;
+  failureWindowResetAt: number;
+  lockedUntil: number;
+};
+
+const rateLimitBuckets = new Map<string, RateLimitBucket>();
+const loginLockoutBuckets = new Map<string, LoginLockoutBucket>();
+
+function pruneBuckets<T extends { resetAt?: number; failureWindowResetAt?: number; lockedUntil?: number }>(
+  store: Map<string, T>,
+  now: number
+) {
+  for (const [key, value] of store.entries()) {
+    const expiresAt = Math.max(value.resetAt ?? 0, value.failureWindowResetAt ?? 0, value.lockedUntil ?? 0);
+    if (expiresAt <= now) {
+      store.delete(key);
+    }
+  }
+}
+
+function requestIp(req: express.Request) {
+  return req.ip || req.socket.remoteAddress || "unknown";
+}
+
+function enforceRateLimit(
+  req: express.Request,
+  res: express.Response,
+  key: string,
+  options: { limit: number; windowMs: number; message: string }
+) {
+  const now = Date.now();
+  pruneBuckets(rateLimitBuckets, now);
+  const bucket = rateLimitBuckets.get(key);
+  if (!bucket || bucket.resetAt <= now) {
+    rateLimitBuckets.set(key, { count: 1, resetAt: now + options.windowMs });
+    return true;
+  }
+  if (bucket.count >= options.limit) {
+    res.setHeader("Retry-After", String(Math.max(1, Math.ceil((bucket.resetAt - now) / 1000))));
+    res.status(429).json({ error: options.message });
+    return false;
+  }
+  bucket.count += 1;
+  return true;
+}
+
+function loginLockoutKey(req: express.Request, username: string) {
+  return `${requestIp(req)}:${username.trim().toLowerCase()}`;
+}
+
+function enforceLoginLockout(req: express.Request, res: express.Response, username: string) {
+  const now = Date.now();
+  pruneBuckets(loginLockoutBuckets, now);
+  const bucket = loginLockoutBuckets.get(loginLockoutKey(req, username));
+  if (!bucket || bucket.lockedUntil <= now) {
+    return true;
+  }
+  res.setHeader("Retry-After", String(Math.max(1, Math.ceil((bucket.lockedUntil - now) / 1000))));
+  res.status(429).json({ error: "Too many failed login attempts. Try again later." });
+  return false;
+}
+
+function recordLoginFailure(req: express.Request, username: string) {
+  const now = Date.now();
+  const key = loginLockoutKey(req, username);
+  const existing = loginLockoutBuckets.get(key);
+  if (!existing || existing.failureWindowResetAt <= now) {
+    loginLockoutBuckets.set(key, {
+      failures: 1,
+      failureWindowResetAt: now + 15 * 60 * 1000,
+      lockedUntil: 0
+    });
+    return;
+  }
+  existing.failures += 1;
+  if (existing.failures >= 10) {
+    existing.lockedUntil = now + 30 * 60 * 1000;
+  }
+}
+
+function clearLoginFailures(req: express.Request, username: string) {
+  loginLockoutBuckets.delete(loginLockoutKey(req, username));
+}
+
+function stringifiedLength(value: unknown) {
+  return JSON.stringify(value).length;
+}
+
+function assertFeedbackPayloadLimits(body: {
+  context?: Record<string, unknown>;
+  recentActivity?: Array<Record<string, unknown>>;
+}) {
+  const contextLength = stringifiedLength(body.context ?? {});
+  const recentActivityLength = stringifiedLength(body.recentActivity ?? []);
+  if (contextLength > 50_000) {
+    throw new Error("Feedback context is too large");
+  }
+  if (recentActivityLength > 50_000) {
+    throw new Error("Feedback activity details are too large");
+  }
+}
 
 function actualUpdateForTaskType(taskType: string): { eventType: ActualEventType; field: string; status: PlantingStatus } | null {
   switch (taskType) {
@@ -284,6 +393,7 @@ const loginSchema = z.object({
 });
 
 const usernameSchema = z.string().trim().min(3, "Username must be at least 3 characters").max(50);
+const emailSchema = z.string().trim().email("Enter a valid email address").max(200);
 const passwordSchema = z
   .string()
   .min(8, "Password must be at least 8 characters")
@@ -294,21 +404,17 @@ const passwordSchema = z
 const registerSchema = z.object({
   farmName: z.string().trim().min(1).max(120),
   displayName: z.string().trim().min(1).max(100).nullable().optional(),
+  email: emailSchema,
   username: usernameSchema,
   password: passwordSchema
 });
 
 const accountCreateSchema = z.object({
+  email: emailSchema,
   username: usernameSchema,
   password: passwordSchema,
   displayName: z.string().trim().min(1).max(100).nullable().optional(),
   role: z.enum(["planner", "worker"])
-});
-
-const adminBootstrapSchema = z.object({
-  username: z.string().trim().min(3).max(80),
-  password: z.string().min(8).refine((value) => /[A-Za-z]/.test(value) && /\d/.test(value), "Password must include at least one letter and one number"),
-  displayName: z.string().trim().max(160).nullable().optional()
 });
 
 const farmSettingsSchema = z.object({
@@ -2253,6 +2359,16 @@ app.get("/api/session", asyncHandler(async (req, res) => {
 
 app.post("/api/auth/login", asyncHandler(async (req, res) => {
   const body = loginSchema.parse(req.body);
+  if (!enforceRateLimit(req, res, `login:${requestIp(req)}`, {
+    limit: 20,
+    windowMs: 15 * 60 * 1000,
+    message: "Too many login attempts. Try again later."
+  })) {
+    return;
+  }
+  if (!enforceLoginLockout(req, res, body.username)) {
+    return;
+  }
   const client = await pool.connect();
   try {
     const userResult = await client.query<{
@@ -2273,9 +2389,11 @@ app.post("/api/auth/login", asyncHandler(async (req, res) => {
     );
     const user = userResult.rows[0];
     if (!user || !user.is_active || !verifyPassword(body.password, user.password_hash)) {
+      recordLoginFailure(req, body.username);
       res.status(401).json({ error: "Invalid username or password" });
       return;
     }
+    clearLoginFailures(req, body.username);
 
     const membershipsResult = await client.query<{
       farm_id: number;
@@ -2327,13 +2445,20 @@ app.post("/api/auth/login", asyncHandler(async (req, res) => {
 
 app.post("/api/auth/register", asyncHandler(async (req, res) => {
   const body = registerSchema.parse(req.body);
+  if (!enforceRateLimit(req, res, `register:${requestIp(req)}`, {
+    limit: 8,
+    windowMs: 60 * 60 * 1000,
+    message: "Too many account creation attempts. Try again later."
+  })) {
+    return;
+  }
   const client = await pool.connect();
   try {
     await client.query("begin");
     const farmResult = await client.query<{ id: number; name: string }>(
       `
-        insert into farms (name, notes)
-        values ($1, 'Created from the Farmfield Valley landing page')
+        insert into farms (name, notes, maps_private)
+        values ($1, 'Created from the Farmfield Valley landing page', true)
         returning id, name
       `,
       [body.farmName.trim()]
@@ -2345,11 +2470,11 @@ app.post("/api/auth/register", asyncHandler(async (req, res) => {
       display_name: string | null;
     }>(
       `
-        insert into app_users (username, password_hash, display_name)
-        values ($1, $2, $3)
+        insert into app_users (email, username, password_hash, display_name)
+        values ($1, $2, $3, $4)
         returning id, username, display_name
       `,
-      [body.username.trim(), hashPassword(body.password), body.displayName?.trim() || null]
+      [body.email.trim().toLowerCase(), body.username.trim(), hashPassword(body.password), body.displayName?.trim() || null]
     );
     const user = userResult.rows[0];
 
@@ -2389,86 +2514,7 @@ app.post("/api/auth/register", asyncHandler(async (req, res) => {
     await client.query("rollback");
     const maybeError = error as { code?: string };
     if (maybeError.code === "23505") {
-      res.status(400).json({ error: "Username already exists" });
-      return;
-    }
-    throw error;
-  } finally {
-    client.release();
-  }
-}));
-
-app.post("/api/admin/bootstrap", asyncHandler(async (req, res) => {
-  const body = adminBootstrapSchema.parse(req.body);
-  const client = await pool.connect();
-  try {
-    await client.query("begin");
-    const adminCount = await client.query<{ count: string }>(`select count(*)::text as count from app_users where is_admin = true`);
-    if (Number(adminCount.rows[0]?.count ?? "0") > 0) {
-      res.status(403).json({ error: "An admin account already exists. Log in with that account." });
-      await client.query("rollback");
-      return;
-    }
-
-    const farmResult = await client.query<{ id: number; name: string }>(
-      `
-        insert into farms (name, notes, maps_private)
-        values ('Farmfield Valley Administration', 'Internal admin account farm', true)
-        returning id, name
-      `
-    );
-    const farm = farmResult.rows[0];
-    const userResult = await client.query<{
-      id: number;
-      username: string;
-      display_name: string | null;
-    }>(
-      `
-        insert into app_users (username, password_hash, display_name, is_admin)
-        values ($1, $2, $3, true)
-        returning id, username, display_name
-      `,
-      [body.username.trim(), hashPassword(body.password), body.displayName?.trim() || null]
-    );
-    const user = userResult.rows[0];
-
-    await client.query(
-      `
-        insert into farm_memberships (farm_id, user_id, role)
-        values ($1, $2, 'planner')
-      `,
-      [farm.id, user.id]
-    );
-
-    const token = createSessionToken();
-    await client.query(
-      `
-        insert into user_sessions (user_id, farm_id, session_token, expires_at)
-        values ($1, $2, $3, now() + ($4::text || ' days')::interval)
-      `,
-      [user.id, farm.id, token, String(config.sessionMaxAgeDays)]
-    );
-
-    await client.query("commit");
-    setSessionCookie(res, token);
-    res.status(201).json({
-      authenticated: true,
-      user: {
-        id: user.id,
-        username: user.username,
-        displayName: user.display_name,
-        farmId: farm.id,
-        farmName: farm.name,
-        role: "planner" satisfies FarmRole,
-        isAdmin: true
-      },
-      csrfToken: csrfTokenForSession(token)
-    });
-  } catch (error) {
-    await client.query("rollback").catch(() => undefined);
-    const maybeError = error as { code?: string };
-    if (maybeError.code === "23505") {
-      res.status(400).json({ error: "Username already exists" });
+      res.status(400).json({ error: "That username or email is already in use" });
       return;
     }
     throw error;
@@ -2541,11 +2587,11 @@ app.post("/api/accounts", requireRole("planner"), asyncHandler(async (req, res) 
       created_at: string;
     }>(
       `
-        insert into app_users (username, password_hash, display_name)
-        values ($1, $2, $3)
+        insert into app_users (email, username, password_hash, display_name)
+        values ($1, $2, $3, $4)
         returning id, username, display_name, created_at
       `,
-      [body.username.trim(), hashPassword(body.password), body.displayName?.trim() || null]
+      [body.email.trim().toLowerCase(), body.username.trim(), hashPassword(body.password), body.displayName?.trim() || null]
     );
     await client.query(
       `
@@ -2566,7 +2612,7 @@ app.post("/api/accounts", requireRole("planner"), asyncHandler(async (req, res) 
     await client.query("rollback");
     const maybeError = error as { code?: string };
     if (maybeError.code === "23505") {
-      res.status(400).json({ error: "Username already exists" });
+      res.status(400).json({ error: "That username or email is already in use" });
       return;
     }
     throw error;
@@ -2662,7 +2708,7 @@ app.delete("/api/admin/users/:id", requireAdmin(), asyncHandler(async (req, res)
 }));
 
 // Farm-wide settings and feedback/suggestion reporting.
-app.put("/api/farm/settings", requireRole("planner"), asyncHandler(async (req, res) => {
+app.put("/api/farm/settings", requireAdmin(), asyncHandler(async (req, res) => {
   const auth = currentAuth(req) as AuthContext;
   const body = farmSettingsSchema.parse(req.body);
   await pool.query(
@@ -2677,8 +2723,16 @@ app.put("/api/farm/settings", requireRole("planner"), asyncHandler(async (req, r
 }));
 
 app.post("/api/feedback", asyncHandler(async (req, res) => {
+  if (!enforceRateLimit(req, res, `feedback:${requestIp(req)}`, {
+    limit: 40,
+    windowMs: 60 * 60 * 1000,
+    message: "Too many feedback submissions. Try again later."
+  })) {
+    return;
+  }
   const auth = currentAuth(req);
   const body = feedbackSchema.parse(req.body);
+  assertFeedbackPayloadLimits(body);
   const result = await pool.query<{ id: number }>(
     `
       insert into feedback_reports (
@@ -2701,7 +2755,7 @@ app.post("/api/feedback", asyncHandler(async (req, res) => {
   res.status(201).json({ id: result.rows[0].id });
 }));
 
-app.get("/api/feedback", requireRole("planner"), asyncHandler(async (req, res) => {
+app.get("/api/feedback", requireAdmin(), asyncHandler(async (req, res) => {
   const auth = currentAuth(req) as AuthContext;
   const result = await pool.query<{
     id: number;
@@ -2731,7 +2785,7 @@ app.get("/api/feedback", requireRole("planner"), asyncHandler(async (req, res) =
         report.created_at
       from feedback_reports report
       left join app_users app_user on app_user.id = report.user_id
-      where $2::boolean = true or report.farm_id = $1 or report.farm_id is null
+      where $2::boolean = true
       order by report.created_at desc, report.id desc
       limit 50
     `,
@@ -2964,7 +3018,7 @@ app.get("/api/dashboard", requireRole("worker"), asyncHandler(async (req, res) =
         ST_AsGeoJSON(field.centroid)::json as centroid
       from fields field
       join farms farm on farm.id = field.farm_id
-      where field.farm_id = $1 or farm.maps_private = false
+      where field.farm_id = $1
       order by farm.name, field.id
     `, [auth.farmId]),
     pool.query(`
@@ -2982,7 +3036,7 @@ app.get("/api/dashboard", requireRole("worker"), asyncHandler(async (req, res) =
       from blocks b
       join fields f on f.id = b.field_id
       join farms farm on farm.id = f.farm_id
-      where f.farm_id = $1 or farm.maps_private = false
+      where f.farm_id = $1
       order by farm.name, f.id, b.id
     `, [auth.farmId]),
     pool.query(`
@@ -3012,7 +3066,7 @@ app.get("/api/dashboard", requireRole("worker"), asyncHandler(async (req, res) =
       join fields field on field.id = block.field_id
       join farms farm on farm.id = field.farm_id
       left join cover_crop_names cover_crop on cover_crop.id = zone.cover_crop_name_id
-      where field.farm_id = $1 or farm.maps_private = false
+      where field.farm_id = $1
       order by farm.name, field.id, block.id, zone.id
     `, [auth.farmId]),
     pool.query(`
@@ -3050,7 +3104,7 @@ app.get("/api/dashboard", requireRole("worker"), asyncHandler(async (req, res) =
       left join block_zones zone on zone.id = b.zone_id
       left join bed_presets bp on bp.id = b.bed_preset_id
       left join planting_placements pp on pp.bed_id = b.id and field.farm_id = $1
-      where field.farm_id = $1 or farm.maps_private = false
+      where field.farm_id = $1
       group by b.id, field.id, field.farm_id, farm.name, bl.id, bl.name, zone.id, zone.name, bp.id, bp.name
       order by farm.name, field.id, bl.id, b.id
     `, [auth.farmId]),
@@ -4878,6 +4932,16 @@ app.use((error: unknown, _req: express.Request, res: express.Response, _next: ex
   }
   if (error instanceof Error && (error.message === "Block not found" || error.message === "Bed preset not found")) {
     res.status(404).json({ error: error.message });
+    return;
+  }
+  if (
+    error instanceof Error &&
+    (
+      error.message === "Feedback context is too large" ||
+      error.message === "Feedback activity details are too large"
+    )
+  ) {
+    res.status(400).json({ error: error.message });
     return;
   }
   if (error instanceof Error && (error.message === "Parent block not found" || error.message === "Block zone not found")) {

@@ -70,7 +70,6 @@ export const api = {
   getSession: () => request<SessionInfo>("/api/session"),
   login: (body: unknown) => request<SessionInfo>("/api/auth/login", { method: "POST", body: JSON.stringify(body) }),
   register: (body: unknown) => request<SessionInfo>("/api/auth/register", { method: "POST", body: JSON.stringify(body) }),
-  bootstrapAdmin: (body: unknown) => request<SessionInfo>("/api/admin/bootstrap", { method: "POST", body: JSON.stringify(body) }),
   logout: () => request("/api/auth/logout", { method: "POST" }),
   getAdminUsers: () => request<AdminUser[]>("/api/admin/users"),
   deleteAdminUser: (id: number) => request<{ ok: boolean }>(`/api/admin/users/${id}`, { method: "DELETE" }),

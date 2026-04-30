@@ -5,21 +5,20 @@ import { validateAccountInputs } from "../account-utils";
 type LoginScreenProps = {
   error: string | null;
   onLogin: (username: string, password: string) => Promise<void>;
-  onRegister: (farmName: string, displayName: string, username: string, password: string) => Promise<void>;
-  onAdminBootstrap: (displayName: string, username: string, password: string) => Promise<void>;
+  onRegister: (farmName: string, displayName: string, email: string, username: string, password: string) => Promise<void>;
   themeMode: "light" | "dark";
 };
 
-// Login, first-farm registration, and first-admin bootstrap screen.
+// Login and first-farm registration screen.
 export function LoginScreen({
   error,
   onLogin,
   onRegister,
-  onAdminBootstrap,
   themeMode
 }: LoginScreenProps) {
-  const [mode, setMode] = useState<"login" | "register" | "admin">("login");
+  const [mode, setMode] = useState<"login" | "register">("login");
   const [farmName, setFarmName] = useState("");
+  const [email, setEmail] = useState("");
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [displayName, setDisplayName] = useState("");
@@ -76,9 +75,6 @@ export function LoginScreen({
 
   return (
     <div className={`auth-shell theme-${themeMode}`}>
-      <button className="secondary-button auth-feedback-button" type="button" onClick={() => setFeedbackOpen(true)}>
-        Suggestion/problem
-      </button>
       {feedbackOpen && (
         <div className="modal-backdrop" role="dialog" aria-modal="true" aria-labelledby="login-feedback-title">
           <div className="card feedback-dialog">
@@ -117,13 +113,11 @@ export function LoginScreen({
       )}
       <div className="card auth-card">
         <p className="eyebrow">Farmfield Valley</p>
-        <h2>{mode === "login" ? "Farm login" : mode === "admin" ? "Create first admin" : "Create farm account"}</h2>
+        <h2>{mode === "login" ? "Farm login" : "Create farm account"}</h2>
         <p className="muted">
           {mode === "login"
             ? "Sign in to your farm account. Planner accounts can manage plans. Worker accounts can record completed work."
-            : mode === "admin"
-              ? "Create the first global admin account. This only works if no admin exists yet."
-              : "Create a new farm and its first planner account. After that, create worker or planner logins from Settings."}
+            : "Create a new farm and its first planner account. After that, create worker or planner logins from Settings."}
         </p>
         {(error || status) && <p className="muted"><strong>{status ?? error}</strong></p>}
         <div className="button-row">
@@ -147,16 +141,6 @@ export function LoginScreen({
           >
             Create account
           </button>
-          <button
-            type="button"
-            className={mode === "admin" ? "primary-button compact-button" : "secondary-button compact-button"}
-            onClick={() => {
-              setMode("admin");
-              setStatus(null);
-            }}
-          >
-            First admin
-          </button>
         </div>
         <form
           className="form-grid"
@@ -164,29 +148,19 @@ export function LoginScreen({
             event.preventDefault();
             void (async () => {
               if (mode === "register") {
-                const validationError = validateAccountInputs({ farmName, username, password });
+                const validationError = validateAccountInputs({ farmName, email, username, password });
                 if (validationError) {
                   setStatus(validationError);
                   return;
                 }
               }
-              if (mode === "admin") {
-                const validationError = validateAccountInputs({ username, password });
-                if (validationError) {
-                  setStatus(validationError);
-                  return;
-                }
-              }
-
               try {
                 setSaving(true);
                 setStatus(mode === "login" ? "Signing in..." : "Creating account...");
                 if (mode === "login") {
                   await onLogin(username, password);
-                } else if (mode === "admin") {
-                  await onAdminBootstrap(displayName, username, password);
                 } else {
-                  await onRegister(farmName, displayName, username, password);
+                  await onRegister(farmName, displayName, email, username, password);
                 }
                 setStatus(null);
               } catch (loginError) {
@@ -207,13 +181,11 @@ export function LoginScreen({
                 <span>Your name</span>
                 <input value={displayName} onChange={(event) => setDisplayName(event.target.value)} placeholder="Jordan Lee" />
               </label>
+              <label className="full-span">
+                <span>Email</span>
+                <input value={email} onChange={(event) => setEmail(event.target.value)} type="email" autoComplete="email" placeholder="you@example.com" required />
+              </label>
             </>
-          )}
-          {mode === "admin" && (
-            <label className="full-span">
-              <span>Your name</span>
-              <input value={displayName} onChange={(event) => setDisplayName(event.target.value)} placeholder="Admin" />
-            </label>
           )}
           <label className="full-span">
             <span>Username</span>
@@ -227,15 +199,15 @@ export function LoginScreen({
               type="password"
               autoComplete={mode === "login" ? "current-password" : "new-password"}
               required
-              minLength={mode === "register" || mode === "admin" ? 8 : undefined}
+              minLength={mode === "register" ? 8 : undefined}
             />
           </label>
-          {(mode === "register" || mode === "admin") && <p className="muted full-span">{passwordHelp}</p>}
+          {mode === "register" && <p className="muted full-span">{passwordHelp}</p>}
           <button
             className="primary-button full-span"
             disabled={saving}
           >
-            {saving ? (mode === "login" ? "Signing in..." : "Creating...") : (mode === "login" ? "Log in" : mode === "admin" ? "Create admin account" : "Create farm account")}
+            {saving ? (mode === "login" ? "Signing in..." : "Creating...") : (mode === "login" ? "Log in" : "Create farm account")}
           </button>
         </form>
         <div className="auth-demo-list">
@@ -246,6 +218,11 @@ export function LoginScreen({
           <div className="table-subtle">`cedar_crew` / `cedar123`</div>
         </div>
       </div>
+      <footer className="page-feedback-bar auth-feedback-bar">
+        <button className="secondary-button" type="button" onClick={() => setFeedbackOpen(true)}>
+          Suggestion/problem
+        </button>
+      </footer>
     </div>
   );
 }

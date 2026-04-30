@@ -1,0 +1,42 @@
+services:
+  - type: web
+    name: farmfield-valley-api
+    runtime: node
+    plan: free
+    region: ohio
+    buildCommand: npm install && npm run build:api
+    preDeployCommand: npm run db:migrate
+    startCommand: npm --workspace apps/api run start
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: DATABASE_URL
+        fromDatabase:
+          name: farmfield-valley-db
+          property: connectionString
+      - key: CSRF_SECRET
+        generateValue: true
+      - key: SESSION_COOKIE_SECURE
+        value: "true"
+      - key: SESSION_COOKIE_SAMESITE
+        value: Lax
+      - key: CORS_ALLOWED_ORIGINS
+        sync: false
+
+  - type: static
+    name: farmfield-valley-web
+    buildCommand: npm install && npm run build:web
+    staticPublishPath: apps/web/dist
+    routes:
+      - type: rewrite
+        source: /*
+        destination: /index.html
+    envVars:
+      - key: VITE_API_BASE_URL
+        sync: false
+
+databases:
+  - name: farmfield-valley-db
+    plan: free
+    region: ohio
+    postgresMajorVersion: "17"
