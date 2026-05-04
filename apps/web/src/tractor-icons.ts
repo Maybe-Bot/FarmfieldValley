@@ -3,7 +3,7 @@
 export const tractorPrimaryFrame = "three-quarter";
 
 export function isTractorTask(taskType: string) {
-  return taskType === "cultivate" || taskType === "weed" || taskType === "bed_prep";
+  return taskType === "cultivate" || taskType === "weed" || taskType === "mow" || taskType === "bed_prep";
 }
 
 export function defaultTractorAccentColor() {

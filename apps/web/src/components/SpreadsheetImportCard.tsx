@@ -81,7 +81,7 @@ function downloadTemplate() {
 
 // Planner-facing spreadsheet importer. It intentionally supports only one
 // strict planting-plan template so users can prepare predictable data before upload.
-export function SpreadsheetImportCard({ onImported }: { onImported: () => Promise<void> }) {
+export function SpreadsheetImportCard({ tutorialActive = false, onImported }: { tutorialActive?: boolean; onImported: () => Promise<void> }) {
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [status, setStatus] = useState<string | null>(null);
   const [importing, setImporting] = useState(false);
@@ -115,8 +115,13 @@ export function SpreadsheetImportCard({ onImported }: { onImported: () => Promis
   }
 
   return (
-    <div className="card">
+    <div className={`card${tutorialActive ? " tutorial-target" : ""}`} data-tutorial-label={tutorialActive ? "Spreadsheet uploader" : undefined}>
       <h2>Import crop plan spreadsheet</h2>
+      {tutorialActive && (
+        <div className="tutorial-helper-bubble">
+          <strong>Tutorial next:</strong> This is the spreadsheet uploader. You do not need to use it now; it is here for importing a prepared crop plan later.
+        </div>
+      )}
       <p className="muted">
         Strict prototype importer: use the exact header row below. It imports planting plans and seed records only, maps rows to existing fields/blocks/beds, and replaces the previous spreadsheet import for this farm.
       </p>

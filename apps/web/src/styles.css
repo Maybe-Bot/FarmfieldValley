@@ -349,6 +349,81 @@ textarea {
   color: var(--app-text);
 }
 
+.tutorial-card {
+  display: grid;
+  gap: 0.85rem;
+}
+
+.tutorial-current-step {
+  display: grid;
+  gap: 0.75rem;
+}
+
+.tutorial-current-step p {
+  margin: 0;
+}
+
+.tutorial-click-target {
+  margin: 0;
+}
+
+.tutorial-target {
+  position: relative;
+  outline: 4px solid #f0c84b;
+  outline-offset: 3px;
+  box-shadow: 0 0 0 8px rgba(240, 200, 75, 0.24), var(--card-shadow);
+  animation: tutorial-pulse 1.4s ease-in-out infinite;
+  z-index: 2;
+}
+
+.tutorial-target::after {
+  content: "Click here";
+  position: absolute;
+  right: 0.35rem;
+  top: -1.85rem;
+  padding: 0.2rem 0.45rem;
+  border-radius: 999px;
+  background: #f0c84b;
+  color: #1e241c;
+  font-size: 0.74rem;
+  font-weight: 700;
+  pointer-events: none;
+  white-space: nowrap;
+}
+
+.tutorial-target[data-tutorial-label]::after {
+  content: attr(data-tutorial-label);
+}
+
+.map-card.tutorial-target::after {
+  top: 0.75rem;
+  right: 0.75rem;
+}
+
+.tutorial-helper-bubble {
+  border: 1px solid rgba(240, 200, 75, 0.75);
+  border-left: 5px solid #f0c84b;
+  border-radius: 8px;
+  background: rgba(255, 248, 218, 0.92);
+  color: #2b2f24;
+  padding: 0.65rem 0.8rem;
+  line-height: 1.35;
+}
+
+.tutorial-helper-bubble strong {
+  color: #1f241c;
+}
+
+@keyframes tutorial-pulse {
+  0%,
+  100% {
+    outline-offset: 3px;
+  }
+  50% {
+    outline-offset: 7px;
+  }
+}
+
 .layer-panel {
   margin: 0 0 1rem;
   padding: 0.8rem 0.9rem;
@@ -1086,8 +1161,8 @@ textarea {
 }
 
 .task-map-tractor-icon {
-  width: 84px;
-  height: 84px;
+  width: 168px;
+  height: 168px;
   display: grid;
   place-items: center;
   pointer-events: auto;

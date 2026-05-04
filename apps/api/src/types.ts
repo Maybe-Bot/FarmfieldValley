@@ -30,6 +30,7 @@ export type TaskType =
   | "transplant"
   | "cultivate"
   | "weed"
+  | "mow"
   | "thin"
   | "harvest"
   | "finish_crop"
@@ -42,6 +43,7 @@ export const taskTypes: TaskType[] = [
   "transplant",
   "cultivate",
   "weed",
+  "mow",
   "thin",
   "harvest",
   "finish_crop",

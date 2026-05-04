@@ -15,7 +15,7 @@ import { roleLabel } from "./account-utils";
 import { buildBedAllocationPreview, estimatePlantCountFromPlan } from "./bed-allocation";
 import { AdminPanel } from "./components/AdminPanel";
 import { LoginScreen } from "./components/LoginScreen";
-import { PlacementForm, PlantingForm } from "./components/PlantingForms";
+import { PlacementForm, PlantingForm, PlantingTutorialDraft } from "./components/PlantingForms";
 import { SpreadsheetImportCard } from "./components/SpreadsheetImportCard";
 import { TaskFlowEditorCard } from "./components/TaskFlowEditorCard";
 import { TaskIconMark } from "./components/TaskIconMark";
@@ -100,6 +100,7 @@ const SETTINGS_STORAGE_KEY = "farmfield-valley-settings";
 const MOBILE_MEDIA_QUERY = "(max-width: 760px)";
 const PROTOTYPE_WARNING_VERSION = "v1";
 const PROTOTYPE_WARNING_STORAGE_PREFIX = "farmfield-valley-prototype-warning";
+const TUTORIAL_DISMISSED_STORAGE_PREFIX = "farmfield-valley-tutorial-dismissed";
 
 // Default center is only a starting point; saved farm geometry can fit/zoom the map later.
 const DEFAULT_CENTER: LatLngTuple = [40.0448, -76.2662];
@@ -311,6 +312,18 @@ function formatWeekRange(startDate: string) {
   return `${startDate} to ${addDaysToDate(startDate, 6)}`;
 }
 
+function formatDateForInputHint(value: string | null) {
+  if (!value) {
+    return "the scheduled date";
+  }
+
+  const [year, month, day] = value.split("-");
+  if (!year || !month || !day) {
+    return value;
+  }
+  return `${month}/${day}/${year}`;
+}
+
 function isDateInWeek(value: string | null, weekStart: string) {
   if (!value) {
     return false;
@@ -392,6 +405,10 @@ function readSettings(): { distanceUnit: DistanceUnit; themeMode: ThemeMode } {
 
 function prototypeWarningStorageKey(userId: number) {
   return `${PROTOTYPE_WARNING_STORAGE_PREFIX}:${PROTOTYPE_WARNING_VERSION}:user-${userId}`;
+}
+
+function tutorialDismissedStorageKey(userId: number) {
+  return `${TUTORIAL_DISMISSED_STORAGE_PREFIX}:user-${userId}`;
 }
 
 // Map geometry helpers. These bridge Leaflet lat/lng data with simple projected
@@ -565,6 +582,17 @@ function pointToSegmentDistance(point: CoordinateDraft, start: CoordinateDraft, 
   return Math.hypot(projectedPoint.x - closest.x, projectedPoint.y - closest.y);
 }
 
+function pointToProjectedLineDistance(point: ReturnType<typeof projectForEdgePicking>, start: ReturnType<typeof projectForEdgePicking>, end: ReturnType<typeof projectForEdgePicking>) {
+  const dx = end.x - start.x;
+  const dy = end.y - start.y;
+  const length = Math.hypot(dx, dy);
+  if (length === 0) {
+    return Math.hypot(point.x - start.x, point.y - start.y);
+  }
+
+  return Math.abs(dy * point.x - dx * point.y + end.x * start.y - end.y * start.x) / length;
+}
+
 function segmentAngle(start: CoordinateDraft, end: CoordinateDraft) {
   const projectedStart = projectForEdgePicking(start);
   const projectedEnd = projectForEdgePicking(end);
@@ -669,6 +697,23 @@ function pickBoundaryEdgeLine(boundary: CoordinateDraft[], clickPoint: Coordinat
   return orientLineLeftTowardPoint(pickedLine, polygonCenter(boundary));
 }
 
+function simplifyNearlyStraightEdgeLine(line: CoordinateDraft[]) {
+  if (line.length <= 2) {
+    return line;
+  }
+
+  const projected = line.map(projectForEdgePicking);
+  const start = projected[0];
+  const end = projected[projected.length - 1];
+  const length = Math.hypot(end.x - start.x, end.y - start.y);
+  if (length <= 0) {
+    return line;
+  }
+
+  const maxDeviation = Math.max(...projected.slice(1, -1).map((point) => pointToProjectedLineDistance(point, start, end)));
+  return maxDeviation <= Math.max(1, length * 0.03) ? [line[0], line[line.length - 1]] : line;
+}
+
 function selectedBedGuideLine(bed: Bed | null, block: Block | null) {
   const bedBoundary = geoJsonPolygonToLatLngs(bed?.boundary ?? null);
   const blockCenter = polygonCenter(geoJsonPolygonToLatLngs(block?.boundary ?? null));
@@ -740,7 +785,7 @@ function formatZoneActualStateLabel(value: ZoneActualState) {
 }
 
 function taskIconColor(taskType: string) {
-  if (taskType === "cultivate" || taskType === "weed") return "#d98c2b";
+  if (taskType === "cultivate" || taskType === "weed" || taskType === "mow") return "#d98c2b";
   if (taskType === "transplant") return "#4f9b58";
   if (taskType === "direct_seed" || taskType === "seed_in_tray") return "#7c9f35";
   if (taskType === "harvest") return "#c6503f";
@@ -1187,6 +1232,12 @@ function App() {
   const [feedbackStatus, setFeedbackStatus] = useState<string | null>(null);
   const [isSavingFeedback, setIsSavingFeedback] = useState(false);
   const [prototypeWarningOpen, setPrototypeWarningOpen] = useState(false);
+  const [tutorialOpen, setTutorialOpen] = useState(false);
+  const [tutorialStatus, setTutorialStatus] = useState<string | null>(null);
+  const [tutorialStepIndex, setTutorialStepIndex] = useState(0);
+  const [isPreparingTutorial, setIsPreparingTutorial] = useState(false);
+  const [tutorialPlantingDraft, setTutorialPlantingDraft] = useState<PlantingTutorialDraft | null>(null);
+  const [tutorialFlowId, setTutorialFlowId] = useState<number | null>(null);
   const recentActivityRef = useRef<ActivityEntry[]>([]);
   const canPlan = session?.authenticated === true && session.user.role === "planner";
   const isAdmin = session?.authenticated === true && session.user.isAdmin;
@@ -1238,13 +1289,18 @@ function App() {
   useEffect(() => {
     if (!session?.authenticated || typeof window === "undefined") {
       setPrototypeWarningOpen(false);
+      setTutorialOpen(false);
       return;
     }
 
     setPrototypeWarningOpen(
       window.localStorage.getItem(prototypeWarningStorageKey(session.user.id)) !== PROTOTYPE_WARNING_VERSION
     );
-  }, [session]);
+    setTutorialOpen(!isMobileViewport && window.localStorage.getItem(tutorialDismissedStorageKey(session.user.id)) !== "true");
+    if (isMobileViewport) {
+      setTutorialStatus(null);
+    }
+  }, [session, isMobileViewport]);
 
   async function load(
     includeAccounts = canPlan,
@@ -2088,6 +2144,9 @@ function App() {
     }
     setSelection(null);
     resetMapDrafts("draw_field");
+    if (tutorialOpen && tutorialStepIndex === 0) {
+      setTutorialStatus("Now click around the outside of the field on the map. Add a name, then click the highlighted Save button.");
+    }
   }
 
   function startDrawBlock() {
@@ -2104,6 +2163,9 @@ function App() {
       return;
     }
     resetMapDrafts("draw_block");
+    if (tutorialOpen && tutorialStepIndex === 1) {
+      setTutorialStatus("Now click around the block or bed area on the map. Add a name, then click the highlighted Save button.");
+    }
   }
 
   function startDrawZone(plannedUse: PlannedUse) {
@@ -2140,6 +2202,9 @@ function App() {
       return;
     }
     resetMapDrafts("bed_tools", { preserveBedLine: true });
+    if (tutorialOpen && tutorialStepIndex === 2) {
+      setTutorialStatus("Use the highlighted bed tools controls. Pick a block edge, then fill the block.");
+    }
     const guideBed = selectedBed
       ?? data.beds
         .filter((bed) => bed.blockId === selectedBlockContext.id)
@@ -2244,7 +2309,7 @@ function App() {
 
   function chooseBedEdge(clickPoint: CoordinateDraft) {
     const boundary = geoJsonPolygonToLatLngs(selectedBlockContext?.boundary ?? null);
-    const edgeLine = pickBoundaryEdgeLine(boundary, clickPoint);
+    const edgeLine = simplifyNearlyStraightEdgeLine(pickBoundaryEdgeLine(boundary, clickPoint));
     if (edgeLine.length < 2) {
       setMapNotice("Could not find a usable block edge. Try another spot on the boundary.");
       return;
@@ -2358,6 +2423,7 @@ function App() {
 
       setIsSavingMapObject(true);
       setMapNotice("Saving...");
+      const savedMapMode = mapMode;
 
       let response: SaveResponse | undefined;
       if (mapMode === "draw_field") {
@@ -2455,9 +2521,16 @@ function App() {
       resetMapDrafts();
       if (response?.id != null) {
         setSelection({
-          type: mapMode === "draw_field" ? "field" : mapMode === "draw_block" ? "block" : "zone",
+          type: savedMapMode === "draw_field" ? "field" : savedMapMode === "draw_block" ? "block" : "zone",
           id: response.id
         });
+      }
+      if (tutorialOpen && tutorialStepIndex === 0 && savedMapMode === "draw_field") {
+        setTutorialStepIndex(1);
+        setTutorialStatus("Field saved. Now select that field if it is not selected, then use the highlighted Draw block button.");
+      } else if (tutorialOpen && tutorialStepIndex === 1 && savedMapMode === "draw_block") {
+        setTutorialStepIndex(2);
+        setTutorialStatus("Block saved. Now use the highlighted Generate beds button.");
       }
       setMapNotice(response?.warning ?? "Saved.");
     } catch (err) {
@@ -2656,6 +2729,11 @@ function App() {
     setError(null);
     setLoading(false);
     setPrototypeWarningOpen(false);
+    setTutorialOpen(false);
+    setTutorialStatus(null);
+    setTutorialStepIndex(0);
+    setTutorialPlantingDraft(null);
+    setTutorialFlowId(null);
   }
 
   function dismissPrototypeWarning() {
@@ -2663,6 +2741,175 @@ function App() {
       window.localStorage.setItem(prototypeWarningStorageKey(session.user.id), PROTOTYPE_WARNING_VERSION);
     }
     setPrototypeWarningOpen(false);
+  }
+
+  function dismissTutorial() {
+    if (session?.authenticated && typeof window !== "undefined") {
+      window.localStorage.setItem(tutorialDismissedStorageKey(session.user.id), "true");
+    }
+    setTutorialOpen(false);
+  }
+
+  async function prepareCabbageTutorial(preferredBed?: { id: number; blockId: number } | null) {
+    if (!canPlan || !data.farm?.id) {
+      setTutorialStatus("Planner access is required.");
+      return;
+    }
+
+    const plantableBed = preferredBed ?? ownBeds.find((bed) => bed.source !== "road") ?? null;
+    if (!plantableBed) {
+      setTutorialStepIndex(2);
+      setTutorialStatus("Make a field, block, and beds first. Then come back and set up the cabbage sample.");
+      setMapNotice("Make a field, block, and beds first. Then come back and set up the cabbage sample.");
+      return;
+    }
+
+    try {
+      setIsPreparingTutorial(true);
+      setTutorialStatus("Preparing cabbage sample...");
+      const existingSeed = ownSeedItems.find((seedItem) =>
+        seedItem.cropType.toLowerCase() === "cabbage" &&
+        (seedItem.varietyName ?? "").toLowerCase() === "tutorial cabbage"
+      );
+      const seedItem = existingSeed ?? await api.createSeedItem({
+        farmId: data.farm.id,
+        family: "Brassica",
+        cropType: "Cabbage",
+        varietyName: "Tutorial cabbage",
+        breedName: null,
+        supplier: "Farmfield Valley tutorial",
+        catalogNumber: null,
+        lotNumber: "tutorial",
+        notes: "Sample seed item for the first-account tutorial."
+      });
+      const cabbageCropId = seedItem.cropId;
+      if (cabbageCropId == null) {
+        throw new Error("Cabbage crop could not be prepared.");
+      }
+
+      const existingFlow = ownTaskFlowTemplates.find((flow) => flow.name === "Cabbage tutorial flow");
+      let flowId = existingFlow?.id ?? null;
+      if (flowId == null) {
+        const nodes = [
+          { nodeKey: "seed", taskType: "seed_in_tray", label: "Seed", anchor: "planned_sow", offsetDays: 0, iconColor: taskIconColor("seed_in_tray"), iconSecondaryColor: "#f4c430", x: 0.1, y: 0.52, notes: "Start cabbage in trays." },
+          { nodeKey: "transplant", taskType: "transplant", label: "Transplant", anchor: "planned_transplant", offsetDays: 0, iconColor: taskIconColor("transplant"), iconSecondaryColor: "#f4c430", x: 0.28, y: 0.52, notes: "Move plants into the selected bed." },
+          { nodeKey: "cultivation_1", taskType: "cultivate", label: "First cultivation", anchor: "actual_transplant", offsetDays: 7, iconColor: taskIconColor("cultivate"), iconSecondaryColor: "#f4c430", x: 0.46, y: 0.32, notes: "First cultivation after transplanting." },
+          { nodeKey: "cultivation_2", taskType: "cultivate", label: "Second cultivation", anchor: "actual_transplant", offsetDays: 14, iconColor: taskIconColor("cultivate"), iconSecondaryColor: "#f4c430", x: 0.62, y: 0.52, notes: "This tutorial dates this task into the current week." },
+          { nodeKey: "cultivation_3", taskType: "cultivate", label: "Third cultivation", anchor: "actual_transplant", offsetDays: 21, iconColor: taskIconColor("cultivate"), iconSecondaryColor: "#f4c430", x: 0.78, y: 0.32, notes: "Final cultivation pass before canopy closes." },
+          { nodeKey: "harvest", taskType: "harvest", label: "Harvest", anchor: "actual_transplant", offsetDays: 70, iconColor: taskIconColor("harvest"), iconSecondaryColor: "#f4c430", x: 0.9, y: 0.52, notes: "Harvest window begins." }
+        ];
+        const result = await api.createTaskFlow({
+          farmId: data.farm.id,
+          cropId: cabbageCropId,
+          name: "Cabbage tutorial flow",
+          notes: "Tutorial flow: Seed, Transplant, three cultivation steps, and Harvest. Add a Mow task after harvest during the tutorial.",
+          isDefault: true,
+          nodes,
+          edges: [
+            { fromNodeKey: "seed", toNodeKey: "transplant" },
+            { fromNodeKey: "transplant", toNodeKey: "cultivation_1" },
+            { fromNodeKey: "cultivation_1", toNodeKey: "cultivation_2" },
+            { fromNodeKey: "cultivation_2", toNodeKey: "cultivation_3" },
+            { fromNodeKey: "cultivation_3", toNodeKey: "harvest" }
+          ]
+        }) as { id?: number };
+        flowId = result.id ?? null;
+      }
+      if (flowId == null) {
+        throw new Error("Cabbage task flow could not be prepared.");
+      }
+
+      const tutorialWeekStart = startOfWeekDate(todayDateInputValue());
+      const transplantDate = addDaysToDate(tutorialWeekStart, -14);
+      const sowDate = addDaysToDate(transplantDate, -28);
+      const harvestStart = addDaysToDate(transplantDate, 70);
+      const harvestEnd = addDaysToDate(harvestStart, 14);
+      await load(canPlan);
+      setSelectedFlowId(flowId);
+      setTutorialFlowId(flowId);
+      setTutorialPlantingDraft({
+        id: `${flowId}-${Date.now()}`,
+        cropId: cabbageCropId,
+        varietyId: seedItem.varietyId ?? null,
+        seedItemId: seedItem.id,
+        taskFlowTemplateId: flowId,
+        intendedBedId: plantableBed.id,
+        locationScope: `block:${plantableBed.blockId}`,
+        title: "Tutorial cabbage planting",
+        plannedSowDate: sowDate,
+        plannedTransplantDate: transplantDate,
+        expectedHarvestStart: harvestStart,
+        expectedHarvestEnd: harvestEnd,
+        spacingInRow: distanceUnit === "ft" ? "18" : "46",
+        spacingBetweenRows: distanceUnit === "ft" ? "18" : "46",
+        notes: `Tutorial sample. Dates put second cultivation in the week of ${formatWeekRange(tutorialWeekStart)}.`
+      });
+      setTaskListWeekStart(tutorialWeekStart);
+      setSelectedMapWeekStart(tutorialWeekStart);
+      setTutorialStepIndex(3);
+      setTutorialStatus("Cabbage sample loaded. Use the highlighted Annual Crop Plan navigation, then enter plant count and create the planting.");
+    } catch (error) {
+      setTutorialStatus(error instanceof Error ? error.message : "Could not prepare tutorial sample.");
+    } finally {
+      setIsPreparingTutorial(false);
+    }
+  }
+
+  function selectFirstPastTutorialTask() {
+    const currentWeekStart = startOfWeekDate(todayDateInputValue());
+    const task = data.tasks
+      .filter((item) =>
+        item.status !== "done" &&
+        item.scheduledDate != null &&
+        item.scheduledDate < currentWeekStart &&
+        (item.plantingTitle?.toLowerCase().includes("tutorial cabbage") ?? false)
+      )
+      .sort((left, right) => (left.scheduledDate ?? "").localeCompare(right.scheduledDate ?? ""))[0]
+      ?? null;
+    if (!task) {
+      setTutorialStatus("No past tutorial tasks are waiting. Create the cabbage planting first, or the past work may already be recorded.");
+      return;
+    }
+    selectTask(task);
+    setTutorialStatus("Use the highlighted Record Work navigation, then record this past task using the scheduled date shown.");
+  }
+
+  async function handleTaskRecordSave() {
+    const completedTaskId = selectedTaskId;
+    await load();
+    if (tutorialOpen && tutorialStepIndex === 5) {
+      const currentWeekStart = startOfWeekDate(todayDateInputValue());
+      const nextPastTask = data.tasks
+        .filter((item) =>
+          item.id !== completedTaskId &&
+          item.status !== "done" &&
+          item.scheduledDate != null &&
+          item.scheduledDate < currentWeekStart &&
+          (item.plantingTitle?.toLowerCase().includes("tutorial cabbage") ?? false)
+        )
+        .sort((left, right) => (left.scheduledDate ?? "").localeCompare(right.scheduledDate ?? ""))[0]
+        ?? null;
+      if (nextPastTask) {
+        selectTask(nextPastTask);
+        setTutorialStatus("Past task recorded. The next past tutorial task is selected; record it from the highlighted Record task button.");
+      } else {
+        setTutorialStepIndex(6);
+        setTutorialStatus("Past tutorial tasks are recorded. Leave this week's second cultivation open. Last, use the highlighted Annual Crop Plan navigation to see the spreadsheet uploader.");
+      }
+    }
+  }
+
+  function startTutorialFromBeginning() {
+    if (isMobileViewport) {
+      setTutorialOpen(false);
+      setTutorialStatus(null);
+      return;
+    }
+
+    setTutorialStatus(null);
+    setTutorialStepIndex(0);
+    setTutorialFlowId(null);
+    setTutorialOpen(true);
   }
 
   if (sessionLoading) {
@@ -2721,6 +2968,177 @@ function App() {
                   ? "Admin Control Panel"
                   : "Harvest Log / Summary";
 
+  const tutorialSteps = [
+    {
+      title: "Find the land",
+      body: "Use the aerial map to find the land you want to use. Draw a Field around the outside; roughly follow the field edge. A little too big is fine, but too small can cause problems later.",
+      clickTarget: "Click the highlighted Draw field button in the Tools panel. Then click around the field edge on the map and click Save."
+    },
+    {
+      title: "Make a block",
+      body: "Select the Field you just made, then draw a Block. The Block should be very close to the outside edge of the beds.",
+      clickTarget: "Click your Field on the map first. Then click the highlighted Draw block button, draw around the bed area, and click Save."
+    },
+    {
+      title: "Fill the block with beds",
+      body: "Select the Block, choose or save a bed preset, pick the block edge, then fill the block with beds.",
+      clickTarget: "Click your Block on the map. Then click the highlighted Generate beds button. Inside bed tools, use the highlighted Pick block edge and Fill block controls."
+    },
+    {
+      title: "Plan cabbage",
+      body: "Create the sample cabbage data. The dates are filled so the second cultivation is due this week. In the planting form, enter the plant count, confirm the bed, then create the planting.",
+      clickTarget: "Use the Plan Planting form. Enter Plant count, confirm the intended bed, then click the highlighted Create planting button."
+    },
+    {
+      title: "Edit the task flow",
+      body: "Open the cabbage flow. It starts with Seed, Transplant, three cultivation steps, and Harvest. Add a Mow task after the harvest window and link it after Harvest.",
+      clickTarget: "In the flow editor, click the highlighted Add node button. Set Task type to mow, set Anchor to actual harvest, then use Link on Harvest to connect it to Mow."
+    },
+    {
+      title: "Record past work",
+      body: "After the planting is created, record the Seed, Transplant, and first cultivation as already done. The Date is set to each task's scheduled date. Leave the current-week second cultivation open so it appears in this week's tasks.",
+      clickTarget: "Use the Record from task panel. Check that Date matches the scheduled date shown in the tutorial bubble, then click the highlighted Record task button. Repeat for the past tasks only."
+    },
+    {
+      title: "Find spreadsheet import",
+      body: "The spreadsheet uploader is on the Annual Crop Plan page. You do not need to import anything during this tutorial; this step just shows where it is for later.",
+      clickTarget: "Click the highlighted Annual Crop Plan navigation if needed, then look for the highlighted Import crop plan spreadsheet panel."
+    }
+  ];
+  const currentTutorialStepIndex = Math.min(tutorialStepIndex, tutorialSteps.length - 1);
+  const currentTutorialStep = tutorialSteps[currentTutorialStepIndex];
+  const activeTutorialStep = tutorialOpen && !isMobileViewport ? currentTutorialStepIndex : -1;
+  const tutorialTargetView: View | null = activeTutorialStep >= 0
+    ? activeTutorialStep <= 2
+      ? "map"
+      : activeTutorialStep === 3
+        ? "plan"
+        : activeTutorialStep === 4
+          ? "flows"
+          : activeTutorialStep === 5
+            ? "record"
+            : "plan"
+    : null;
+  const tutorialMapPlanningReady = view === "map" && mapWorkflowMode === "planning";
+  const tutorialHighlightNav = (targetView: View) => tutorialTargetView === targetView && view !== targetView;
+  const tutorialHighlightPlanningMode = activeTutorialStep >= 0 && activeTutorialStep <= 2 && view === "map" && mapWorkflowMode !== "planning";
+  const tutorialHighlightMapSelect = tutorialMapPlanningReady
+    && (
+      (activeTutorialStep === 1 && !selectedField && mapMode !== "select")
+      || (activeTutorialStep === 2 && !selectedBlockContext && mapMode !== "select")
+    );
+  const tutorialHighlightDrawField = activeTutorialStep === 0 && tutorialMapPlanningReady && mapMode !== "draw_field";
+  const tutorialHighlightDrawBlock = activeTutorialStep === 1 && tutorialMapPlanningReady && selectedField != null && mapMode !== "draw_block";
+  const tutorialHighlightGenerateBeds = activeTutorialStep === 2
+    && tutorialMapPlanningReady
+    && selectedBlockContext != null
+    && mapMode !== "bed_tools"
+    && mapMode !== "pick_bed_edge"
+    && mapMode !== "draw_bed_line";
+  const tutorialHighlightDraftSave = tutorialMapPlanningReady
+    && (
+      (activeTutorialStep === 0 && mapMode === "draw_field")
+      || (activeTutorialStep === 1 && mapMode === "draw_block")
+    )
+    && draftCoordinates.length >= 3
+    && Boolean(draftName.trim());
+  const tutorialHighlightDraftName = tutorialMapPlanningReady
+    && (
+      (activeTutorialStep === 0 && mapMode === "draw_field")
+      || (activeTutorialStep === 1 && mapMode === "draw_block")
+    )
+    && draftCoordinates.length >= 3
+    && !draftName.trim();
+  const tutorialHighlightMapSurface = tutorialMapPlanningReady
+    && (
+      (activeTutorialStep === 0 && mapMode === "draw_field" && draftCoordinates.length < 3)
+      || (activeTutorialStep === 1 && !selectedField && mapMode === "select")
+      || (activeTutorialStep === 1 && mapMode === "draw_block" && draftCoordinates.length < 3)
+      || (activeTutorialStep === 2 && !selectedBlockContext && mapMode === "select")
+      || (activeTutorialStep === 2 && mapMode === "pick_bed_edge" && bedLineCoordinates.length < 2)
+      || (activeTutorialStep === 2 && mapMode === "draw_bed_line" && bedLineCoordinates.length < 2)
+    );
+  const tutorialTargetClass = (isTarget: boolean) => isTarget ? " tutorial-target" : "";
+  const tutorialFlowNeedsSelection = activeTutorialStep === 4
+    && view === "flows"
+    && tutorialFlowId != null
+    && selectedFlowId !== tutorialFlowId;
+  const currentTutorialClickTarget = () => {
+    if (tutorialTargetView != null && view !== tutorialTargetView) {
+      const navLabel = navItems.find(([value]) => value === tutorialTargetView)?.[1] ?? tutorialTargetView;
+      return `Click the highlighted ${navLabel} button in the sidebar.`;
+    }
+
+    if (activeTutorialStep >= 0 && activeTutorialStep <= 2 && view === "map" && mapWorkflowMode !== "planning") {
+      return "Click the highlighted Planning button in the Tools panel.";
+    }
+
+    if (activeTutorialStep === 0) {
+      if (mapMode !== "draw_field") {
+        return "Click the highlighted Draw field button in the Tools panel.";
+      }
+      if (draftCoordinates.length < 3) {
+        return "Click around the field edge on the highlighted map. Use at least three points.";
+      }
+      if (!draftName.trim()) {
+        return "Enter a field name in the highlighted Name field.";
+      }
+      return "Click the highlighted Save button.";
+    }
+
+    if (activeTutorialStep === 1) {
+      if (!selectedField) {
+        return "Click the field you just saved on the map. The Draw block button appears after a field is selected.";
+      }
+      if (mapMode !== "draw_block") {
+        return "Click the highlighted Draw block button in the Tools panel.";
+      }
+      if (draftCoordinates.length < 3) {
+        return "Click around the bed area on the highlighted map. Use at least three points.";
+      }
+      if (!draftName.trim()) {
+        return "Enter a block name in the highlighted Name field.";
+      }
+      return "Click the highlighted Save button.";
+    }
+
+    if (activeTutorialStep === 2) {
+      if (!selectedBlockContext) {
+        return "Click the block you just saved on the map. The Generate beds button appears after a block is selected.";
+      }
+      if (mapMode !== "bed_tools" && mapMode !== "pick_bed_edge" && mapMode !== "draw_bed_line") {
+        return "Click the highlighted Generate beds button in the Tools panel.";
+      }
+      if (bedLineCoordinates.length < 2) {
+        return mapMode === "pick_bed_edge" || mapMode === "draw_bed_line"
+          ? "Click the highlighted map on the block edge beds should build from."
+          : "Click the highlighted Pick block edge button.";
+      }
+      return "Click the highlighted Fill remaining block button.";
+    }
+
+    if (activeTutorialStep === 3) {
+      return "Enter Plant count in the Plan Planting form, confirm the intended bed, then click the highlighted Create planting button.";
+    }
+
+    if (activeTutorialStep === 4) {
+      if (tutorialFlowNeedsSelection) {
+        return "Click the highlighted Cabbage tutorial flow in the reusable task flows list.";
+      }
+      return "Click the highlighted Add node button. Set the new node to mow, anchor it to actual harvest, link Harvest to Mow, then save the flow.";
+    }
+
+    if (activeTutorialStep === 5) {
+      return "Check the Date shown in the Record from task panel. It should match the tutorial bubble. Then fill any highlighted bed or plant-count field and click Record task.";
+    }
+
+    if (activeTutorialStep === 6) {
+      return "This highlighted panel is the spreadsheet uploader. You do not need to click it now; it is here for importing a prepared crop plan later.";
+    }
+
+    return currentTutorialStep.clickTarget;
+  };
+
   return (
     <div className={`app-shell theme-${themeMode}${isMobileViewport ? " mobile-shell" : ""}`}>
       <aside className="sidebar">
@@ -2738,7 +3156,7 @@ function App() {
           {navItems.map(([value, label]) => (
             <button
               key={value}
-              className={view === value ? "nav-button active" : "nav-button"}
+              className={`${view === value ? "nav-button active" : "nav-button"}${tutorialTargetClass(tutorialHighlightNav(value as View))}`}
               onClick={() => setView(value as View)}
             >
               {label}
@@ -2772,6 +3190,15 @@ function App() {
             <span className="small-chip">
               {session.user.displayName ?? session.user.username} • {session.user.isAdmin ? "admin" : roleLabel(session.user.role)} • {session.user.farmName}
             </span>
+            {canPlan && (
+              <button
+                className="secondary-button"
+                type="button"
+                onClick={() => setTutorialOpen(true)}
+              >
+                Tutorial
+              </button>
+            )}
             {!isMobileViewport && (
               <>
                 <button
@@ -2850,10 +3277,45 @@ function App() {
           </div>
         )}
 
+        {canPlan && tutorialOpen && !isMobileViewport && (
+          <section className="card tutorial-card" aria-labelledby="tutorial-title">
+            <div className="section-header">
+              <div className="title-block">
+                <p className="eyebrow">First account tutorial</p>
+                <h2 id="tutorial-title">{currentTutorialStep.title}</h2>
+                <p className="muted">
+                  Step {currentTutorialStepIndex + 1} of {tutorialSteps.length}
+                </p>
+              </div>
+              <button type="button" className="secondary-button compact-button" onClick={dismissTutorial}>Hide</button>
+            </div>
+            {tutorialStatus && <p className="muted"><strong>{tutorialStatus}</strong></p>}
+            <article className="tutorial-current-step">
+              <p>{currentTutorialStep.body}</p>
+              <div className="instruction-box tutorial-click-target">
+                <strong>What to click:</strong> {currentTutorialClickTarget()}
+              </div>
+              <div className="button-row">
+                <button
+                  type="button"
+                  className="secondary-button"
+                  disabled={currentTutorialStepIndex === 0}
+                  onClick={() => {
+                    setTutorialStatus(null);
+                    setTutorialStepIndex((current) => Math.max(0, current - 1));
+                  }}
+                >
+                  Back
+                </button>
+              </div>
+            </article>
+          </section>
+        )}
+
         {view === "map" && (
           <section className="content-grid map-grid">
             <div className="map-main-stack">
-              <div className="card map-card">
+              <div className={`card map-card${tutorialTargetClass(tutorialHighlightMapSurface)}`}>
                 <MapContainer
                   center={initialView.center}
                   zoom={initialView.zoom}
@@ -3405,7 +3867,7 @@ function App() {
                 <div className="map-workflow-toggle" aria-label="Map workflow">
                   <button
                     type="button"
-                    className={mapWorkflowMode === "planning" ? "primary-button" : "secondary-button"}
+                    className={`${mapWorkflowMode === "planning" ? "primary-button" : "secondary-button"}${tutorialTargetClass(tutorialHighlightPlanningMode)}`}
                     onClick={() => changeMapWorkflowMode("planning")}
                     disabled={!canPlan}
                   >
@@ -3423,11 +3885,11 @@ function App() {
                   <>
                     <p className="muted">Use Planning to draw fields and blocks, edit map shapes, set cover crop areas, and generate beds.</p>
                     <div className="map-mode-grid">
-                      <button className={mapMode === "select" ? "primary-button" : "secondary-button"} onClick={() => resetMapDrafts("select")}>Select</button>
-                      <button className={mapMode === "draw_field" ? "primary-button" : "secondary-button"} onClick={startDrawField} disabled={!canPlan}>Draw field</button>
+                      <button className={`${mapMode === "select" ? "primary-button" : "secondary-button"}${tutorialTargetClass(tutorialHighlightMapSelect)}`} onClick={() => resetMapDrafts("select")}>Select</button>
+                      <button className={`${mapMode === "draw_field" ? "primary-button" : "secondary-button"}${tutorialTargetClass(tutorialHighlightDrawField)}`} onClick={startDrawField} disabled={!canPlan}>Draw field</button>
                       {selectedField && (
                         <>
-                          <button className={mapMode === "draw_block" ? "primary-button" : "secondary-button"} onClick={startDrawBlock} disabled={!canPlan || !selectedFieldIsOwnFarm}>Draw block</button>
+                          <button className={`${mapMode === "draw_block" ? "primary-button" : "secondary-button"}${tutorialTargetClass(tutorialHighlightDrawBlock)}`} onClick={startDrawBlock} disabled={!canPlan || !selectedFieldIsOwnFarm}>Draw block</button>
                           <button className={mapMode === "edit" ? "primary-button" : "secondary-button"} onClick={startEditSelection} disabled={!canEditSelectedMapItem}>Edit field</button>
                         </>
                       )}
@@ -3435,7 +3897,7 @@ function App() {
                     {selectedBlockContext && canEditSelectedBlockContext && (
                       <div className="map-mode-grid">
                         <button className={mapMode === "edit" ? "primary-button" : "secondary-button"} onClick={startEditSelection} disabled={!canEditSelectedMapItem}>Edit selected</button>
-                        <button className={mapMode === "bed_tools" || mapMode === "pick_bed_edge" || mapMode === "draw_bed_line" ? "primary-button" : "secondary-button"} onClick={startBedTools}>Generate beds</button>
+                        <button className={`${mapMode === "bed_tools" || mapMode === "pick_bed_edge" || mapMode === "draw_bed_line" ? "primary-button" : "secondary-button"}${tutorialTargetClass(tutorialHighlightGenerateBeds)}`} onClick={startBedTools}>Generate beds</button>
                         <button className={zoneDraftActive && draftPlannedUse === "beds" ? "primary-button" : "secondary-button"} onClick={() => startDrawZone("beds")}>Plan crop area</button>
                         <button className={zoneDraftActive && draftPlannedUse === "cover_crop" ? "primary-button" : "secondary-button"} onClick={() => startDrawZone("cover_crop")}>Add cover crop area</button>
                       </div>
@@ -3457,6 +3919,11 @@ function App() {
                   </div>
                 )}
                 <p className="instruction-box">{currentInstructions()}</p>
+                {activeTutorialStep >= 0 && activeTutorialStep <= 2 && (
+                  <div className="tutorial-helper-bubble">
+                    <strong>Tutorial next:</strong> {currentTutorialClickTarget()}
+                  </div>
+                )}
                 {!canPlan && <p className="muted">Worker accounts can view the map and record work, but planning changes require a planner account.</p>}
                 {canPlan && !selectedMapItemIsOwnFarm && <p className="muted">This selected map item belongs to another farm. You can view it, but editing is disabled.</p>}
               </div>
@@ -3465,10 +3932,15 @@ function App() {
               {mapWorkflowMode === "planning" && (mapMode === "draw_field" || mapMode === "draw_block" || zoneDraftActive || mapMode === "draw_zone" || mapMode === "draw_zone_split") && (
                 <div className="card">
                   <h2>{mapMode === "draw_field" ? "New field" : mapMode === "draw_block" ? "New block" : draftPlannedUse === "cover_crop" ? "New cover crop area" : "New mapped area"}</h2>
+                  {(tutorialHighlightDraftName || tutorialHighlightDraftSave) && (
+                    <div className="tutorial-helper-bubble">
+                      <strong>Tutorial next:</strong> {currentTutorialClickTarget()}
+                    </div>
+                  )}
                   {mapMode === "draw_block" && selectedField && <p className="muted">Parent field: {selectedField.name}</p>}
                   {zoneDraftActive && selectedBlockContext && <p className="muted">Parent block: {selectedBlockContext.name}</p>}
                   <div className="form-grid">
-                    <label>
+                    <label className={tutorialTargetClass(tutorialHighlightDraftName)}>
                       <span>{zoneDraftActive && draftPlannedUse === "beds" ? "Crop/group name" : zoneDraftActive ? "Name (optional)" : "Name"}</span>
                       <input
                         value={draftName}
@@ -3559,7 +4031,7 @@ function App() {
                       <button type="button" className="secondary-button" onClick={() => resetMapDrafts("select")}>Cancel</button>
                       <button
                         type="button"
-                        className="primary-button"
+                        className={`primary-button${tutorialTargetClass(tutorialHighlightDraftSave)}`}
                         onClick={() => void saveDraft()}
                         disabled={
                           isSavingMapObject
@@ -3683,6 +4155,7 @@ function App() {
                   invertSide={bedInvertSide}
                   isPickingLine={mapMode === "draw_bed_line"}
                   isPickingEdge={mapMode === "pick_bed_edge"}
+                  tutorialActive={activeTutorialStep === 2 && tutorialMapPlanningReady}
                   onPickEdge={startBedEdgePick}
                   onStartLine={startBedLineDraw}
                   onCancelLine={cancelBedLinePick}
@@ -3691,6 +4164,12 @@ function App() {
                   onPreviewChange={setBedPreviewCoordinates}
                   onStatusChange={setMapNotice}
                   onSave={load}
+                  onTutorialBedsGenerated={(bedIds) => {
+                    if (tutorialOpen && tutorialStepIndex === 2) {
+                      const firstBedId = bedIds[0] ?? null;
+                      void prepareCabbageTutorial(firstBedId == null ? null : { id: firstBedId, blockId: selectedBlockContext.id });
+                    }
+                  }}
                   onSelectBed={(bedId) => {
                     setSelection({ type: "bed", id: bedId });
                     setBedLineSource("selected_bed");
@@ -3708,7 +4187,8 @@ function App() {
                   beds={ownBeds}
                   distanceUnit={distanceUnit}
                   canAdjustPlanting={canPlan}
-                  onSave={load}
+                  highlightSubmit={activeTutorialStep === 5}
+                  onSave={handleTaskRecordSave}
                 />
               )}
 
@@ -3978,8 +4458,27 @@ function App() {
             </div>
             {canPlan ? (
               <div className="stack">
-                <SpreadsheetImportCard onImported={load} />
-                <PlantingForm data={ownFarmData} taskFlowTemplates={ownFarmData.taskFlowTemplates} distanceUnit={distanceUnit} onSave={load} />
+                <SpreadsheetImportCard tutorialActive={activeTutorialStep === 6 && view === "plan"} onImported={load} />
+                <PlantingForm
+                  data={ownFarmData}
+                  taskFlowTemplates={ownFarmData.taskFlowTemplates}
+                  distanceUnit={distanceUnit}
+                  tutorialDraft={tutorialPlantingDraft}
+                  highlightSubmit={activeTutorialStep === 3}
+                  onSave={async () => {
+                    const flowId = tutorialPlantingDraft?.taskFlowTemplateId ?? null;
+                    await load();
+                    if (tutorialOpen && tutorialStepIndex === 3) {
+                      if (flowId != null) {
+                        setTutorialFlowId(flowId);
+                        setSelectedFlowId(flowId);
+                      }
+                      setTutorialStepIndex(4);
+                      setTutorialStatus("Planting created. Use the highlighted Task Flows navigation, then add the mow node.");
+                    }
+                    setTutorialPlantingDraft(null);
+                  }}
+                />
               </div>
             ) : (
               <div className="card"><h2>Planning access</h2><p className="muted">Worker accounts can review the crop plan but cannot create or change plantings.</p></div>
@@ -4291,7 +4790,8 @@ function App() {
               beds={ownBeds}
               distanceUnit={distanceUnit}
               canAdjustPlanting={canPlan}
-              onSave={load}
+              highlightSubmit={activeTutorialStep === 5}
+              onSave={handleTaskRecordSave}
             />
               <div className="card">
                 <h2>How shifting works</h2>
@@ -4313,7 +4813,8 @@ function App() {
               beds={ownBeds}
               distanceUnit={distanceUnit}
               canAdjustPlanting={canPlan}
-              onSave={load}
+              highlightSubmit={activeTutorialStep === 5}
+              onSave={handleTaskRecordSave}
             />
             <HarvestForm data={ownFarmData} onSave={load} />
           </section>
@@ -4335,19 +4836,23 @@ function App() {
                   </div>
                 </div>
                 <div className="search-results">
-                  {data.taskFlowTemplates.map((flow) => (
-                    <button
-                      key={flow.id}
-                      className={`list-link${selectedFlowId === flow.id ? " active-list-link" : ""}`}
-                      onClick={() => {
-                        setSelectedFlowId(flow.id);
-                        setFlowEditorKey((current) => current + 1);
-                      }}
-                    >
-                      <strong>{flow.name}</strong>
-                      <div className="table-subtle">{flow.cropName ?? "General"}{flow.isDefault ? " • default" : ""}</div>
-                    </button>
-                  ))}
+                  {data.taskFlowTemplates.map((flow) => {
+                    const tutorialFlowTarget = tutorialFlowNeedsSelection && flow.id === tutorialFlowId;
+                    return (
+                      <button
+                        key={flow.id}
+                        className={`list-link${selectedFlowId === flow.id ? " active-list-link" : ""}${tutorialTargetClass(tutorialFlowTarget)}`}
+                        data-tutorial-label={tutorialFlowTarget ? "Select this flow" : undefined}
+                        onClick={() => {
+                          setSelectedFlowId(flow.id);
+                          setFlowEditorKey((current) => current + 1);
+                        }}
+                      >
+                        <strong>{flow.name}</strong>
+                        <div className="table-subtle">{flow.cropName ?? "General"}{flow.isDefault ? " • default" : ""}</div>
+                      </button>
+                    );
+                  })}
                 </div>
               </div>
             </div>
@@ -4359,10 +4864,15 @@ function App() {
                 template={selectedFlowTemplate}
                 nodes={selectedFlowNodes}
                 edges={selectedFlowEdges}
+                tutorialActive={activeTutorialStep === 4 && !tutorialFlowNeedsSelection}
                 onSaved={async (nextId) => {
                   await load();
                   setSelectedFlowId(nextId);
                   setFlowEditorKey((current) => current + 1);
+                  if (tutorialOpen && tutorialStepIndex === 4) {
+                    setTutorialStepIndex(5);
+                    selectFirstPastTutorialTask();
+                  }
                 }}
               />
             </div>
@@ -4453,6 +4963,24 @@ function App() {
                   <div><dt>Theme</dt><dd>{themeMode === "dark" ? "Dark" : "Light"}</dd></div>
                 </dl>
               </div>
+              {canPlan && (
+                <div className="card">
+                  <h2>First account tutorial</h2>
+                  <p className="muted">
+                    {isMobileViewport
+                      ? "The first-account tutorial uses desktop planning tools that are not available in the phone layout. Open Farmfield Valley in a computer browser to run it."
+                      : "Open the guided sequence for drawing a field, making a block, filling beds, planning cabbage, editing its task flow, recording past work, and finding spreadsheet import."}
+                  </p>
+                  <button
+                    type="button"
+                    className="primary-button full-span"
+                    onClick={startTutorialFromBeginning}
+                    disabled={isMobileViewport}
+                  >
+                    {isMobileViewport ? "Open on a computer browser" : "Start tutorial sequence"}
+                  </button>
+                </div>
+              )}
               <div className="card">
                 <h2>Account</h2>
                 <dl className="detail-list">
@@ -5766,6 +6294,7 @@ function TaskRecordCard({
   beds,
   distanceUnit,
   canAdjustPlanting,
+  highlightSubmit = false,
   onSave
 }: {
   task: Task | null;
@@ -5776,6 +6305,7 @@ function TaskRecordCard({
   beds: Bed[];
   distanceUnit: DistanceUnit;
   canAdjustPlanting: boolean;
+  highlightSubmit?: boolean;
   onSave: () => Promise<void>;
 }) {
   const planting = plantings.find((item) => item.id === task?.plantingId) ?? null;
@@ -5809,13 +6339,40 @@ function TaskRecordCard({
   const remainingAfter = availableBefore == null || !Number.isFinite(recordedPlantCount)
     ? null
     : Math.max(0, availableBefore - Math.max(0, recordedPlantCount));
+  const tutorialExpectedRecordDate = highlightSubmit && task?.scheduledDate ? task.scheduledDate : null;
+  const tutorialNeedsDate = Boolean(tutorialExpectedRecordDate && actualDate !== tutorialExpectedRecordDate);
+  const tutorialNeedsBedPlacement = highlightSubmit && !tutorialNeedsDate && canAdjustPlanting && isFieldPlantingTask && !bedId;
+  const tutorialNeedsPlantCountPlaced = highlightSubmit
+    && !tutorialNeedsDate
+    && !tutorialNeedsBedPlacement
+    && canAdjustPlanting
+    && isFieldPlantingTask
+    && (!Number.isFinite(recordedPlantCount) || recordedPlantCount <= 0);
+  const tutorialReadyToRecord = highlightSubmit
+    && !tutorialNeedsDate
+    && !tutorialNeedsBedPlacement
+    && !tutorialNeedsPlantCountPlaced;
+  const tutorialRecordDateText = tutorialExpectedRecordDate
+    ? formatDateForInputHint(tutorialExpectedRecordDate)
+    : null;
+  const tutorialRecordHint = tutorialNeedsDate
+    ? `Fill out the Date as ${tutorialRecordDateText}. Use the scheduled date so the past work is recorded in the right week.`
+    : tutorialNeedsBedPlacement
+      ? `Date is set to ${tutorialRecordDateText}. Now choose the bed where this planting actually went.`
+      : tutorialNeedsPlantCountPlaced
+        ? `Date is set to ${tutorialRecordDateText}. Now enter how many plants were placed in the bed.`
+        : highlightSubmit && tutorialRecordDateText
+          ? `Date is set to ${tutorialRecordDateText}. Click Record task to mark this past work done.`
+          : highlightSubmit
+            ? "Click Record task to mark this past work done."
+            : null;
 
   useEffect(() => {
     const defaultBedId = task?.bedId ?? planting?.intendedBedId ?? null;
     const defaultBed = defaultBedId != null ? bedById.get(defaultBedId) ?? null : null;
     const defaultBlock = defaultBed ? blockById.get(defaultBed.blockId) ?? null : null;
     const spacingPair = parseSpacingPairForUnit(planting?.spacing ?? null, distanceUnit);
-    setActualDate(task ? defaultTaskRecordDate(task) : todayDateInputValue());
+    setActualDate(task ? highlightSubmit && task.scheduledDate ? task.scheduledDate : defaultTaskRecordDate(task) : todayDateInputValue());
     setNotes("");
     setFieldId(defaultBlock ? String(defaultBlock.fieldId) : "");
     setBlockId(defaultBed ? String(defaultBed.blockId) : "");
@@ -5824,7 +6381,7 @@ function TaskRecordCard({
     setSpacingInRow(spacingPair.inRow);
     setSpacingBetweenRows(spacingPair.betweenRows);
     setStatus(null);
-  }, [task, planting, distanceUnit, bedById, blockById, isFieldPlantingTask, availableBefore]);
+  }, [task, planting, distanceUnit, bedById, blockById, isFieldPlantingTask, availableBefore, highlightSubmit]);
 
   if (!task) {
     return <div className="card"><h2>Record from task</h2><p className="muted">Select a task first.</p></div>;
@@ -5841,6 +6398,11 @@ function TaskRecordCard({
         <div><dt>Status</dt><dd>{task.status}</dd></div>
       </dl>
       {status && <p className="muted"><strong>{status}</strong></p>}
+      {tutorialRecordHint && (
+        <div className="tutorial-helper-bubble">
+          <strong>Tutorial next:</strong> {tutorialRecordHint}
+        </div>
+      )}
       <form
         className="form-grid"
         onSubmit={(event) => {
@@ -5883,7 +6445,7 @@ function TaskRecordCard({
           })();
         }}
       >
-        <label>
+        <label className={tutorialNeedsDate ? "tutorial-target" : ""}>
           <span>Date</span>
           <input type="date" value={actualDate} onChange={(event) => setActualDate(event.target.value)} required />
         </label>
@@ -5917,7 +6479,7 @@ function TaskRecordCard({
                 {blocksForField.map((block) => <option key={block.id} value={block.id}>{block.name}</option>)}
               </select>
             </label>
-            <label>
+            <label className={tutorialNeedsBedPlacement ? "tutorial-target" : ""}>
               <span>Bed placement</span>
               <select
                 value={bedId}
@@ -5934,7 +6496,7 @@ function TaskRecordCard({
                 {bedsForBlock.map((bed) => <option key={bed.id} value={bed.id}>{bed.name}</option>)}
               </select>
             </label>
-            <label>
+            <label className={tutorialNeedsPlantCountPlaced ? "tutorial-target" : ""}>
               <span>Plant count placed</span>
               <input value={plantCount} onChange={(event) => setPlantCount(event.target.value)} type="number" min="1" />
             </label>
@@ -5970,7 +6532,7 @@ function TaskRecordCard({
           <textarea value={notes} onChange={(event) => setNotes(event.target.value)} placeholder="What actually happened" rows={3} />
         </label>
 
-        <button className="primary-button full-span" disabled={saving}>
+        <button className={`primary-button full-span${tutorialReadyToRecord ? " tutorial-target" : ""}`} disabled={saving}>
           {saving ? "Recording..." : "Record task"}
         </button>
       </form>
@@ -6313,6 +6875,7 @@ function BedGeneratorCard({
   invertSide,
   isPickingLine,
   isPickingEdge,
+  tutorialActive,
   onPickEdge,
   onStartLine,
   onCancelLine,
@@ -6321,6 +6884,7 @@ function BedGeneratorCard({
   onPreviewChange,
   onStatusChange,
   onSave,
+  onTutorialBedsGenerated,
   onSelectBed
 }: {
   block: Block;
@@ -6335,6 +6899,7 @@ function BedGeneratorCard({
   invertSide: boolean;
   isPickingLine: boolean;
   isPickingEdge: boolean;
+  tutorialActive: boolean;
   onPickEdge: () => void;
   onStartLine: (mode: "straight" | "curved") => void;
   onCancelLine: () => void;
@@ -6343,6 +6908,7 @@ function BedGeneratorCard({
   onPreviewChange: (points: CoordinateDraft[]) => void;
   onStatusChange: (message: string | null) => void;
   onSave: () => Promise<void>;
+  onTutorialBedsGenerated?: (bedIds: number[]) => void;
   onSelectBed: (bedId: number) => void;
 }) {
   const minPoints = bedLineMode === "straight" ? 2 : 3;
@@ -6359,6 +6925,13 @@ function BedGeneratorCard({
   const [isGenerating, setIsGenerating] = useState(false);
   const [localNotice, setLocalNotice] = useState<string | null>(null);
   const selectedPreset = bedPresets.find((preset) => String(preset.id) === selectedPresetId) ?? bedPresets[0];
+  const tutorialBedHint = tutorialActive
+    ? bedLineCoordinates.length < minPoints
+      ? isPickingEdge || isPickingLine
+        ? "Click two points on the map along the block edge that beds should follow."
+        : "Click Pick block edge, then choose the edge on the map that beds should build from."
+      : "The bed edge is ready. Click Fill remaining block to fill the block with beds."
+    : null;
 
   useEffect(() => {
     if (!selectedPresetId && bedPresets[0]) {
@@ -6469,7 +7042,7 @@ function BedGeneratorCard({
         fillWholeBlock: options.fillWholeBlock,
         harvestRoadEveryBeds: roadEvery,
         harvestRoadWidthBeds: roadWidth
-      }) as { inserted?: number; insertedIds?: number[] };
+      }) as { inserted?: number; insertedIds?: number[]; isRoad?: boolean };
 
       await onSave();
       if (!options.fillWholeBlock && result.insertedIds?.length) {
@@ -6479,6 +7052,9 @@ function BedGeneratorCard({
       const message = result.inserted != null ? `Generated ${result.inserted} beds.` : "Beds generated.";
       setLocalNotice(message);
       onStatusChange(message);
+      if (!result.isRoad && result.insertedIds?.length) {
+        onTutorialBedsGenerated?.(result.insertedIds);
+      }
     } catch (error) {
       const message = error instanceof Error ? error.message : "Bed generation failed.";
       console.error("Bed generation failed", error);
@@ -6504,6 +7080,11 @@ function BedGeneratorCard({
         {zone ? `${zone.name} in ` : ""}{block.name} / {block.fieldName}
         {!zone ? " (whole block)" : ""}
       </p>
+      {tutorialBedHint && (
+        <div className="tutorial-helper-bubble">
+          <strong>Tutorial next:</strong> {tutorialBedHint}
+        </div>
+      )}
       {bedPresets.length === 0 ? (
         <>
           <p className="muted">Save a bed preset first.</p>
@@ -6520,7 +7101,7 @@ function BedGeneratorCard({
             {bedLineSource !== "selected_bed" && (
               <>
                 <div className="full-span button-row">
-                  <button type="button" className="primary-button" onClick={onPickEdge}>
+                  <button type="button" className={`primary-button${tutorialActive && bedLineCoordinates.length < minPoints ? " tutorial-target" : ""}`} onClick={onPickEdge}>
                     {isPickingEdge ? "Click an edge..." : "Pick block edge"}
                   </button>
                   {(isPickingLine || isPickingEdge) && (
@@ -6683,7 +7264,7 @@ function BedGeneratorCard({
                 </button>
                 <button
                   type="button"
-                  className="secondary-button"
+                  className={`secondary-button${tutorialActive && bedLineCoordinates.length >= minPoints ? " tutorial-target" : ""}`}
                   disabled={bedLineCoordinates.length < minPoints || bedLineCoordinates.length > maxPoints || isGenerating}
                   onClick={() => void generateBeds({ count: 1, fillWholeBlock: true })}
                 >

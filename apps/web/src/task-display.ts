@@ -9,6 +9,7 @@ export const taskTypeOptions = [
   "transplant",
   "cultivate",
   "weed",
+  "mow",
   "thin",
   "harvest",
   "finish_crop",
@@ -38,7 +39,7 @@ export function formatTaskAnchorLabel(anchor: string) {
 }
 
 export function taskIconLetter(taskType: string) {
-  if (taskType === "cultivate" || taskType === "weed") return "T";
+  if (taskType === "cultivate" || taskType === "weed" || taskType === "mow") return "T";
   if (taskType === "transplant") return "P";
   if (taskType === "harvest") return "H";
   if (taskType === "bed_prep") return "B";
@@ -47,7 +48,7 @@ export function taskIconLetter(taskType: string) {
 }
 
 export function taskIconColor(taskType: string) {
-  if (taskType === "cultivate" || taskType === "weed") return "#d98c2b";
+  if (taskType === "cultivate" || taskType === "weed" || taskType === "mow") return "#d98c2b";
   if (taskType === "transplant") return "#4f9b58";
   if (taskType === "direct_seed" || taskType === "seed_in_tray") return "#7c9f35";
   if (taskType === "harvest") return "#c6503f";

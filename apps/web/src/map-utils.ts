@@ -93,13 +93,13 @@ export function taskMapIcon(taskType: string, color: string, accentColor = defau
     const frame = tractorFrameForBearing(bearingDegrees);
     return L.divIcon({
       className: "",
-      html: `<div class="task-map-tractor-icon tractor-bearing-${frame.frame}">${tractorSpriteHtml(color, accentColor, { bearing: bearingDegrees, animated: true, scale: 0.42, model: tractorModelForTask(taskType) })}</div>`,
-      iconSize: [84, 84],
-      iconAnchor: [42, 42]
+      html: `<div class="task-map-tractor-icon tractor-bearing-${frame.frame}">${tractorSpriteHtml(color, accentColor, { bearing: bearingDegrees, animated: true, scale: 0.84, model: tractorModelForTask(taskType) })}</div>`,
+      iconSize: [168, 168],
+      iconAnchor: [84, 84]
     });
   }
 
-  const label = taskType === "cultivate" || taskType === "weed"
+  const label = taskType === "cultivate" || taskType === "weed" || taskType === "mow"
     ? "T"
     : taskType === "transplant"
       ? "P"

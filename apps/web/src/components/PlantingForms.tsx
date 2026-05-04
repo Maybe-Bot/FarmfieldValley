@@ -1,8 +1,26 @@
-import { FormEvent, useState } from "react";
+import { FormEvent, useEffect, useState } from "react";
 import { api } from "../api";
 import { Bed, DashboardData, TaskFlowTemplate } from "../types";
 
 type DistanceUnit = "m" | "ft";
+
+export type PlantingTutorialDraft = {
+  id: string;
+  cropId: number;
+  varietyId: number | null;
+  seedItemId: number | null;
+  taskFlowTemplateId: number;
+  intendedBedId: number | null;
+  locationScope: string;
+  title: string;
+  plannedSowDate: string;
+  plannedTransplantDate: string;
+  expectedHarvestStart: string;
+  expectedHarvestEnd: string;
+  spacingInRow: string;
+  spacingBetweenRows: string;
+  notes: string;
+};
 
 function toNumericValue(value: number | string | null | undefined) {
   if (value == null) {
@@ -78,11 +96,15 @@ export function PlantingForm({
   data,
   taskFlowTemplates,
   distanceUnit,
+  tutorialDraft,
+  highlightSubmit = false,
   onSave
 }: {
   data: DashboardData;
   taskFlowTemplates: TaskFlowTemplate[];
   distanceUnit: DistanceUnit;
+  tutorialDraft?: PlantingTutorialDraft | null;
+  highlightSubmit?: boolean;
   onSave: () => Promise<void>;
 }) {
   const defaultCrop = data.crops[0]?.id ?? 1;
@@ -98,8 +120,16 @@ export function PlantingForm({
   const [spacingBetweenRows, setSpacingBetweenRows] = useState(distanceUnit === "ft" ? "12" : "30");
   const [traySize, setTraySize] = useState("128");
   const [trayCount, setTrayCount] = useState("");
+  const [transplantPlantCountInput, setTransplantPlantCountInput] = useState("");
   const [trayLocation, setTrayLocation] = useState("");
   const [directBedLength, setDirectBedLength] = useState("");
+  const [title, setTitle] = useState("");
+  const [plannedTransplantDate, setPlannedTransplantDate] = useState("");
+  const [expectedHarvestStart, setExpectedHarvestStart] = useState("");
+  const [expectedHarvestEnd, setExpectedHarvestEnd] = useState("");
+  const [taskFlowTemplateId, setTaskFlowTemplateId] = useState("");
+  const [notes, setNotes] = useState("");
+  const [tutorialSeedItemId, setTutorialSeedItemId] = useState<number | null>(null);
   const [status, setStatus] = useState<string | null>(null);
   const selectedCrop = data.crops.find((crop) => String(crop.id) === cropId) ?? data.crops[0] ?? null;
   const varietiesForCrop = data.varieties.filter((variety) => String(variety.cropId) === cropId);
@@ -119,11 +149,38 @@ export function PlantingForm({
   const inRowSpacingM = spacingInputToMeters(spacingInRow, distanceUnit) ?? 0.3;
   const trayCountValue = toNumericValue(trayCount);
   const traySizeValue = toNumericValue(traySize) ?? 128;
-  const transplantPlantCount = trayCountValue != null && trayCountValue > 0 ? Math.max(1, Math.round(trayCountValue * traySizeValue)) : null;
+  const explicitTransplantPlantCount = toNumericValue(transplantPlantCountInput);
+  const trayPlantCount = trayCountValue != null && trayCountValue > 0 ? Math.max(1, Math.round(trayCountValue * traySizeValue)) : null;
+  const transplantPlantCount = explicitTransplantPlantCount != null && explicitTransplantPlantCount > 0
+    ? Math.max(1, Math.round(explicitTransplantPlantCount))
+    : trayPlantCount;
   const directBedLengthM = parseLengthInputValue(directBedLength || null, distanceUnit);
   const directPlantCountEstimate = directBedLengthM != null && inRowSpacingM > 0
     ? Math.max(1, Math.round(directBedLengthM / inRowSpacingM))
     : null;
+  const tutorialNeedsPlantCount = highlightSubmit
+    && plantingMethod === "transplant"
+    && (explicitTransplantPlantCount == null || explicitTransplantPlantCount <= 0);
+  const tutorialNeedsBedLength = highlightSubmit
+    && plantingMethod === "direct_seed"
+    && directBedLengthM == null;
+  const tutorialNeedsIntendedBed = highlightSubmit
+    && !tutorialNeedsPlantCount
+    && !tutorialNeedsBedLength
+    && !intendedBedId;
+  const tutorialReadyToCreate = highlightSubmit
+    && !tutorialNeedsPlantCount
+    && !tutorialNeedsBedLength
+    && !tutorialNeedsIntendedBed;
+  const tutorialPlantingHint = tutorialNeedsPlantCount
+    ? "Enter a plant count for the sample cabbage planting. Tray count can stay blank."
+    : tutorialNeedsBedLength
+      ? "Enter the bed length to seed."
+      : tutorialNeedsIntendedBed
+        ? "Confirm the intended bed that was made during the map step."
+        : highlightSubmit
+          ? "The sample cabbage plan is ready. Click Create planting."
+          : null;
 
   function autoFamilyForCrop(input: string) {
     const normalized = input.trim().toLowerCase();
@@ -139,9 +196,43 @@ export function PlantingForm({
     return "";
   }
 
+  useEffect(() => {
+    if (!tutorialDraft) {
+      return;
+    }
+
+    setCropId(String(tutorialDraft.cropId));
+    setVarietyId(tutorialDraft.varietyId == null ? "" : String(tutorialDraft.varietyId));
+    setTutorialSeedItemId(tutorialDraft.seedItemId);
+    setPlantingDate(tutorialDraft.plannedSowDate);
+    setIsPlanted(false);
+    setPlantingMethod("transplant");
+    setLocationScope(tutorialDraft.locationScope);
+    setIntendedBedId(tutorialDraft.intendedBedId == null ? "" : String(tutorialDraft.intendedBedId));
+    setSpacingInRow(tutorialDraft.spacingInRow);
+    setSpacingBetweenRows(tutorialDraft.spacingBetweenRows);
+    setTraySize("128");
+    setTrayCount("");
+    setTransplantPlantCountInput("");
+    setTrayLocation("");
+    setDirectBedLength("");
+    setTitle(tutorialDraft.title);
+    setPlannedTransplantDate(tutorialDraft.plannedTransplantDate);
+    setExpectedHarvestStart(tutorialDraft.expectedHarvestStart);
+    setExpectedHarvestEnd(tutorialDraft.expectedHarvestEnd);
+    setTaskFlowTemplateId(String(tutorialDraft.taskFlowTemplateId));
+    setNotes(tutorialDraft.notes);
+    setStatus("Cabbage tutorial sample loaded. Enter a plant count, then create the planting.");
+  }, [tutorialDraft]);
+
   return (
     <div className="card">
       <h2>Plan Planting</h2>
+      {tutorialPlantingHint && (
+        <div className="tutorial-helper-bubble">
+          <strong>Tutorial next:</strong> {tutorialPlantingHint}
+        </div>
+      )}
       <form
         className="form-grid"
         onSubmit={(event) =>
@@ -165,6 +256,8 @@ export function PlantingForm({
                 notes: ""
               });
               seedItemId = seedResult.id;
+            } else if (tutorialSeedItemId != null) {
+              seedItemId = tutorialSeedItemId;
             }
 
             const plannedSowDate = plantingDate || null;
@@ -191,17 +284,17 @@ export function PlantingForm({
               title: String(form.get("title") || titleSeed || "New planting batch"),
               status: isPlanted ? (plantingMethod === "direct_seed" ? "direct_seeded" : "seeded_in_tray") : "planned",
               intendedBedId: intendedBedId ? Number(intendedBedId) : null,
-              taskFlowTemplateId: form.get("taskFlowTemplateId") ? Number(form.get("taskFlowTemplateId")) : null,
+              taskFlowTemplateId: taskFlowTemplateId ? Number(taskFlowTemplateId) : null,
               spacing,
               plantCount,
               bedLengthUsedM,
               trayLocation: plantingMethod === "transplant" ? trayLocation.trim() || null : null,
               trayCount: plantingMethod === "transplant" && trayCount ? Number(trayCount) : null,
-              notes: String(form.get("notes") || ""),
+              notes,
               plannedSowDate,
-              plannedTransplantDate: String(form.get("plannedTransplantDate") || "") || null,
-              expectedHarvestStart: String(form.get("expectedHarvestStart") || "") || null,
-              expectedHarvestEnd: String(form.get("expectedHarvestEnd") || "") || null
+              plannedTransplantDate: plannedTransplantDate || null,
+              expectedHarvestStart: expectedHarvestStart || null,
+              expectedHarvestEnd: expectedHarvestEnd || null
             }) as { id?: number };
             if (isPlanted && createResult.id && plannedSowDate) {
               await api.recordActual(createResult.id, {
@@ -222,6 +315,7 @@ export function PlantingForm({
             onChange={(event) => {
               setCropId(event.target.value);
               setVarietyId("");
+              setTutorialSeedItemId(null);
             }}
           >
             {data.crops.map((crop) => <option key={crop.id} value={crop.id}>{crop.name}</option>)}
@@ -236,7 +330,15 @@ export function PlantingForm({
         </label>
         <label className="full-span">
           <span>Lot number</span>
-          <input value={lotNumber} onChange={(event) => setLotNumber(event.target.value.slice(0, 128))} maxLength={128} placeholder="Optional seed lot number" />
+          <input
+            value={lotNumber}
+            onChange={(event) => {
+              setLotNumber(event.target.value.slice(0, 128));
+              setTutorialSeedItemId(null);
+            }}
+            maxLength={128}
+            placeholder="Optional seed lot number"
+          />
         </label>
 
         <label>
@@ -247,9 +349,9 @@ export function PlantingForm({
           <input type="checkbox" checked={isPlanted} onChange={(event) => setIsPlanted(event.target.checked)} />
           <span>{isPlanted ? "Planted" : "Planning"}</span>
         </label>
-        <label><span>Planned transplant</span><input name="plannedTransplantDate" type="date" /></label>
-        <label><span>Harvest start</span><input name="expectedHarvestStart" type="date" /></label>
-        <label><span>Harvest end</span><input name="expectedHarvestEnd" type="date" /></label>
+        <label><span>Planned transplant</span><input name="plannedTransplantDate" type="date" value={plannedTransplantDate} onChange={(event) => setPlannedTransplantDate(event.target.value)} /></label>
+        <label><span>Harvest start</span><input name="expectedHarvestStart" type="date" value={expectedHarvestStart} onChange={(event) => setExpectedHarvestStart(event.target.value)} /></label>
+        <label><span>Harvest end</span><input name="expectedHarvestEnd" type="date" value={expectedHarvestEnd} onChange={(event) => setExpectedHarvestEnd(event.target.value)} /></label>
 
         <label>
           <span>Field or block</span>
@@ -265,7 +367,7 @@ export function PlantingForm({
             {ownBlocks.map((block) => <option key={`block-${block.id}`} value={`block:${block.id}`}>Block: {block.fieldName} / {block.name}</option>)}
           </select>
         </label>
-        <label>
+        <label className={tutorialNeedsIntendedBed ? " tutorial-target" : ""}>
           <span>Intended bed</span>
           <select value={intendedBedId} onChange={(event) => setIntendedBedId(event.target.value)}>
             <option value="">Unassigned</option>
@@ -303,14 +405,15 @@ export function PlantingForm({
               </select>
             </label>
             <label><span>Tray count</span><input type="number" min="0" step="1" value={trayCount} onChange={(event) => setTrayCount(event.target.value)} /></label>
+            <label className={tutorialNeedsPlantCount ? " tutorial-target" : ""}><span>Plant count</span><input type="number" min="1" step="1" value={transplantPlantCountInput} onChange={(event) => setTransplantPlantCountInput(event.target.value)} placeholder="Use instead of tray count" /></label>
             <div className="instruction-box full-span">
-              Estimated transplants: {transplantPlantCount?.toLocaleString() ?? "enter tray count"}. Tray location is optional for now.
+              Estimated transplants: {transplantPlantCount?.toLocaleString() ?? "enter plant count or tray count"}. Tray location is optional for now.
             </div>
             <label className="full-span"><span>Tray location (optional)</span><input value={trayLocation} onChange={(event) => setTrayLocation(event.target.value)} placeholder="Greenhouse bench, tray rack, or leave blank" /></label>
           </>
         ) : (
           <>
-            <label>
+            <label className={tutorialNeedsBedLength ? " tutorial-target" : ""}>
               <span>Bed length to seed ({distanceUnit})</span>
               <input type="number" min="0" step="0.1" value={directBedLength} onChange={(event) => setDirectBedLength(event.target.value)} />
             </label>
@@ -320,17 +423,22 @@ export function PlantingForm({
           </>
         )}
 
-        <label><span>Title</span><input name="title" placeholder="Auto-filled from crop, variety, and lot if blank" /></label>
+        <label><span>Title</span><input name="title" value={title} onChange={(event) => setTitle(event.target.value)} placeholder="Auto-filled from crop, variety, and lot if blank" /></label>
         <label>
           <span>Task flow</span>
-          <select name="taskFlowTemplateId" defaultValue="">
+          <select name="taskFlowTemplateId" value={taskFlowTemplateId} onChange={(event) => setTaskFlowTemplateId(event.target.value)}>
             <option value="">Automatic default</option>
             {taskFlowTemplates.map((flow) => <option key={flow.id} value={flow.id}>{flow.name}{flow.cropName ? ` (${flow.cropName})` : ""}</option>)}
           </select>
         </label>
-        <label className="full-span"><span>Notes</span><textarea name="notes" rows={3} /></label>
+        {tutorialSeedItemId != null && (
+          <div className="instruction-box full-span">
+            Cabbage tutorial seed data is attached. The dates are set so the second cultivation lands in the current week.
+          </div>
+        )}
+        <label className="full-span"><span>Notes</span><textarea name="notes" rows={3} value={notes} onChange={(event) => setNotes(event.target.value)} /></label>
         {status && <p className="muted full-span"><strong>{status}</strong></p>}
-        <button className="primary-button full-span">Create planting</button>
+        <button className={`primary-button full-span${tutorialReadyToCreate ? " tutorial-target" : ""}`}>Create planting</button>
       </form>
     </div>
   );
