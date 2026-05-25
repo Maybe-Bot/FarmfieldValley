@@ -22,11 +22,15 @@ import {
   extendStraightLine,
   lineStringWkt3857,
   projectWgs84To3857,
+  resolveBedEdgeOffsets,
   resolveSide,
+  simplifyNearlyStraightLine,
+  straightLineFromGuide,
   validateBedLine
 } from "./beds";
 import { pool } from "./db";
 import { config } from "./config";
+import { seedStarterSeedCatalog } from "./default-seed-catalog";
 import { boundingBox, normalizeCoordinates, polygonWkt } from "./geometry";
 import {
   defaultOfflineImageryStatus,
@@ -34,9 +38,20 @@ import {
   readOfflineImageryManifest
 } from "./offline-imagery";
 import { roleMeetsRequirement } from "./permissions";
-import { registerSpreadsheetImportRoutes } from "./routes/spreadsheet-import";
+import { registerFarmRoutes } from "./routes/farm-routes";
 import { recalculatePlantingTasks } from "./scheduler";
-import { ActualEventType, FarmRole, PlantingStatus, TaskAnchor, TaskType, taskAnchors, taskTypes } from "./types";
+import {
+  accountCreateSchema,
+  BlockPlacementPlanRow,
+  farmSettingsSchema,
+  feedbackSchema,
+  loginSchema,
+  PlantingInput,
+  registerSchema,
+  SeedItemLotInput,
+  ZoneActualStateInput
+} from "./schemas";
+import { ActualEventType, FarmRole, PlantingStatus, TaskAnchor, TaskType } from "./types";
 import { assertUndoRestoreIsAccountSafe } from "./undo-safety";
 
 const app = express();
@@ -248,338 +263,6 @@ function requireAdmin() {
   };
 }
 
-// Zod schemas define what each API route accepts. They are the first line of
-// defense against malformed form/map data reaching the database.
-const plantingStatusSchema = z.enum([
-  "planned",
-  "seeded_in_tray",
-  "direct_seeded",
-  "germinating",
-  "ready_to_transplant",
-  "transplanted",
-  "growing",
-  "harvested",
-  "finished"
-]);
-
-const actualEventTypeSchema = z.enum([
-  "tray_seeding",
-  "direct_seeding",
-  "transplant",
-  "cultivation",
-  "harvest",
-  "finish"
-]);
-
-const taskTypeSchema = z.enum(taskTypes as [TaskType, ...TaskType[]]);
-const taskAnchorSchema = z.enum(taskAnchors as [TaskAnchor, ...TaskAnchor[]]);
-const futureUseSchema = z.enum(["beds", "cover_crop"]);
-const zoneActualStateSchema = z.enum([
-  "needs_cleanup",
-  "needs_amendment",
-  "needs_tillage",
-  "ready_for_bed_making",
-  "beds_made",
-  "partially_planted",
-  "fully_planted",
-  "cover_crop_established",
-  "finished"
-]);
-const latLngSchema = z.object({
-  lat: z.number().min(-90).max(90),
-  lng: z.number().min(-180).max(180)
-});
-
-const polygonSchema = z.object({
-  coordinates: z.array(latLngSchema).min(3).max(50)
-});
-
-const geometrySchema = z.object({
-  x: z.number(),
-  y: z.number(),
-  width: z.number().positive(),
-  height: z.number().positive()
-});
-
-const plantingSchema = z
-  .object({
-    cropId: z.number(),
-    varietyId: z.number().nullable().optional(),
-    title: z.string().min(1),
-    status: plantingStatusSchema,
-    intendedFieldId: z.number().nullable().optional(),
-    intendedBlockId: z.number().nullable().optional(),
-    intendedBedId: z.number().nullable().optional(),
-    seedItemId: z.number().nullable().optional(),
-    taskFlowTemplateId: z.number().nullable().optional(),
-    spacing: z.string().nullable().optional(),
-    plantCount: z.number().int().positive().nullable().optional(),
-    bedLengthUsedM: z.number().positive().nullable().optional(),
-    trayLocation: z.string().nullable().optional(),
-    trayCount: z.number().int().positive().nullable().optional(),
-    cellsPerTray: z.number().int().positive().nullable().optional(),
-    daysToHarvest: z.number().int().positive().nullable().optional(),
-    fieldSpacingInRow: z.number().positive().nullable().optional(),
-    rowSpacing: z.number().positive().nullable().optional(),
-    rowsPerBed: z.number().int().positive().nullable().optional(),
-    deadAtFrost: z.boolean().nullable().optional(),
-    bedCover: z.enum(["plastic", "bare"]).nullable().optional(),
-    notes: z.string().nullable().optional(),
-    plannedSowDate: z.string().nullable().optional(),
-    plannedTransplantDate: z.string().nullable().optional(),
-    expectedHarvestStart: z.string().nullable().optional(),
-    expectedHarvestEnd: z.string().nullable().optional()
-  })
-  .refine((value) => value.plantCount != null || value.bedLengthUsedM != null, {
-    message: "Plant count or bed length used is required"
-  });
-
-const placementSchema = z
-  .object({
-    bedId: z.number(),
-    plantCount: z.number().int().positive().nullable().optional(),
-    bedLengthUsedM: z.number().positive().nullable().optional(),
-    actualDate: z.string().nullable().optional(),
-    locationDetail: z.string().nullable().optional(),
-    coordinates: z.array(latLngSchema).min(3).max(50).nullable().optional(),
-    notes: z.string().nullable().optional()
-  })
-  .refine((value) => value.plantCount != null || value.bedLengthUsedM != null, {
-    message: "Plant count or bed length used is required"
-  });
-
-const actualEventSchema = z.object({
-  eventType: actualEventTypeSchema,
-  actualDate: z.string(),
-  notes: z.string().nullable().optional()
-});
-
-const taskRecordSchema = z.object({
-  actualDate: z.string(),
-  notes: z.string().nullable().optional(),
-  intendedBedId: z.number().nullable().optional(),
-  plantCount: z.number().int().positive().nullable().optional(),
-  bedLengthUsedM: z.number().positive().nullable().optional(),
-  spacing: z.string().nullable().optional(),
-  placementBedId: z.number().nullable().optional(),
-  placementPlantCount: z.number().int().positive().nullable().optional(),
-  placementBedLengthUsedM: z.number().positive().nullable().optional(),
-  placementLocationDetail: z.string().nullable().optional(),
-  placementCoordinates: z.array(latLngSchema).min(3).max(50).nullable().optional(),
-  placementNotes: z.string().nullable().optional()
-}).refine((value) => {
-  if (value.placementBedId == null) {
-    return true;
-  }
-
-  return value.placementPlantCount != null || value.placementBedLengthUsedM != null;
-}, {
-  message: "Placement needs plant count or bed length used"
-});
-
-const harvestSchema = z.object({
-  plantingId: z.number(),
-  bedId: z.number(),
-  harvestDate: z.string(),
-  quantity: z.number().positive(),
-  unit: z.string().min(1),
-  notes: z.string().nullable().optional()
-});
-
-const loginSchema = z.object({
-  username: z.string().min(1),
-  password: z.string().min(1),
-  farmId: z.number().nullable().optional()
-});
-
-const usernameSchema = z.string().trim().min(3, "Username must be at least 3 characters").max(50);
-const emailSchema = z.string().trim().email("Enter a valid email address").max(200);
-const passwordSchema = z
-  .string()
-  .min(8, "Password must be at least 8 characters")
-  .max(200)
-  .regex(/[A-Za-z]/, "Password must include at least one letter")
-  .regex(/\d/, "Password must include at least one number");
-
-const registerSchema = z.object({
-  farmName: z.string().trim().min(1).max(120),
-  displayName: z.string().trim().min(1).max(100).nullable().optional(),
-  email: emailSchema,
-  username: usernameSchema,
-  password: passwordSchema
-});
-
-const accountCreateSchema = z.object({
-  email: emailSchema,
-  username: usernameSchema,
-  password: passwordSchema,
-  displayName: z.string().trim().min(1).max(100).nullable().optional(),
-  role: z.enum(["planner", "worker"])
-});
-
-const farmSettingsSchema = z.object({
-  mapsPrivate: z.boolean()
-});
-
-const feedbackSchema = z.object({
-  page: z.string().trim().min(1).max(80),
-  comment: z.string().max(4000).nullable().optional(),
-  context: z.record(z.unknown()).optional(),
-  recentActivity: z.array(z.record(z.unknown())).max(50).optional()
-});
-
-const fieldPolygonSchema = polygonSchema.extend({
-  farmId: z.number(),
-  name: z.string().min(1),
-  notes: z.string().nullable().optional()
-});
-
-const fieldPolygonUpdateSchema = polygonSchema.extend({
-  name: z.string().min(1),
-  notes: z.string().nullable().optional()
-});
-
-const blockPolygonSchema = polygonSchema.extend({
-  fieldId: z.number(),
-  name: z.string().min(1),
-  notes: z.string().nullable().optional(),
-  currentState: zoneActualStateSchema
-});
-
-const blockPolygonUpdateSchema = polygonSchema.extend({
-  name: z.string().min(1),
-  notes: z.string().nullable().optional()
-});
-
-const coverCropNameSchema = z.object({
-  farmId: z.number(),
-  name: z.string().trim().min(1).max(120),
-  notes: z.string().nullable().optional()
-});
-
-const seedItemSchema = z.object({
-  farmId: z.number(),
-  family: z.string().trim().max(120).nullable().optional(),
-  cropType: z.string().trim().min(1).max(120),
-  varietyName: z.string().trim().max(160).nullable().optional(),
-  breedName: z.string().trim().max(160).nullable().optional(),
-  supplier: z.string().trim().max(160).nullable().optional(),
-  catalogNumber: z.string().trim().max(160).nullable().optional(),
-  lotNumber: z.string().trim().max(160).nullable().optional(),
-  notes: z.string().nullable().optional()
-});
-
-const blockZoneSchema = polygonSchema.extend({
-  blockId: z.number(),
-  name: z.string().min(1),
-  plannedUse: futureUseSchema.nullable().optional(),
-  actualState: zoneActualStateSchema,
-  coverCropNameId: z.number().nullable().optional(),
-  coverCropName: z.string().trim().min(1).max(120).nullable().optional(),
-  plannedCoverCropSeedDate: z.string().nullable().optional(),
-  plannedCoverCropTerminateDate: z.string().nullable().optional(),
-  notes: z.string().nullable().optional()
-});
-
-const blockZoneUpdateSchema = polygonSchema.extend({
-  name: z.string().min(1),
-  plannedUse: futureUseSchema.nullable().optional(),
-  actualState: zoneActualStateSchema,
-  coverCropNameId: z.number().nullable().optional(),
-  coverCropName: z.string().trim().min(1).max(120).nullable().optional(),
-  plannedCoverCropSeedDate: z.string().nullable().optional(),
-  plannedCoverCropTerminateDate: z.string().nullable().optional(),
-  actualCoverCropSeedDate: z.string().nullable().optional(),
-  actualCoverCropTerminateDate: z.string().nullable().optional(),
-  notes: z.string().nullable().optional()
-});
-
-const blockZoneSplitSchema = z.object({
-  name: z.string().trim().min(1).max(160),
-  plannedUse: futureUseSchema.nullable().optional(),
-  actualState: zoneActualStateSchema,
-  coverCropNameId: z.number().nullable().optional(),
-  coverCropName: z.string().trim().min(1).max(120).nullable().optional(),
-  plannedCoverCropSeedDate: z.string().nullable().optional(),
-  plannedCoverCropTerminateDate: z.string().nullable().optional(),
-  notes: z.string().nullable().optional(),
-  lineCoordinates: z.array(latLngSchema).length(2),
-  useLargerSide: z.boolean().default(false)
-});
-
-const coverCropWorkSchema = z.object({
-  actualState: zoneActualStateSchema.optional(),
-  actualCoverCropSeedDate: z.string().nullable().optional(),
-  actualCoverCropTerminateDate: z.string().nullable().optional(),
-  notes: z.string().nullable().optional()
-});
-
-const bedLineModeSchema = z.enum(["straight", "curved"]);
-
-const bedPresetSchema = z.object({
-  farmId: z.number(),
-  name: z.string().min(1),
-  bedWidthM: z.number().positive(),
-  pathSpacingM: z.number().min(0),
-  isRoad: z.boolean().default(false),
-  notes: z.string().nullable().optional()
-});
-
-const taskFlowNodeSchema = z.object({
-  nodeKey: z.string().min(1),
-  taskType: taskTypeSchema,
-  label: z.string().min(1),
-  anchor: taskAnchorSchema,
-  offsetDays: z.number().int(),
-  iconColor: z.string().regex(/^#[0-9A-Fa-f]{6}$/).default("#4f84aa"),
-  iconSecondaryColor: z.string().regex(/^#[0-9A-Fa-f]{6}$/).default("#f4c430"),
-  x: z.number().min(0).max(1),
-  y: z.number().min(0).max(1),
-  notes: z.string().nullable().optional()
-});
-
-const taskFlowEdgeSchema = z.object({
-  fromNodeKey: z.string().min(1),
-  toNodeKey: z.string().min(1)
-});
-
-const taskFlowSchema = z.object({
-  farmId: z.number(),
-  cropId: z.number().nullable().optional(),
-  name: z.string().min(1),
-  notes: z.string().nullable().optional(),
-  isDefault: z.boolean().default(false),
-  nodes: z.array(taskFlowNodeSchema).min(1),
-  edges: z.array(taskFlowEdgeSchema).default([])
-});
-
-const taskFlowUpdateSchema = z.object({
-  cropId: z.number().nullable().optional(),
-  name: z.string().min(1),
-  notes: z.string().nullable().optional(),
-  isDefault: z.boolean().default(false),
-  nodes: z.array(taskFlowNodeSchema).min(1),
-  edges: z.array(taskFlowEdgeSchema).default([])
-});
-
-const bedGenerationSchema = z.object({
-  presetId: z.number(),
-  zoneId: z.number().nullable().optional(),
-  lineMode: bedLineModeSchema,
-  lineCoordinates: z.array(latLngSchema).min(2).max(12),
-  count: z.number().int().positive().max(100),
-  layoutStartIndex: z.number().int().min(0).max(1000).default(0),
-  edgeOffsetM: z.number().min(0).max(100).default(0),
-  namePrefix: z.string().min(1),
-  startNumber: z.number().int().positive().default(1),
-  isPermanent: z.boolean().default(true),
-  replaceExisting: z.boolean().default(false),
-  invertSide: z.boolean().default(false),
-  fillWholeBlock: z.boolean().default(false),
-  harvestRoadEveryBeds: z.number().int().positive().nullable().optional(),
-  harvestRoadWidthBeds: z.number().int().min(0).max(20).default(0)
-});
-
 // Attach auth data to API requests. Login/session/offline imagery are allowed to
 // run without an existing authenticated farm session.
 app.use("/api", asyncHandler(async (req, _res, next) => {
@@ -744,6 +427,16 @@ async function ensureBedPresetInFarm(client: PoolClient, presetId: number, farmI
   }
 }
 
+async function ensureTractorProfileInFarm(client: PoolClient, profileId: number, farmId: number) {
+  const result = await client.query<{ id: number }>(
+    `select id from tractor_profiles where id = $1 and farm_id = $2`,
+    [profileId, farmId]
+  );
+  if (!result.rows[0]) {
+    throw new Error("Tractor not found in this farm");
+  }
+}
+
 async function ensureCoverCropNameInFarm(client: PoolClient, coverCropNameId: number, farmId: number) {
   const result = await client.query<{ id: number }>(
     `select id from cover_crop_names where id = $1 and farm_id = $2`,
@@ -762,6 +455,89 @@ async function ensureSeedItemInFarm(client: PoolClient, seedItemId: number, farm
   if (!result.rows[0]) {
     throw new Error("Seed item not found in this farm");
   }
+}
+
+function normalizedSeedLots(lots: SeedItemLotInput[] | undefined, fallbackLotNumber?: string | null, fallbackStockQuantity?: number | null) {
+  const rawLots = lots && lots.length > 0
+    ? lots
+    : fallbackLotNumber?.trim()
+      ? [{ lotNumber: fallbackLotNumber, stockQuantity: fallbackStockQuantity ?? null }]
+      : [];
+  const seen = new Set<string>();
+  const normalized: Array<{ lotNumber: string; stockQuantity: number | null }> = [];
+
+  for (const lot of rawLots) {
+    const lotNumber = lot.lotNumber.trim();
+    const stockQuantity = lot.stockQuantity ?? null;
+    if (!lotNumber && stockQuantity == null) {
+      continue;
+    }
+    if (!lotNumber) {
+      throw new Error("Lot number is required when stock is entered.");
+    }
+    const key = lotNumber.toLowerCase();
+    if (seen.has(key)) {
+      throw new Error(`Duplicate lot number: ${lotNumber}`);
+    }
+    seen.add(key);
+    normalized.push({ lotNumber, stockQuantity });
+  }
+
+  return normalized;
+}
+
+async function replaceSeedItemLots(
+  client: PoolClient,
+  seedItemId: number,
+  farmId: number,
+  lots: Array<{ lotNumber: string; stockQuantity: number | null }>
+) {
+  await ensureSeedItemInFarm(client, seedItemId, farmId);
+  await client.query(`delete from seed_item_lots where seed_item_id = $1`, [seedItemId]);
+  for (const lot of lots) {
+    await client.query(
+      `
+        insert into seed_item_lots (seed_item_id, lot_number, stock_quantity)
+        values ($1, $2, $3)
+      `,
+      [seedItemId, lot.lotNumber, lot.stockQuantity]
+    );
+  }
+
+  const totalStock = lots.some((lot) => lot.stockQuantity != null)
+    ? lots.reduce((sum, lot) => sum + (lot.stockQuantity ?? 0), 0)
+    : null;
+  await client.query(
+    `
+      update seed_items
+      set
+        lot_number = $2,
+        stock_quantity = $3,
+        updated_at = now()
+      where id = $1 and farm_id = $4
+    `,
+    [seedItemId, lots[0]?.lotNumber ?? null, totalStock, farmId]
+  );
+}
+
+async function ensureSeedItemLot(client: PoolClient, seedItemId: number, farmId: number, lotNumber: string) {
+  await ensureSeedItemInFarm(client, seedItemId, farmId);
+  await client.query(
+    `
+      insert into seed_item_lots (seed_item_id, lot_number)
+      values ($1, $2)
+      on conflict (seed_item_id, lot_number) do update set updated_at = now()
+    `,
+    [seedItemId, lotNumber]
+  );
+  await client.query(
+    `
+      update seed_items
+      set lot_number = coalesce(lot_number, $2), updated_at = now()
+      where id = $1 and farm_id = $3
+    `,
+    [seedItemId, lotNumber, farmId]
+  );
 }
 
 async function upsertCoverCropName(
@@ -830,11 +606,12 @@ async function insertGeneratedBeds(
     }
   }
 
-  const linePoints = options.lineCoordinates.map((point) => projectWgs84To3857(point.lat, point.lng));
-  validateBedLine(options.lineMode, linePoints);
+  const linePoints = straightLineFromGuide(simplifyNearlyStraightLine(options.lineCoordinates.map((point) => projectWgs84To3857(point.lat, point.lng))));
+  const lineMode: BedLineMode = "straight";
+  validateBedLine(lineMode, linePoints);
 
   const lineWkt = lineStringWkt3857(linePoints);
-  const fullLineWkt = options.lineMode === "straight" ? lineStringWkt3857(extendStraightLine(linePoints)) : null;
+  const fullLineWkt = lineMode === "straight" ? lineStringWkt3857(extendStraightLine(linePoints)) : null;
   const bedWidthM = Number(presetResult.rows[0].bed_width_m);
   const isRoadPreset = presetResult.rows[0].is_road;
   const pathSpacingM = isRoadPreset ? 0 : Number(presetResult.rows[0].path_spacing_m);
@@ -845,12 +622,18 @@ async function insertGeneratedBeds(
     const skippedBedSlots = harvestRoadEveryBeds ? Math.floor(layoutBedIndex / harvestRoadEveryBeds) * options.harvestRoadWidthBeds : 0;
     const layoutIndex = layoutBedIndex + skippedBedSlots;
     // ST_Buffer is used with side=left/right, so the offset line is the bed edge,
-    // not the bed centerline. The first bed should start directly from the picked
-    // block edge; later beds move by one bed plus one path each time.
+    // not the bed centerline. For the first bed from a block edge, start from a
+    // tiny inward offset so boundary wiggles do not shorten or reject the bed.
     // When building from a selected bed edge, edgeOffsetM carries the path width
     // so the next bed starts after the walkway instead of touching the old bed.
-    const startOffset = (options.edgeOffsetM + layoutIndex * (bedWidthM + pathSpacingM)) * sideSign;
-    const sql = options.lineMode === "straight" ? `
+    const { clipOffsetM } = resolveBedEdgeOffsets({
+      edgeOffsetM: options.edgeOffsetM,
+      layoutIndex,
+      bedWidthM,
+      pathSpacingM,
+      sideSign
+    });
+    const sql = lineMode === "straight" ? `
       with
       block_geom as (
         select ST_Transform(coalesce(zone.boundary, block.boundary), 3857) as geom
@@ -1056,12 +839,12 @@ async function insertGeneratedBeds(
     `;
 
     const sideOption = `side=${side} endcap=flat join=round`;
-    const params = options.lineMode === "straight"
+    const params = lineMode === "straight"
       ? [
           options.blockId,
           lineWkt,
           fullLineWkt,
-          startOffset,
+          clipOffsetM,
           bedWidthM,
           sideOption,
           `${options.namePrefix}${options.startNumber + sequenceIndex}`,
@@ -1076,7 +859,7 @@ async function insertGeneratedBeds(
       : [
           options.blockId,
           lineWkt,
-          startOffset,
+          clipOffsetM,
           bedWidthM,
           sideOption,
           `${options.namePrefix}${options.startNumber + sequenceIndex}`,
@@ -1175,7 +958,7 @@ async function fieldIdForBlock(client: PoolClient, blockId: number, farmId: numb
   return result.rows[0]?.field_id ?? null;
 }
 
-async function plantingLocationIds(client: PoolClient, auth: AuthContext, body: z.infer<typeof plantingSchema>) {
+async function plantingLocationIds(client: PoolClient, auth: AuthContext, body: PlantingInput) {
   let intendedFieldId = body.intendedFieldId ?? null;
   let intendedBlockId = body.intendedBlockId ?? null;
 
@@ -1194,6 +977,77 @@ async function plantingLocationIds(client: PoolClient, auth: AuthContext, body: 
   }
 
   return { intendedFieldId, intendedBlockId };
+}
+
+async function createPlantingFromInput(client: PoolClient, auth: AuthContext, body: PlantingInput) {
+  assertNoFuturePlantingStatusDate(body.status, body.plannedSowDate, body.plannedTransplantDate);
+  if (body.intendedBedId != null) {
+    await ensurePlantableBedInFarm(client, body.intendedBedId, auth.farmId);
+  }
+  if (body.seedItemId != null) {
+    await ensureSeedItemInFarm(client, body.seedItemId, auth.farmId);
+  }
+  if (body.taskFlowTemplateId != null) {
+    await ensureTaskFlowInFarm(client, body.taskFlowTemplateId, auth.farmId);
+  }
+  const { intendedFieldId, intendedBlockId } = await plantingLocationIds(client, auth, body);
+  const result = await client.query<{ id: number }>(
+    `
+      insert into plantings (
+        farm_id, crop_id, variety_id, seed_item_id, title, status,
+        intended_field_id, intended_block_id, intended_bed_id, task_flow_template_id,
+        spacing, plant_count, bed_length_used_m, notes,
+        tray_location, tray_count, cells_per_tray, days_to_harvest,
+        field_spacing_in_row, row_spacing, rows_per_bed, dead_at_frost, bed_cover,
+        planned_sow_date, planned_transplant_date, expected_harvest_start, expected_harvest_end
+      )
+      values (
+        $1, $2, $3, $4, $5, $6,
+        $7, $8, $9, $10,
+        $11, $12, $13, $14,
+        $15, $16, $17, $18,
+        $19, $20, $21, $22, $23,
+        $24, $25, $26, $27
+      )
+      returning id
+    `,
+    [
+      auth.farmId,
+      body.cropId,
+      body.varietyId ?? null,
+      body.seedItemId ?? null,
+      body.title,
+      body.status,
+      intendedFieldId,
+      intendedBlockId,
+      body.intendedBedId ?? null,
+      body.taskFlowTemplateId ?? null,
+      body.spacing ?? null,
+      body.plantCount ?? null,
+      body.bedLengthUsedM ?? null,
+      body.notes ?? null,
+      body.trayLocation ?? null,
+      body.trayCount ?? null,
+      body.cellsPerTray ?? null,
+      body.daysToHarvest ?? null,
+      body.fieldSpacingInRow ?? null,
+      body.rowSpacing ?? null,
+      body.rowsPerBed ?? null,
+      body.deadAtFrost ?? null,
+      body.bedCover ?? null,
+      body.plannedSowDate ?? null,
+      body.plannedTransplantDate ?? null,
+      body.expectedHarvestStart ?? null,
+      body.expectedHarvestEnd ?? null
+    ]
+  );
+  const plantingId = result.rows[0].id;
+  await recalculatePlantingTasks(client, plantingId);
+  if (intendedBlockId != null) {
+    await upsertBlockBedMakingTask(client, auth.farmId, intendedBlockId);
+    await appendPlantingToBlockPlacementPlan(client, auth.farmId, intendedBlockId, plantingId);
+  }
+  return { plantingId, intendedBlockId };
 }
 
 async function upsertBlockBedMakingTask(client: PoolClient, farmId: number, blockId: number) {
@@ -1277,6 +1131,512 @@ async function upsertBlockBedMakingTask(client: PoolClient, farmId: number, bloc
     `,
     [farmId, row.first_bed_id, title, row.scheduled_date, notes]
   );
+}
+
+async function blockHasPlantableBeds(client: PoolClient, blockId: number, farmId: number) {
+  const result = await client.query<{ count: string }>(
+    `
+      select count(*) as count
+      from beds bed
+      join blocks block on block.id = bed.block_id
+      join fields field on field.id = block.field_id
+      where bed.block_id = $1
+        and field.farm_id = $2
+        and bed.source <> 'road'
+    `,
+    [blockId, farmId]
+  );
+  return Number(result.rows[0]?.count ?? 0) > 0;
+}
+
+async function loadExistingBlockPlacementPlanRows(client: PoolClient, farmId: number, blockId: number) {
+  const result = await client.query<{
+    kind: "planting" | "gap";
+    planting_id: number | null;
+    placement_order: string;
+    bed_length_used_m: string;
+    plant_count: string | null;
+    tray_count: string | null;
+  }>(
+    `
+      with raw_rows as (
+        select
+          'planting'::text as kind,
+          pp.planting_id,
+          pp.placement_order,
+          pp.bed_length_used_m,
+          pp.plant_count,
+          planting.tray_count
+        from planting_placements pp
+        join beds bed on bed.id = pp.bed_id
+        join plantings planting on planting.id = pp.planting_id
+        where bed.block_id = $2
+          and planting.farm_id = $1
+          and pp.plan_source = 'auto_block_plan'
+
+        union all
+
+        select
+          'gap'::text as kind,
+          null::integer as planting_id,
+          gap.placement_order,
+          gap.bed_length_used_m,
+          null::integer as plant_count,
+          null::integer as tray_count
+        from block_placement_gaps gap
+        where gap.block_id = $2
+          and gap.farm_id = $1
+
+        union all
+
+        select
+          overflow.entry_type as kind,
+          overflow.planting_id,
+          overflow.placement_order,
+          overflow.bed_length_used_m,
+          overflow.plant_count,
+          overflow.tray_count
+        from block_placement_overflows overflow
+        where overflow.block_id = $2
+          and overflow.farm_id = $1
+      )
+      select
+        kind,
+        planting_id,
+        placement_order,
+        sum(bed_length_used_m) as bed_length_used_m,
+        sum(plant_count) as plant_count,
+        max(tray_count) as tray_count
+      from raw_rows
+      group by kind, planting_id, placement_order
+      order by placement_order, planting_id nulls last
+    `,
+    [farmId, blockId]
+  );
+
+  return result.rows.map((row): BlockPlacementPlanRow => ({
+    kind: row.kind,
+    plantingId: row.planting_id,
+    bedLengthUsedM: Number(row.bed_length_used_m),
+    plantCount: row.plant_count == null ? null : Number(row.plant_count),
+    trayCount: row.tray_count == null ? null : Number(row.tray_count)
+  })).filter((row) => Number.isFinite(row.bedLengthUsedM) && row.bedLengthUsedM > 0);
+}
+
+async function blockHasAutoPlacementPlan(client: PoolClient, farmId: number, blockId: number) {
+  const result = await client.query<{ count: string }>(
+    `
+      select (
+        (select count(*)
+         from planting_placements pp
+         join beds bed on bed.id = pp.bed_id
+         join plantings planting on planting.id = pp.planting_id
+         where bed.block_id = $2
+           and planting.farm_id = $1
+           and pp.plan_source = 'auto_block_plan')
+        + (select count(*) from block_placement_gaps where farm_id = $1 and block_id = $2)
+        + (select count(*) from block_placement_overflows where farm_id = $1 and block_id = $2)
+      )::text as count
+    `,
+    [farmId, blockId]
+  );
+  return Number(result.rows[0]?.count ?? 0) > 0;
+}
+
+async function reflowBlockPlacementPlan(
+  client: PoolClient,
+  farmId: number,
+  blockId: number,
+  entranceSide: "start" | "end",
+  rows: BlockPlacementPlanRow[]
+) {
+  await ensureBlockInFarm(client, blockId, farmId);
+
+  const bedsResult = await client.query<{ id: number; bed_length_m: string }>(
+    `
+      select id, bed_length_m
+      from beds
+      where block_id = $1
+        and source <> 'road'
+      order by sequence_no nulls last, id
+    `,
+    [blockId]
+  );
+
+  await client.query(
+    `update blocks set bed_start_entrance_side = $3, updated_at = now() where id = $1 and field_id in (select id from fields where farm_id = $2)`,
+    [blockId, farmId, entranceSide]
+  );
+  await client.query(
+    `
+      delete from planting_placements pp
+      using beds bed, plantings planting
+      where pp.bed_id = bed.id
+        and pp.planting_id = planting.id
+        and bed.block_id = $2
+        and planting.farm_id = $1
+        and pp.plan_source = 'auto_block_plan'
+    `,
+    [farmId, blockId]
+  );
+  await client.query(`delete from block_placement_gaps where farm_id = $1 and block_id = $2`, [farmId, blockId]);
+  await client.query(`delete from block_placement_overflows where farm_id = $1 and block_id = $2`, [farmId, blockId]);
+
+  const beds = bedsResult.rows.map((bed) => ({
+    id: bed.id,
+    lengthM: Math.max(0, Number(bed.bed_length_m))
+  })).filter((bed) => Number.isFinite(bed.lengthM) && bed.lengthM > 0);
+  let bedIndex = 0;
+  let offsetM = 0;
+
+  for (let rowIndex = 0; rowIndex < rows.length; rowIndex += 1) {
+    const row = rows[rowIndex];
+    const placementOrder = rowIndex + 1;
+    let remainingLengthM = row.bedLengthUsedM;
+    let remainingPlants = row.plantCount ?? null;
+    const originalLengthM = row.bedLengthUsedM;
+
+    if (row.kind === "planting" && row.plantingId != null) {
+      await ensurePlantingInFarm(client, row.plantingId, farmId);
+      await client.query(
+        `
+          update plantings
+          set
+            intended_block_id = $2,
+            intended_bed_id = coalesce(intended_bed_id, $3),
+            bed_length_used_m = $4,
+            plant_count = $5,
+            tray_count = $6,
+            updated_at = now()
+          where id = $1 and farm_id = $7
+        `,
+        [
+          row.plantingId,
+          blockId,
+          beds[0]?.id ?? null,
+          row.bedLengthUsedM,
+          row.plantCount ?? null,
+          row.trayCount ?? null,
+          farmId
+        ]
+      );
+    }
+
+    while (remainingLengthM > 0.0001 && bedIndex < beds.length) {
+      const bed = beds[bedIndex];
+      const availableLengthM = Math.max(0, bed.lengthM - offsetM);
+      if (availableLengthM <= 0.0001) {
+        bedIndex += 1;
+        offsetM = 0;
+        continue;
+      }
+
+      const sectionLengthM = Math.min(remainingLengthM, availableLengthM);
+      const sectionPlantCount = remainingPlants == null
+        ? null
+        : Math.max(1, Math.min(remainingPlants, Math.round((row.plantCount ?? remainingPlants) * (sectionLengthM / originalLengthM))));
+
+      if (row.kind === "gap") {
+        await client.query(
+          `
+            insert into block_placement_gaps (
+              farm_id, block_id, bed_id, start_length_m, bed_length_used_m, placement_order, notes
+            )
+            values ($1, $2, $3, $4, $5, $6, 'Blank spreadsheet row')
+          `,
+          [farmId, blockId, bed.id, offsetM, sectionLengthM, placementOrder]
+        );
+      } else if (row.plantingId != null) {
+        await client.query(
+          `
+            insert into planting_placements (
+              planting_id, bed_id, plant_count, bed_length_used_m, placed_on, location_detail, notes,
+              start_length_m, placement_order, plan_source
+            )
+            values ($1, $2, $3, $4, null, 'Block placement plan', 'Planned map placement', $5, $6, 'auto_block_plan')
+          `,
+          [row.plantingId, bed.id, sectionPlantCount, sectionLengthM, offsetM, placementOrder]
+        );
+      }
+
+      remainingLengthM -= sectionLengthM;
+      if (remainingPlants != null && sectionPlantCount != null) {
+        remainingPlants = Math.max(0, remainingPlants - sectionPlantCount);
+      }
+      offsetM += sectionLengthM;
+      if (offsetM >= bed.lengthM - 0.0001) {
+        bedIndex += 1;
+        offsetM = 0;
+      }
+    }
+
+    if (remainingLengthM > 0.0001) {
+      await client.query(
+        `
+          insert into block_placement_overflows (
+            farm_id, block_id, planting_id, entry_type, bed_length_used_m, plant_count, tray_count, placement_order, notes
+          )
+          values ($1, $2, $3, $4, $5, $6, $7, $8, 'Overflow beyond mapped beds')
+        `,
+        [
+          farmId,
+          blockId,
+          row.kind === "planting" ? row.plantingId ?? null : null,
+          row.kind,
+          remainingLengthM,
+          remainingPlants,
+          row.trayCount ?? null,
+          placementOrder
+        ]
+      );
+    }
+  }
+}
+
+async function reflowExistingBlockPlacementPlan(client: PoolClient, farmId: number, blockId: number) {
+  if (!await blockHasAutoPlacementPlan(client, farmId, blockId)) {
+    return;
+  }
+  const block = await client.query<{ entrance_side: "start" | "end" }>(
+    `select bed_start_entrance_side as entrance_side from blocks block join fields field on field.id = block.field_id where block.id = $1 and field.farm_id = $2`,
+    [blockId, farmId]
+  );
+  const rows = await loadExistingBlockPlacementPlanRows(client, farmId, blockId);
+  await reflowBlockPlacementPlan(client, farmId, blockId, block.rows[0]?.entrance_side ?? "start", rows);
+}
+
+async function moveBlockBedAssignmentsToOverflowForReplacement(
+  client: PoolClient,
+  farmId: number,
+  blockId: number,
+  zoneId?: number | null
+) {
+  await ensureBlockInFarm(client, blockId, farmId);
+
+  const harvestUsage = await client.query<{ count: string }>(
+    `
+      select count(*) as count
+      from harvest_records harvest
+      join beds bed on bed.id = harvest.bed_id
+      join plantings planting on planting.id = harvest.planting_id
+      where planting.farm_id = $1
+        and bed.block_id = $2
+        and ($3::integer is null or bed.zone_id = $3)
+    `,
+    [farmId, blockId, zoneId ?? null]
+  );
+  if (Number(harvestUsage.rows[0]?.count ?? 0) > 0) {
+    throw new Error("This block has harvest records tied to its beds. Move or remove those harvest records before replacing the beds.");
+  }
+
+  const rowsResult = await client.query<{
+    kind: "planting" | "gap";
+    planting_id: number | null;
+    placement_order: string;
+    bed_length_used_m: string;
+    plant_count: string | null;
+    tray_count: string | null;
+  }>(
+    `
+      with target_beds as (
+        select bed.id
+        from beds bed
+        where bed.block_id = $2
+          and ($3::integer is null or bed.zone_id = $3)
+      ),
+      raw_rows as (
+        select
+          'planting'::text as kind,
+          placement.planting_id,
+          coalesce(
+            placement.placement_order,
+            100000 + row_number() over (order by placement.placed_on nulls last, placement.id)
+          ) as placement_order,
+          placement.bed_length_used_m,
+          placement.plant_count,
+          planting.tray_count
+        from planting_placements placement
+        join target_beds target on target.id = placement.bed_id
+        join plantings planting on planting.id = placement.planting_id
+        where planting.farm_id = $1
+
+        union all
+
+        select
+          'planting'::text as kind,
+          planting.id as planting_id,
+          90000 + row_number() over (order by planting.id) as placement_order,
+          planting.bed_length_used_m,
+          planting.plant_count,
+          planting.tray_count
+        from plantings planting
+        join target_beds target on target.id = planting.intended_bed_id
+        where planting.farm_id = $1
+          and planting.bed_length_used_m is not null
+          and not exists (
+            select 1
+            from planting_placements placement
+            join target_beds placement_target on placement_target.id = placement.bed_id
+            where placement.planting_id = planting.id
+          )
+
+        union all
+
+        select
+          'gap'::text as kind,
+          null::integer as planting_id,
+          gap.placement_order,
+          gap.bed_length_used_m,
+          null::integer as plant_count,
+          null::integer as tray_count
+        from block_placement_gaps gap
+        join target_beds target on target.id = gap.bed_id
+        where gap.farm_id = $1
+
+        union all
+
+        select
+          overflow.entry_type as kind,
+          overflow.planting_id,
+          overflow.placement_order,
+          overflow.bed_length_used_m,
+          overflow.plant_count,
+          overflow.tray_count
+        from block_placement_overflows overflow
+        where overflow.farm_id = $1
+          and overflow.block_id = $2
+      )
+      select
+        kind,
+        planting_id,
+        placement_order,
+        sum(bed_length_used_m) as bed_length_used_m,
+        sum(plant_count) as plant_count,
+        max(tray_count) as tray_count
+      from raw_rows
+      where bed_length_used_m is not null
+        and bed_length_used_m > 0
+      group by kind, planting_id, placement_order
+      order by placement_order, planting_id nulls last
+    `,
+    [farmId, blockId, zoneId ?? null]
+  );
+
+  await client.query(`delete from block_placement_overflows where farm_id = $1 and block_id = $2`, [farmId, blockId]);
+  await client.query(
+    `
+      with target_beds as (
+        select id
+        from beds
+        where block_id = $2
+          and ($3::integer is null or zone_id = $3)
+      )
+      delete from block_placement_gaps gap
+      using target_beds target
+      where gap.bed_id = target.id
+        and gap.farm_id = $1
+    `,
+    [farmId, blockId, zoneId ?? null]
+  );
+  await client.query(
+    `
+      with target_beds as (
+        select id
+        from beds
+        where block_id = $2
+          and ($3::integer is null or zone_id = $3)
+      )
+      delete from planting_placements placement
+      using target_beds target, plantings planting
+      where placement.bed_id = target.id
+        and placement.planting_id = planting.id
+        and planting.farm_id = $1
+    `,
+    [farmId, blockId, zoneId ?? null]
+  );
+  await client.query(
+    `
+      with target_beds as (
+        select id
+        from beds
+        where block_id = $2
+          and ($3::integer is null or zone_id = $3)
+      )
+      update plantings planting
+      set intended_bed_id = null, updated_at = now()
+      from target_beds target
+      where planting.intended_bed_id = target.id
+        and planting.farm_id = $1
+    `,
+    [farmId, blockId, zoneId ?? null]
+  );
+
+  for (const row of rowsResult.rows) {
+    const bedLengthUsedM = Number(row.bed_length_used_m);
+    const placementOrder = Number(row.placement_order);
+    const plantingId = row.kind === "planting" ? row.planting_id : null;
+    if (!Number.isFinite(bedLengthUsedM) || bedLengthUsedM <= 0 || !Number.isFinite(placementOrder)) {
+      continue;
+    }
+    if (row.kind === "planting" && plantingId == null) {
+      continue;
+    }
+    await client.query(
+      `
+        insert into block_placement_overflows (
+          farm_id, block_id, planting_id, entry_type, bed_length_used_m, plant_count, tray_count, placement_order, notes
+        )
+        values ($1, $2, $3, $4, $5, $6, $7, $8, 'Moved to overflow before replacing block beds')
+      `,
+      [
+        farmId,
+        blockId,
+        plantingId,
+        row.kind,
+        bedLengthUsedM,
+        row.plant_count == null ? null : Number(row.plant_count),
+        row.tray_count == null ? null : Number(row.tray_count),
+        placementOrder
+      ]
+    );
+  }
+}
+
+async function appendPlantingToBlockPlacementPlan(client: PoolClient, farmId: number, blockId: number, plantingId: number) {
+  if (!await blockHasPlantableBeds(client, blockId, farmId)) {
+    return;
+  }
+  const existingRows = await loadExistingBlockPlacementPlanRows(client, farmId, blockId);
+  if (existingRows.some((row) => row.kind === "planting" && row.plantingId === plantingId)) {
+    return;
+  }
+  const planting = await client.query<{
+    plant_count: number | null;
+    tray_count: number | null;
+    bed_length_used_m: string | null;
+  }>(
+    `select plant_count, tray_count, bed_length_used_m from plantings where id = $1 and farm_id = $2`,
+    [plantingId, farmId]
+  );
+  const row = planting.rows[0];
+  const bedLengthUsedM = row?.bed_length_used_m == null ? null : Number(row.bed_length_used_m);
+  if (row == null || bedLengthUsedM == null || !Number.isFinite(bedLengthUsedM) || bedLengthUsedM <= 0) {
+    return;
+  }
+  const block = await client.query<{ entrance_side: "start" | "end" }>(
+    `select bed_start_entrance_side as entrance_side from blocks block join fields field on field.id = block.field_id where block.id = $1 and field.farm_id = $2`,
+    [blockId, farmId]
+  );
+  await reflowBlockPlacementPlan(client, farmId, blockId, block.rows[0]?.entrance_side ?? "start", [
+    ...existingRows,
+    {
+      kind: "planting",
+      plantingId,
+      bedLengthUsedM,
+      plantCount: row.plant_count,
+      trayCount: row.tray_count
+    }
+  ]);
 }
 
 async function clearIntendedBedsForField(client: PoolClient, fieldId: number) {
@@ -1470,7 +1830,7 @@ async function ensureDefaultBlockArea(
     blockId: number;
     farmId: number;
     blockName: string;
-    currentState: z.infer<typeof zoneActualStateSchema>;
+    currentState: ZoneActualStateInput;
     coordinates: Array<{ lat: number; lng: number }>;
   }
 ) {
@@ -1591,6 +1951,7 @@ const undoSnapshotTableNames = [
   "cover_crop_names",
   "seed_items",
   "bed_presets",
+  "tractor_profiles",
   "block_zones",
   "beds",
   "task_flow_templates",
@@ -1599,6 +1960,8 @@ const undoSnapshotTableNames = [
   "task_flow_edges",
   "plantings",
   "planting_placements",
+  "block_placement_gaps",
+  "block_placement_overflows",
   "tasks",
   "harvest_records",
   "farm_events"
@@ -1610,6 +1973,7 @@ const undoSnapshotSequenceNames = [
   "cover_crop_names",
   "seed_items",
   "bed_presets",
+  "tractor_profiles",
   "block_zones",
   "beds",
   "task_flow_templates",
@@ -1618,6 +1982,8 @@ const undoSnapshotSequenceNames = [
   "task_flow_edges",
   "plantings",
   "planting_placements",
+  "block_placement_gaps",
+  "block_placement_overflows",
   "tasks",
   "harvest_records",
   "farm_events"
@@ -1640,6 +2006,7 @@ async function captureFarmSnapshot(
         'cover_crop_names', (select coalesce(jsonb_agg(to_jsonb(cover_crop) order by cover_crop.id), '[]'::jsonb) from cover_crop_names cover_crop where cover_crop.farm_id = $1),
         'seed_items', (select coalesce(jsonb_agg(to_jsonb(seed) order by seed.id), '[]'::jsonb) from seed_items seed where seed.farm_id = $1),
         'bed_presets', (select coalesce(jsonb_agg(to_jsonb(preset) order by preset.id), '[]'::jsonb) from bed_presets preset where preset.farm_id = $1),
+        'tractor_profiles', (select coalesce(jsonb_agg(to_jsonb(profile) order by profile.id), '[]'::jsonb) from tractor_profiles profile where profile.farm_id = $1),
         'block_zones', (
           select coalesce(jsonb_agg(to_jsonb(zone) order by zone.id), '[]'::jsonb)
           from block_zones zone
@@ -1680,6 +2047,8 @@ async function captureFarmSnapshot(
           join plantings planting on planting.id = placement.planting_id
           where planting.farm_id = $1
         ),
+        'block_placement_gaps', (select coalesce(jsonb_agg(to_jsonb(gap) order by gap.id), '[]'::jsonb) from block_placement_gaps gap where gap.farm_id = $1),
+        'block_placement_overflows', (select coalesce(jsonb_agg(to_jsonb(overflow) order by overflow.id), '[]'::jsonb) from block_placement_overflows overflow where overflow.farm_id = $1),
         'tasks', (select coalesce(jsonb_agg(to_jsonb(task) order by task.id), '[]'::jsonb) from tasks task where task.farm_id = $1),
         'harvest_records', (select coalesce(jsonb_agg(to_jsonb(harvest) order by harvest.id), '[]'::jsonb) from harvest_records harvest where harvest.farm_id = $1),
         'farm_events', (select coalesce(jsonb_agg(to_jsonb(event) order by event.id), '[]'::jsonb) from farm_events event where event.farm_id = $1)
@@ -1759,6 +2128,8 @@ async function restoreFarmSnapshot(
   await client.query(`delete from farm_events where farm_id = $1`, [farmId]);
   await client.query(`delete from harvest_records where farm_id = $1`, [farmId]);
   await client.query(`delete from tasks where farm_id = $1`, [farmId]);
+  await client.query(`delete from block_placement_overflows where farm_id = $1`, [farmId]);
+  await client.query(`delete from block_placement_gaps where farm_id = $1`, [farmId]);
   await client.query(`delete from planting_placements where planting_id in (select id from plantings where farm_id = $1)`, [farmId]);
   await client.query(`delete from plantings where farm_id = $1`, [farmId]);
   await client.query(`delete from task_flow_edges where flow_template_id in (select id from task_flow_templates where farm_id = $1)`, [farmId]);
@@ -1870,7 +2241,7 @@ async function upsertBlockZoneGeometry(
     farmId: number;
     name: string;
     plannedUse?: "beds" | "cover_crop" | null;
-    actualState: z.infer<typeof zoneActualStateSchema>;
+    actualState: ZoneActualStateInput;
     coverCropNameId?: number | null;
     coverCropName?: string | null;
     plannedCoverCropSeedDate?: string | null;
@@ -2208,6 +2579,8 @@ async function saveTaskFlowTemplate(
       offsetDays: number;
       iconColor: string;
       iconSecondaryColor: string;
+      tractorModel?: string | null;
+      tractorProfileId?: number | null;
       x: number;
       y: number;
       notes?: string | null;
@@ -2269,6 +2642,20 @@ async function saveTaskFlowTemplate(
     throw new Error("Task flow template not found");
   }
 
+  const templateFarm = await client.query<{ farm_id: number }>(
+    `select farm_id from task_flow_templates where id = $1`,
+    [flowTemplateId]
+  );
+  const templateFarmId = templateFarm.rows[0]?.farm_id;
+  if (templateFarmId == null) {
+    throw new Error("Task flow template not found");
+  }
+  for (const node of options.nodes) {
+    if (node.tractorProfileId != null) {
+      await ensureTractorProfileInFarm(client, node.tractorProfileId, templateFarmId);
+    }
+  }
+
   const nodeIdsByKey = new Map<string, number>();
   for (const node of options.nodes) {
     const result = await client.query<{ id: number }>(
@@ -2282,11 +2669,13 @@ async function saveTaskFlowTemplate(
           offset_days,
           icon_color,
           icon_secondary_color,
+          tractor_model,
+          tractor_profile_id,
           x_pos,
           y_pos,
           notes
         )
-        values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+        values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
         returning id
       `,
       [
@@ -2298,6 +2687,8 @@ async function saveTaskFlowTemplate(
         node.offsetDays,
         node.iconColor,
         node.iconSecondaryColor,
+        node.tractorModel ?? null,
+        node.tractorProfileId ?? null,
         node.x,
         node.y,
         node.notes ?? null
@@ -2464,6 +2855,7 @@ app.post("/api/auth/register", asyncHandler(async (req, res) => {
       [body.farmName.trim()]
     );
     const farm = farmResult.rows[0];
+    await seedStarterSeedCatalog(client, farm.id);
     const userResult = await client.query<{
       id: number;
       username: string;
@@ -2785,11 +3177,11 @@ app.get("/api/feedback", requireAdmin(), asyncHandler(async (req, res) => {
         report.created_at
       from feedback_reports report
       left join app_users app_user on app_user.id = report.user_id
-      where $2::boolean = true
+      where $1::boolean = true
       order by report.created_at desc, report.id desc
       limit 50
     `,
-    [auth.farmId, auth.isAdmin]
+    [auth.isAdmin]
   );
 
   res.json(result.rows.map((row: {
@@ -2993,1926 +3385,54 @@ app.get("/api/offline-imagery/tiles/:z/:x/:y", asyncHandler(async (req, res) => 
 
 // Main dashboard payload. Most frontend screens are hydrated from this one route
 // instead of making many smaller requests after every save/reload.
-app.get("/api/dashboard", requireRole("worker"), asyncHandler(async (req, res) => {
-  const auth = currentAuth(req) as AuthContext;
-  const [farm, fields, blocks, blockZones, beds, bedPresets, coverCropNames, seedItems, crops, varieties, taskFlowTemplates, taskFlowNodes, taskFlowEdges, plantings, placements, events, tasks, harvests] = await Promise.all([
-    pool.query(`
-      select
-        id,
-        name,
-        notes,
-        maps_private as "mapsPrivate"
-      from farms
-      where id = $1
-      limit 1
-    `, [auth.farmId]),
-    pool.query(`
-      select
-        field.id,
-        field.farm_id as "farmId",
-        farm.name as "farmName",
-        field.name,
-        field.notes,
-        field.area_sqm as "areaSqM",
-        ST_AsGeoJSON(field.boundary)::json as boundary,
-        ST_AsGeoJSON(field.centroid)::json as centroid
-      from fields field
-      join farms farm on farm.id = field.farm_id
-      where field.farm_id = $1
-      order by farm.name, field.id
-    `, [auth.farmId]),
-    pool.query(`
-      select
-        b.id,
-        f.farm_id as "farmId",
-        farm.name as "farmName",
-        b.field_id as "fieldId",
-        b.name,
-        b.notes,
-        b.area_sqm as "areaSqM",
-        f.name as "fieldName",
-        ST_AsGeoJSON(b.boundary)::json as boundary,
-        ST_AsGeoJSON(b.centroid)::json as centroid
-      from blocks b
-      join fields f on f.id = b.field_id
-      join farms farm on farm.id = f.farm_id
-      where f.farm_id = $1
-      order by farm.name, f.id, b.id
-    `, [auth.farmId]),
-    pool.query(`
-      select
-        zone.id,
-        field.farm_id as "farmId",
-        farm.name as "farmName",
-        zone.block_id as "blockId",
-        block.name as "blockName",
-        field.id as "fieldId",
-        field.name as "fieldName",
-        zone.name,
-        zone.planned_use as "plannedUse",
-        zone.actual_state as "actualState",
-        zone.cover_crop_name_id as "coverCropNameId",
-        cover_crop.name as "coverCropName",
-        zone.planned_cover_crop_seed_date as "plannedCoverCropSeedDate",
-        zone.planned_cover_crop_terminate_date as "plannedCoverCropTerminateDate",
-        zone.actual_cover_crop_seed_date as "actualCoverCropSeedDate",
-        zone.actual_cover_crop_terminate_date as "actualCoverCropTerminateDate",
-        zone.notes,
-        zone.area_sqm as "areaSqM",
-        ST_AsGeoJSON(zone.boundary)::json as boundary,
-        ST_AsGeoJSON(zone.centroid)::json as centroid
-      from block_zones zone
-      join blocks block on block.id = zone.block_id
-      join fields field on field.id = block.field_id
-      join farms farm on farm.id = field.farm_id
-      left join cover_crop_names cover_crop on cover_crop.id = zone.cover_crop_name_id
-      where field.farm_id = $1
-      order by farm.name, field.id, block.id, zone.id
-    `, [auth.farmId]),
-    pool.query(`
-      select
-        b.id,
-        field.farm_id as "farmId",
-        farm.name as "farmName",
-        b.block_id as "blockId",
-        bl.name as "blockName",
-        b.zone_id as "zoneId",
-        zone.name as "zoneName",
-        b.name,
-        b.is_permanent as "isPermanent",
-        b.notes,
-        b.x,
-        b.y,
-        b.width,
-        b.height,
-        b.bed_length_m as "bedLengthM",
-        b.source,
-        b.direction,
-        b.sequence_no as "sequenceNo",
-        b.bed_preset_id as "bedPresetId",
-        bp.name as "bedPresetName",
-        b.area_sqm as "areaSqM",
-        b.geometry_source as "geometrySource",
-        b.geometry_updated_at as "geometryUpdatedAt",
-        b.geometry_notes as "geometryNotes",
-        ST_AsGeoJSON(coalesce(b.boundary, ST_Transform(b.geom, 4326)))::json as boundary,
-        coalesce(sum(pp.bed_length_used_m), 0) as "occupiedLengthM"
-      from beds b
-      join blocks bl on bl.id = b.block_id
-      join fields field on field.id = bl.field_id
-      join farms farm on farm.id = field.farm_id
-      left join block_zones zone on zone.id = b.zone_id
-      left join bed_presets bp on bp.id = b.bed_preset_id
-      left join planting_placements pp on pp.bed_id = b.id and field.farm_id = $1
-      where field.farm_id = $1
-      group by b.id, field.id, field.farm_id, farm.name, bl.id, bl.name, zone.id, zone.name, bp.id, bp.name
-      order by farm.name, field.id, bl.id, b.id
-    `, [auth.farmId]),
-    pool.query(`
-      select
-        id,
-        farm_id as "farmId",
-        name,
-        bed_width_m as "bedWidthM",
-        path_spacing_m as "pathSpacingM",
-        is_road as "isRoad",
-        notes
-      from bed_presets
-      where farm_id = $1
-      order by name
-    `, [auth.farmId]),
-    pool.query(`
-      select
-        id,
-        farm_id as "farmId",
-        name,
-        notes
-      from cover_crop_names
-      where farm_id = $1
-      order by name
-    `, [auth.farmId]),
-    pool.query(`
-      select
-        id,
-        farm_id as "farmId",
-        crop_id as "cropId",
-        variety_id as "varietyId",
-        family,
-        crop_type as "cropType",
-        variety_name as "varietyName",
-        breed_name as "breedName",
-        supplier,
-        catalog_number as "catalogNumber",
-        lot_number as "lotNumber",
-        notes,
-        concat_ws(' / ', crop_type, variety_name, breed_name, supplier, nullif(catalog_number, ''), nullif(lot_number, '')) as "displayName"
-      from seed_items
-      where farm_id = $1
-      order by crop_type, variety_name nulls last, breed_name nulls last, supplier nulls last
-    `, [auth.farmId]),
-    pool.query(`select id, name from crops order by name`),
-    pool.query(`
-      select id, crop_id as "cropId", name
-      from varieties
-      order by name
-    `),
-    pool.query(`
-      select
-        tft.id,
-        tft.farm_id as "farmId",
-        tft.crop_id as "cropId",
-        c.name as "cropName",
-        tft.name,
-        tft.notes,
-        tft.is_default as "isDefault",
-        tft.source_task_flow_template_id as "sourceTaskFlowTemplateId"
-      from task_flow_templates tft
-      left join crops c on c.id = tft.crop_id
-      where tft.farm_id = $1
-      order by coalesce(c.name, 'General'), tft.name
-    `, [auth.farmId]),
-    pool.query(`
-      select
-        id,
-        flow_template_id as "flowTemplateId",
-        node_key as "nodeKey",
-        task_type as "taskType",
-        label,
-        anchor,
-        offset_days as "offsetDays",
-        icon_color as "iconColor",
-        icon_secondary_color as "iconSecondaryColor",
-        x_pos as "x",
-        y_pos as "y",
-        notes
-      from task_flow_nodes
-      where flow_template_id in (select id from task_flow_templates where farm_id = $1)
-      order by flow_template_id, y_pos, x_pos, id
-    `, [auth.farmId]),
-    pool.query(`
-      select
-        e.id,
-        e.flow_template_id as "flowTemplateId",
-        from_node.node_key as "fromNodeKey",
-        to_node.node_key as "toNodeKey"
-      from task_flow_edges e
-      join task_flow_nodes from_node on from_node.id = e.from_node_id
-      join task_flow_nodes to_node on to_node.id = e.to_node_id
-      where e.flow_template_id in (select id from task_flow_templates where farm_id = $1)
-      order by e.flow_template_id, e.id
-    `, [auth.farmId]),
-    pool.query(`
-      select
-        p.id,
-        p.farm_id as "farmId",
-        p.crop_id as "cropId",
-        p.variety_id as "varietyId",
-        p.seed_item_id as "seedItemId",
-        c.name as "cropName",
-        v.name as "varietyName",
-        concat_ws(' / ', seed.crop_type, seed.variety_name, seed.breed_name, seed.supplier, nullif(seed.lot_number, '')) as "seedName",
-        p.title,
-        p.status,
-        p.intended_field_id as "intendedFieldId",
-        pf.name as "intendedFieldName",
-        p.intended_block_id as "intendedBlockId",
-        pb.name as "intendedBlockName",
-        p.intended_bed_id as "intendedBedId",
-        ib.name as "intendedBedName",
-        p.task_flow_template_id as "taskFlowTemplateId",
-        tft.name as "taskFlowTemplateName",
-        p.spacing,
-        p.plant_count as "plantCount",
-        p.bed_length_used_m as "bedLengthUsedM",
-        p.tray_location as "trayLocation",
-        p.tray_count as "trayCount",
-        p.cells_per_tray as "cellsPerTray",
-        p.days_to_harvest as "daysToHarvest",
-        p.field_spacing_in_row as "fieldSpacingInRow",
-        p.row_spacing as "rowSpacing",
-        p.rows_per_bed as "rowsPerBed",
-        p.dead_at_frost as "deadAtFrost",
-        p.bed_cover as "bedCover",
-        p.notes,
-        p.planned_sow_date as "plannedSowDate",
-        p.planned_transplant_date as "plannedTransplantDate",
-        p.expected_harvest_start as "expectedHarvestStart",
-        p.expected_harvest_end as "expectedHarvestEnd",
-        p.actual_tray_seeding_date as "actualTraySeedingDate",
-        p.actual_direct_seeding_date as "actualDirectSeedingDate",
-        p.actual_transplant_date as "actualTransplantDate",
-        p.actual_cultivation_date as "actualCultivationDate",
-        p.actual_harvest_date as "actualHarvestDate",
-        p.actual_finish_date as "actualFinishDate"
-      from plantings p
-      join crops c on c.id = p.crop_id
-      left join varieties v on v.id = p.variety_id
-      left join seed_items seed on seed.id = p.seed_item_id
-      left join fields pf on pf.id = p.intended_field_id
-      left join blocks pb on pb.id = p.intended_block_id
-      left join beds ib on ib.id = p.intended_bed_id
-      left join task_flow_templates tft on tft.id = p.task_flow_template_id
-      where p.farm_id = $1
-      order by coalesce(p.planned_transplant_date, p.planned_sow_date), p.id
-    `, [auth.farmId]),
-    pool.query(`
-      select
-        pp.id,
-        pp.planting_id as "plantingId",
-        pp.bed_id as "bedId",
-        b.name as "bedName",
-        pp.plant_count as "plantCount",
-        pp.bed_length_used_m as "bedLengthUsedM",
-        pp.placed_on as "placedOn",
-        pp.location_detail as "locationDetail",
-        pp.notes,
-        case when pp.boundary is not null then ST_AsGeoJSON(pp.boundary)::json else null end as boundary
-      from planting_placements pp
-      join beds b on b.id = pp.bed_id
-      join plantings p on p.id = pp.planting_id
-      where p.farm_id = $1
-      order by pp.id
-    `, [auth.farmId]),
-    pool.query(`
-      select
-        event.id,
-        event.farm_id as "farmId",
-        event.event_date as "eventDate",
-        event.event_type as "eventType",
-        event.title,
-        event.notes,
-        event.metadata,
-        event.field_id as "fieldId",
-        event.block_id as "blockId",
-        event.zone_id as "zoneId",
-        event.bed_id as "bedId",
-        bed.name as "bedName",
-        event.planting_id as "plantingId",
-        planting.title as "plantingTitle",
-        event.placement_id as "placementId",
-        event.task_id as "taskId",
-        case when event.boundary is not null then ST_AsGeoJSON(event.boundary)::json else null end as boundary
-      from farm_events event
-      left join beds bed on bed.id = event.bed_id
-      left join plantings planting on planting.id = event.planting_id
-      where event.farm_id = $1
-      order by event.event_date desc, event.id desc
-    `, [auth.farmId]),
-    pool.query(`
-      select
-        t.id,
-        t.farm_id as "farmId",
-        t.planting_id as "plantingId",
-        t.bed_id as "bedId",
-        t.task_flow_node_id as "taskFlowNodeId",
-        t.task_type as "taskType",
-        t.title,
-        t.status,
-        t.anchor,
-        t.offset_days as "offsetDays",
-        coalesce(t.icon_color, node.icon_color, '#4f84aa') as "iconColor",
-        coalesce(t.icon_secondary_color, node.icon_secondary_color, '#f4c430') as "iconSecondaryColor",
-        t.depends_on_task_ids as "dependsOnTaskIds",
-        t.scheduled_date as "scheduledDate",
-        t.completed_date as "completedDate",
-        t.notes,
-        t.is_auto_generated as "isAutoGenerated",
-        p.title as "plantingTitle",
-        b.name as "bedName"
-      from tasks t
-      left join plantings p on p.id = t.planting_id
-      left join beds b on b.id = t.bed_id
-      left join task_flow_nodes node on node.id = t.task_flow_node_id
-      where t.farm_id = $1
-      order by t.scheduled_date nulls last, t.id
-    `, [auth.farmId]),
-    pool.query(`
-      select
-        h.id,
-        h.farm_id as "farmId",
-        h.planting_id as "plantingId",
-        h.bed_id as "bedId",
-        h.harvest_date as "harvestDate",
-        h.quantity,
-        h.unit,
-        h.notes,
-        p.title as "plantingTitle",
-        b.name as "bedName"
-      from harvest_records h
-      join plantings p on p.id = h.planting_id
-      join beds b on b.id = h.bed_id
-      where h.farm_id = $1
-      order by h.harvest_date desc, h.id desc
-    `, [auth.farmId])
-  ]);
-
-  res.json({
-    farm: farm.rows[0] ?? null,
-    fields: fields.rows,
-    blocks: blocks.rows,
-    blockZones: blockZones.rows,
-    beds: beds.rows,
-    bedPresets: bedPresets.rows,
-    coverCropNames: coverCropNames.rows,
-    seedItems: seedItems.rows,
-    crops: crops.rows,
-    varieties: varieties.rows,
-    taskFlowTemplates: taskFlowTemplates.rows,
-    taskFlowNodes: taskFlowNodes.rows,
-    taskFlowEdges: taskFlowEdges.rows,
-    plantings: plantings.rows,
-    placements: placements.rows,
-    events: events.rows,
-    tasks: tasks.rows,
-    harvests: harvests.rows
-  });
-}));
-
-// Small lookup/create routes used by planning forms.
-app.post("/api/bed-presets", requireRole("planner"), asyncHandler(async (req, res) => {
-  const body = bedPresetSchema.parse(req.body);
-  const auth = currentAuth(req) as AuthContext;
-  const result = await runWithUndoSnapshot(auth, "Create bed preset", async (client) => {
-    const insert = await client.query<{ id: number }>(
-      `
-        insert into bed_presets (farm_id, name, bed_width_m, path_spacing_m, is_road, notes)
-        values ($1, $2, $3, $4, $5, $6)
-        returning id
-      `,
-      [auth.farmId, body.name, body.bedWidthM, body.pathSpacingM, body.isRoad, body.notes ?? null]
-    );
-    return insert.rows[0];
-  });
-  res.status(201).json({ id: result.id });
-}));
-
-app.delete("/api/bed-presets/:id", requireRole("planner"), asyncHandler(async (req, res) => {
-  const id = Number(req.params.id);
-  const auth = currentAuth(req) as AuthContext;
-  await runWithUndoSnapshot(auth, "Delete bed preset", async (client) => {
-    await ensureBedPresetInFarm(client, id, auth.farmId);
-    await client.query(`update beds set bed_preset_id = null, updated_at = now() where bed_preset_id = $1`, [id]);
-    await client.query(`delete from bed_presets where id = $1 and farm_id = $2`, [id, auth.farmId]);
-  });
-  res.json({ ok: true });
-}));
-
-app.post("/api/cover-crops", requireRole("planner"), asyncHandler(async (req, res) => {
-  const body = coverCropNameSchema.parse(req.body);
-  const auth = currentAuth(req) as AuthContext;
-  if (body.farmId !== auth.farmId) {
-    res.status(403).json({ error: "Planner access required" });
-    return;
-  }
-
-  const result = await runWithUndoSnapshot(auth, "Create cover crop name", async (client) => {
-    const insert = await client.query<{ id: number; name: string; notes: string | null }>(
-      `
-        insert into cover_crop_names (farm_id, name, notes)
-        values ($1, $2, $3)
-        on conflict (farm_id, name)
-        do update set notes = coalesce(excluded.notes, cover_crop_names.notes), updated_at = now()
-        returning id, name, notes
-      `,
-      [body.farmId, body.name.trim(), body.notes ?? null]
-    );
-    return insert.rows[0];
-  });
-  res.status(201).json({
-    id: result.id,
-    farmId: body.farmId,
-    name: result.name,
-    notes: result.notes
-  });
-}));
-
-app.post("/api/seed-items", requireRole("planner"), asyncHandler(async (req, res) => {
-  const body = seedItemSchema.parse(req.body);
-  const auth = currentAuth(req) as AuthContext;
-  if (body.farmId !== auth.farmId) {
-    res.status(403).json({ error: "Planner access required" });
-    return;
-  }
-
-  const result = await runWithUndoSnapshot(auth, "Create seed genetics item", async (client) => {
-    const cropResult = await client.query<{ id: number }>(
-      `
-        insert into crops (name)
-        values ($1)
-        on conflict (name) do update set name = excluded.name
-        returning id
-      `,
-      [body.cropType.trim()]
-    );
-    const cropId = cropResult.rows[0].id;
-
-    let varietyId: number | null = null;
-    const varietyName = body.varietyName?.trim();
-    if (varietyName) {
-      const varietyResult = await client.query<{ id: number }>(
-        `
-          insert into varieties (crop_id, name)
-          values ($1, $2)
-          on conflict (crop_id, name) do update set name = excluded.name
-          returning id
-        `,
-        [cropId, varietyName]
-      );
-      varietyId = varietyResult.rows[0].id;
-    }
-
-    const seedResult = await client.query<{ id: number }>(
-      `
-        insert into seed_items (
-          farm_id, crop_id, variety_id, family, crop_type, variety_name, breed_name, supplier, catalog_number, lot_number, notes
-        )
-        values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
-        returning id
-      `,
-      [
-        auth.farmId,
-        cropId,
-        varietyId,
-        body.family?.trim() || null,
-        body.cropType.trim(),
-        varietyName || null,
-        body.breedName?.trim() || null,
-        body.supplier?.trim() || null,
-        body.catalogNumber?.trim() || null,
-        body.lotNumber?.trim() || null,
-        body.notes ?? null
-      ]
-    );
-
-    return { id: seedResult.rows[0].id, cropId, varietyId };
-  });
-
-  res.status(201).json(result);
-}));
-
-registerSpreadsheetImportRoutes(app, {
+registerFarmRoutes(app, {
   asyncHandler,
   currentAuth,
   requireRole,
+  runWithUndoSnapshot,
   createUndoSnapshot,
-  pruneUndoSnapshots
+  pruneUndoSnapshots,
+  normalizedSeedLots,
+  replaceSeedItemLots,
+  ensureFieldInFarm,
+  ensureBlockInFarm,
+  ensureBlockZoneInFarm,
+  ensureBedInFarm,
+  ensurePlantableBedInFarm,
+  ensurePlantingInFarm,
+  ensureTaskInFarm,
+  ensureTaskFlowInFarm,
+  ensureBedPresetInFarm,
+  ensureTractorProfileInFarm,
+  ensureSeedItemInFarm,
+  ensureSeedItemLot,
+  upsertCoverCropName,
+  insertGeneratedBeds,
+  blockIdForBed,
+  fieldIdForBlock,
+  upsertBlockBedMakingTask,
+  reflowBlockPlacementPlan,
+  reflowExistingBlockPlacementPlan,
+  moveBlockBedAssignmentsToOverflowForReplacement,
+  appendPlantingToBlockPlacementPlan,
+  clearIntendedBedsForField,
+  clearIntendedBedsForBlock,
+  upsertFieldGeometry,
+  upsertBlockGeometry,
+  ensureDefaultBlockArea,
+  getBedContext,
+  recordFarmEvent,
+  rectangleWkt,
+  upsertBlockZoneGeometry,
+  splitBlockBoundaryIntoZoneCoordinates,
+  saveTaskFlowTemplate,
+  plantingLocationIds,
+  createPlantingFromInput,
+  actualUpdateForTaskType,
+  todayIsoDate,
+  assertNoFuturePlantingDate,
+  assertNoFuturePlantingStatusDate
 });
-
-// Block zones represent planned/current sub-areas inside a block.
-app.post("/api/block-zones", requireRole("planner"), asyncHandler(async (req, res) => {
-  const body = blockZoneSchema.parse(req.body);
-  const auth = currentAuth(req) as AuthContext;
-  const result = await runWithUndoSnapshot(auth, "Create block area", async (client) => {
-    await ensureBlockInFarm(client, body.blockId, auth.farmId);
-    return upsertBlockZoneGeometry(client, {
-      blockId: body.blockId,
-      farmId: auth.farmId,
-      name: body.name,
-      plannedUse: body.plannedUse,
-      actualState: body.actualState,
-      coverCropNameId: body.coverCropNameId ?? null,
-      coverCropName: body.coverCropName ?? null,
-      plannedCoverCropSeedDate: body.plannedCoverCropSeedDate ?? null,
-      plannedCoverCropTerminateDate: body.plannedCoverCropTerminateDate ?? null,
-      notes: body.notes ?? null,
-      coordinates: body.coordinates
-    });
-  });
-  res.status(201).json(result);
-}));
-
-app.post("/api/blocks/:id/split-zone", requireRole("planner"), asyncHandler(async (req, res) => {
-  const blockId = Number(req.params.id);
-  const body = blockZoneSplitSchema.parse(req.body);
-  const auth = currentAuth(req) as AuthContext;
-  const client = await pool.connect();
-  try {
-    await ensureBlockInFarm(client, blockId, auth.farmId);
-    const existingZoneCountResult = await client.query<{ count: string }>(
-      `select count(*)::text as count from block_zones where block_id = $1`,
-      [blockId]
-    );
-    const existingZoneCount = Number(existingZoneCountResult.rows[0]?.count ?? "0");
-    const { targetCoordinates, remainderCoordinates } = await splitBlockBoundaryIntoZoneCoordinates(client, {
-      blockId,
-      lineCoordinates: body.lineCoordinates,
-      useLargerSide: body.useLargerSide
-    });
-
-    await client.query("begin");
-    await createUndoSnapshot(client, auth, "Split block area");
-    const primaryZone = await upsertBlockZoneGeometry(client, {
-      blockId,
-      farmId: auth.farmId,
-      name: body.name,
-      plannedUse: body.plannedUse,
-      actualState: body.actualState,
-      coverCropNameId: body.coverCropNameId ?? null,
-      coverCropName: body.coverCropName ?? null,
-      plannedCoverCropSeedDate: body.plannedCoverCropSeedDate ?? null,
-      plannedCoverCropTerminateDate: body.plannedCoverCropTerminateDate ?? null,
-      notes: body.notes ?? null,
-      coordinates: targetCoordinates
-    });
-    await upsertBlockZoneGeometry(client, {
-      blockId,
-      farmId: auth.farmId,
-      name: `Area ${existingZoneCount + 2}`,
-      plannedUse: null,
-      actualState: body.actualState,
-      plannedCoverCropSeedDate: null,
-      plannedCoverCropTerminateDate: null,
-      notes: null,
-      coordinates: remainderCoordinates
-    });
-    await pruneUndoSnapshots(client, auth);
-    await client.query("commit");
-    res.status(201).json(primaryZone);
-  } catch (error) {
-    await client.query("rollback").catch(() => undefined);
-    throw error;
-  } finally {
-    client.release();
-  }
-}));
-
-app.put("/api/block-zones/:id", requireRole("planner"), asyncHandler(async (req, res) => {
-  const zoneId = Number(req.params.id);
-  const body = blockZoneUpdateSchema.parse(req.body);
-  const auth = currentAuth(req) as AuthContext;
-  const result = await runWithUndoSnapshot(auth, "Update block area", async (client) => {
-    await ensureBlockZoneInFarm(client, zoneId, auth.farmId);
-    const zoneResult = await client.query<{ block_id: number }>(
-      `select block_id from block_zones where id = $1`,
-      [zoneId]
-    );
-    const zone = zoneResult.rows[0];
-    if (!zone) {
-      throw new Error("Block zone not found");
-    }
-    return upsertBlockZoneGeometry(client, {
-      id: zoneId,
-      blockId: zone.block_id,
-      farmId: auth.farmId,
-      name: body.name,
-      plannedUse: body.plannedUse,
-      actualState: body.actualState,
-      coverCropNameId: body.coverCropNameId ?? null,
-      coverCropName: body.coverCropName ?? null,
-      plannedCoverCropSeedDate: body.plannedCoverCropSeedDate ?? null,
-      plannedCoverCropTerminateDate: body.plannedCoverCropTerminateDate ?? null,
-      actualCoverCropSeedDate: body.actualCoverCropSeedDate ?? null,
-      actualCoverCropTerminateDate: body.actualCoverCropTerminateDate ?? null,
-      notes: body.notes ?? null,
-      coordinates: body.coordinates
-    });
-  });
-  res.json(result);
-}));
-
-app.put("/api/block-zones/:id/cover-crop-work", requireRole(), asyncHandler(async (req, res) => {
-  const zoneId = Number(req.params.id);
-  const body = coverCropWorkSchema.parse(req.body);
-  const auth = currentAuth(req) as AuthContext;
-
-  if (body.actualCoverCropSeedDate && body.actualCoverCropSeedDate > todayIsoDate()) {
-    throw new Error("Actual cover crop seeded date cannot be in the future");
-  }
-  if (body.actualCoverCropTerminateDate && body.actualCoverCropTerminateDate > todayIsoDate()) {
-    throw new Error("Actual cover crop terminated date cannot be in the future");
-  }
-
-  const client = await pool.connect();
-  try {
-    await client.query("begin");
-    await ensureBlockZoneInFarm(client, zoneId, auth.farmId);
-    await createUndoSnapshot(client, auth, "Record cover crop work");
-
-    const zoneResult = await client.query<{
-      block_id: number;
-      block_name: string;
-      field_id: number;
-      field_name: string;
-      name: string;
-      planned_use: string | null;
-      actual_state: z.infer<typeof zoneActualStateSchema>;
-      notes: string | null;
-      boundary_wkt: string | null;
-    }>(
-      `
-        select
-          zone.block_id,
-          block.name as block_name,
-          field.id as field_id,
-          field.name as field_name,
-          zone.name,
-          zone.planned_use,
-          zone.actual_state,
-          zone.notes,
-          ST_AsText(zone.boundary) as boundary_wkt
-        from block_zones zone
-        join blocks block on block.id = zone.block_id
-        join fields field on field.id = block.field_id
-        where zone.id = $1
-      `,
-      [zoneId]
-    );
-    const zone = zoneResult.rows[0];
-    if (!zone) {
-      throw new Error("Cover crop area not found");
-    }
-    if (zone.planned_use !== "cover_crop") {
-      throw new Error("Selected area is not assigned to cover crop.");
-    }
-
-    const nextActualState = body.actualState ?? zone.actual_state;
-    const nextNotes = body.notes === undefined ? zone.notes : body.notes;
-    await client.query(
-      `
-        update block_zones
-        set
-          actual_state = $2,
-          actual_cover_crop_seed_date = $3::date,
-          actual_cover_crop_terminate_date = $4::date,
-          notes = $5,
-          updated_at = now()
-        where id = $1
-      `,
-      [
-        zoneId,
-        nextActualState,
-        body.actualCoverCropSeedDate ?? null,
-        body.actualCoverCropTerminateDate ?? null,
-        nextNotes ?? null
-      ]
-    );
-
-    await client.query(
-      `delete from farm_events where farm_id = $1 and zone_id = $2 and event_type in ('cover_crop_seeded', 'cover_crop_terminated')`,
-      [auth.farmId, zoneId]
-    );
-
-    const coordinates = zone.boundary_wkt ? null : null;
-    if (body.actualCoverCropSeedDate) {
-      await recordFarmEvent(client, {
-        farmId: auth.farmId,
-        eventDate: body.actualCoverCropSeedDate,
-        eventType: "cover_crop_seeded",
-        title: `Cover crop seeded: ${zone.name}`,
-        notes: nextNotes ?? null,
-        metadata: { timelineVisible: true, stateCategory: "cover_crop", source: "cover_crop_work" },
-        fieldId: zone.field_id,
-        blockId: zone.block_id,
-        zoneId,
-        coordinates
-      });
-    }
-    if (body.actualCoverCropTerminateDate) {
-      await recordFarmEvent(client, {
-        farmId: auth.farmId,
-        eventDate: body.actualCoverCropTerminateDate,
-        eventType: "cover_crop_terminated",
-        title: `Cover crop terminated: ${zone.name}`,
-        notes: nextNotes ?? null,
-        metadata: { timelineVisible: true, stateCategory: "cleanup", source: "cover_crop_work" },
-        fieldId: zone.field_id,
-        blockId: zone.block_id,
-        zoneId,
-        coordinates
-      });
-    }
-
-    await pruneUndoSnapshots(client, auth);
-    await client.query("commit");
-    res.json({ ok: true });
-  } catch (error) {
-    await client.query("rollback").catch(() => undefined);
-    throw error;
-  } finally {
-    client.release();
-  }
-}));
-
-app.delete("/api/block-zones/:id", requireRole("planner"), asyncHandler(async (req, res) => {
-  const zoneId = Number(req.params.id);
-  const auth = currentAuth(req) as AuthContext;
-  const client = await pool.connect();
-  try {
-    await client.query("begin");
-    await ensureBlockZoneInFarm(client, zoneId, auth.farmId);
-    await createUndoSnapshot(client, auth, "Delete block area");
-    await client.query(
-      `
-        update plantings
-        set intended_bed_id = null, updated_at = now()
-        where intended_bed_id in (select id from beds where zone_id = $1)
-      `,
-      [zoneId]
-    );
-    await client.query(`delete from block_zones where id = $1`, [zoneId]);
-    await pruneUndoSnapshots(client, auth);
-    await client.query("commit");
-    res.json({ ok: true });
-  } catch (error) {
-    await client.query("rollback");
-    throw error;
-  } finally {
-    client.release();
-  }
-}));
-
-// Visual task-flow editor routes.
-app.post("/api/task-flows", requireRole("planner"), asyncHandler(async (req, res) => {
-  const body = taskFlowSchema.parse(req.body);
-  const auth = currentAuth(req) as AuthContext;
-  const client = await pool.connect();
-  try {
-    await client.query("begin");
-    await createUndoSnapshot(client, auth, "Create task flow");
-    const id = await saveTaskFlowTemplate(client, {
-      farmId: auth.farmId,
-      cropId: body.cropId ?? null,
-      name: body.name,
-      notes: body.notes ?? null,
-      isDefault: body.isDefault,
-      nodes: body.nodes,
-      edges: body.edges
-    });
-    await pruneUndoSnapshots(client, auth);
-    await client.query("commit");
-    res.status(201).json({ id });
-  } catch (error) {
-    await client.query("rollback");
-    throw error;
-  } finally {
-    client.release();
-  }
-}));
-
-app.put("/api/task-flows/:id", requireRole("planner"), asyncHandler(async (req, res) => {
-  const id = Number(req.params.id);
-  const body = taskFlowUpdateSchema.parse(req.body);
-  const auth = currentAuth(req) as AuthContext;
-  const client = await pool.connect();
-  try {
-    await client.query("begin");
-    const existing = await client.query<{ id: number }>(`select id from task_flow_templates where id = $1 and farm_id = $2`, [id, auth.farmId]);
-    if (!existing.rows[0]) {
-      await client.query("rollback");
-      res.status(404).json({ error: "Task flow template not found" });
-      return;
-    }
-    await createUndoSnapshot(client, auth, "Update task flow");
-    await saveTaskFlowTemplate(client, {
-      id,
-      cropId: body.cropId ?? null,
-      name: body.name,
-      notes: body.notes ?? null,
-      isDefault: body.isDefault,
-      nodes: body.nodes,
-      edges: body.edges
-    });
-    await pruneUndoSnapshots(client, auth);
-    await client.query("commit");
-    res.json({ ok: true });
-  } catch (error) {
-    await client.query("rollback");
-    throw error;
-  } finally {
-    client.release();
-  }
-}));
-
-app.post("/api/task-flows/:id/copy", requireRole("planner"), asyncHandler(async (req, res) => {
-  const id = Number(req.params.id);
-  const auth = currentAuth(req) as AuthContext;
-  const client = await pool.connect();
-  try {
-    await client.query("begin");
-    const templateResult = await client.query<{
-      farm_id: number;
-      crop_id: number | null;
-      name: string;
-      notes: string | null;
-    }>(
-      `select farm_id, crop_id, name, notes from task_flow_templates where id = $1 and farm_id = $2`,
-      [id, auth.farmId]
-    );
-    const template = templateResult.rows[0];
-    if (!template) {
-      await client.query("rollback");
-      res.status(404).json({ error: "Task flow template not found" });
-      return;
-    }
-    await createUndoSnapshot(client, auth, "Copy task flow");
-
-    const nodesResult = await client.query<{
-      node_key: string;
-      task_type: TaskType;
-      label: string;
-      anchor: TaskAnchor;
-      offset_days: number;
-      icon_color: string;
-      icon_secondary_color: string;
-      x_pos: number;
-      y_pos: number;
-      notes: string | null;
-    }>(
-      `
-        select node_key, task_type, label, anchor, offset_days, icon_color, icon_secondary_color, x_pos, y_pos, notes
-        from task_flow_nodes
-        where flow_template_id = $1
-        order by y_pos, x_pos, id
-      `,
-      [id]
-    );
-    const edgesResult = await client.query<{
-      from_node_key: string;
-      to_node_key: string;
-    }>(
-      `
-        select from_node.node_key as from_node_key, to_node.node_key as to_node_key
-        from task_flow_edges e
-        join task_flow_nodes from_node on from_node.id = e.from_node_id
-        join task_flow_nodes to_node on to_node.id = e.to_node_id
-        where e.flow_template_id = $1
-        order by e.id
-      `,
-      [id]
-    );
-
-    const copyId = await saveTaskFlowTemplate(client, {
-      farmId: template.farm_id,
-      cropId: template.crop_id,
-      name: `${template.name} Copy`,
-      notes: template.notes,
-      isDefault: false,
-      nodes: nodesResult.rows.map((node: {
-        node_key: string;
-        task_type: TaskType;
-        label: string;
-        anchor: TaskAnchor;
-        offset_days: number;
-        icon_color: string;
-        icon_secondary_color: string;
-        x_pos: number;
-        y_pos: number;
-        notes: string | null;
-      }) => ({
-        nodeKey: node.node_key,
-        taskType: node.task_type,
-        label: node.label,
-        anchor: node.anchor,
-        offsetDays: node.offset_days,
-        iconColor: node.icon_color,
-        iconSecondaryColor: node.icon_secondary_color,
-        x: Number(node.x_pos),
-        y: Number(node.y_pos),
-        notes: node.notes
-      })),
-      edges: edgesResult.rows.map((edge: { from_node_key: string; to_node_key: string }) => ({
-        fromNodeKey: edge.from_node_key,
-        toNodeKey: edge.to_node_key
-      }))
-    });
-
-    await client.query(
-      `update task_flow_templates set source_task_flow_template_id = $2 where id = $1`,
-      [copyId, id]
-    );
-    await pruneUndoSnapshots(client, auth);
-    await client.query("commit");
-    res.status(201).json({ id: copyId });
-  } catch (error) {
-    await client.query("rollback");
-    throw error;
-  } finally {
-    client.release();
-  }
-}));
-
-app.delete("/api/task-flows/:id", requireRole("planner"), asyncHandler(async (req, res) => {
-  const id = Number(req.params.id);
-  const auth = currentAuth(req) as AuthContext;
-  const client = await pool.connect();
-  try {
-    await client.query("begin");
-    const templateResult = await client.query<{ crop_id: number | null; is_default: boolean }>(
-      `select crop_id, is_default from task_flow_templates where id = $1 and farm_id = $2`,
-      [id, auth.farmId]
-    );
-    const template = templateResult.rows[0];
-    if (!template) {
-      await client.query("rollback");
-      res.status(404).json({ error: "Task flow template not found" });
-      return;
-    }
-    await createUndoSnapshot(client, auth, "Delete task flow");
-    const plantings = await client.query<{ id: number }>(
-      template?.is_default
-        ? `
-            select id
-            from plantings
-            where farm_id = $2
-              and crop_id = coalesce($3, crop_id)
-              and (task_flow_template_id = $1 or task_flow_template_id is null)
-          `
-        : `
-            select id
-            from plantings
-            where farm_id = $2 and task_flow_template_id = $1
-          `,
-      [id, auth.farmId, template.crop_id]
-    );
-    await client.query(`delete from task_flow_templates where id = $1 and farm_id = $2`, [id, auth.farmId]);
-    for (const planting of plantings.rows) {
-      await recalculatePlantingTasks(client, planting.id);
-    }
-    await pruneUndoSnapshots(client, auth);
-    await client.query("commit");
-    res.json({ ok: true });
-  } catch (error) {
-    await client.query("rollback");
-    throw error;
-  } finally {
-    client.release();
-  }
-}));
-
-// Map hierarchy routes: fields, blocks, generated beds, and editable bed geometry.
-app.post("/api/fields", requireRole("planner"), asyncHandler(async (req, res) => {
-  const body = fieldPolygonSchema.parse(req.body);
-  const auth = currentAuth(req) as AuthContext;
-  const client = await pool.connect();
-  try {
-    await client.query("begin");
-    const farmResult = await client.query<{ id: number }>(`select id from farms where id = $1`, [auth.farmId]);
-    if (!farmResult.rows[0]) {
-      await client.query("rollback");
-      res.status(400).json({ error: "Farm not found. Seed the database or create a farm first." });
-      return;
-    }
-    await createUndoSnapshot(client, auth, "Create field");
-    const id = await upsertFieldGeometry(client, { ...body, farmId: auth.farmId });
-    await pruneUndoSnapshots(client, auth);
-    await client.query("commit");
-    res.status(201).json({ id });
-  } catch (error) {
-    console.error("Field save failed", { body, error });
-    await client.query("rollback");
-    throw error;
-  } finally {
-    client.release();
-  }
-}));
-
-app.put("/api/fields/:id", requireRole("planner"), asyncHandler(async (req, res) => {
-  const id = Number(req.params.id);
-  const body = fieldPolygonUpdateSchema.parse(req.body);
-  const auth = currentAuth(req) as AuthContext;
-  const client = await pool.connect();
-  try {
-    await client.query("begin");
-    const farmResult = await client.query<{ farm_id: number }>(`select farm_id from fields where id = $1 and farm_id = $2`, [id, auth.farmId]);
-    if (!farmResult.rows[0]) {
-      res.status(404).json({ error: "Field not found" });
-      await client.query("rollback");
-      return;
-    }
-    await createUndoSnapshot(client, auth, "Update field");
-    await upsertFieldGeometry(client, {
-      id,
-      farmId: farmResult.rows[0].farm_id,
-      name: body.name,
-      notes: body.notes ?? null,
-      coordinates: body.coordinates
-    });
-    await pruneUndoSnapshots(client, auth);
-    await client.query("commit");
-    res.json({ ok: true });
-  } catch (error) {
-    console.error("Field update failed", { fieldId: id, body, error });
-    await client.query("rollback");
-    throw error;
-  } finally {
-    client.release();
-  }
-}));
-
-app.delete("/api/fields/:id", requireRole("planner"), asyncHandler(async (req, res) => {
-  const id = Number(req.params.id);
-  const auth = currentAuth(req) as AuthContext;
-  const client = await pool.connect();
-  try {
-    await client.query("begin");
-    const existing = await client.query<{ id: number }>(`select id from fields where id = $1 and farm_id = $2`, [id, auth.farmId]);
-    if (!existing.rows[0]) {
-      await client.query("rollback");
-      res.status(404).json({ error: "Field not found" });
-      return;
-    }
-    await createUndoSnapshot(client, auth, "Delete field");
-    await clearIntendedBedsForField(client, id);
-    await client.query(`delete from fields where id = $1`, [id]);
-    await pruneUndoSnapshots(client, auth);
-    await client.query("commit");
-    res.json({ ok: true });
-  } catch (error) {
-    await client.query("rollback");
-    throw error;
-  } finally {
-    client.release();
-  }
-}));
-
-app.post("/api/blocks", requireRole("planner"), asyncHandler(async (req, res) => {
-  const body = blockPolygonSchema.parse(req.body);
-  const auth = currentAuth(req) as AuthContext;
-  const client = await pool.connect();
-  try {
-    await client.query("begin");
-    await ensureFieldInFarm(client, body.fieldId, auth.farmId);
-    await createUndoSnapshot(client, auth, "Create block");
-    const result = await upsertBlockGeometry(client, body);
-    await ensureDefaultBlockArea(client, {
-      blockId: result.id,
-      farmId: auth.farmId,
-      blockName: body.name,
-      currentState: body.currentState,
-      coordinates: body.coordinates
-    });
-    await pruneUndoSnapshots(client, auth);
-    await client.query("commit");
-    res.status(201).json(result);
-  } catch (error) {
-    await client.query("rollback");
-    throw error;
-  } finally {
-    client.release();
-  }
-}));
-
-app.post("/api/blocks/:id/generate-beds", requireRole("planner"), asyncHandler(async (req, res) => {
-  const blockId = Number(req.params.id);
-  const body = bedGenerationSchema.parse(req.body);
-  const auth = currentAuth(req) as AuthContext;
-  const client = await pool.connect();
-  try {
-    await client.query("begin");
-    await ensureBlockInFarm(client, blockId, auth.farmId);
-    await ensureBedPresetInFarm(client, body.presetId, auth.farmId);
-    if (body.zoneId != null) {
-      await ensureBlockZoneInFarm(client, body.zoneId, auth.farmId);
-      const zoneResult = await client.query<{ block_id: number; planned_use: string }>(
-        `select block_id, planned_use from block_zones where id = $1`,
-        [body.zoneId]
-      );
-      const zone = zoneResult.rows[0];
-      if (!zone || zone.block_id !== blockId) {
-        throw new Error("Selected bed area does not belong to this block");
-      }
-      if (zone.planned_use !== "beds") {
-        throw new Error("Beds can only be generated inside bed areas");
-      }
-    }
-    await createUndoSnapshot(client, auth, "Generate beds");
-    const result = await insertGeneratedBeds(client, {
-      blockId,
-      presetId: body.presetId,
-      zoneId: body.zoneId ?? null,
-      lineMode: body.lineMode,
-      lineCoordinates: body.lineCoordinates,
-      count: body.count,
-      layoutStartIndex: body.layoutStartIndex,
-      edgeOffsetM: body.edgeOffsetM,
-      namePrefix: body.namePrefix,
-      startNumber: body.startNumber,
-      isPermanent: body.isPermanent,
-      replaceExisting: body.replaceExisting,
-      invertSide: body.invertSide,
-      fillWholeBlock: body.fillWholeBlock,
-      harvestRoadEveryBeds: body.harvestRoadEveryBeds ?? null,
-      harvestRoadWidthBeds: body.harvestRoadWidthBeds
-    });
-    if (result.inserted > 0 && !result.isRoad) {
-      await upsertBlockBedMakingTask(client, auth.farmId, blockId);
-    }
-    await pruneUndoSnapshots(client, auth);
-    await client.query("commit");
-    res.status(201).json(result);
-  } catch (error) {
-    await client.query("rollback");
-    throw error;
-  } finally {
-    client.release();
-  }
-}));
-
-app.put("/api/blocks/:id", requireRole("planner"), asyncHandler(async (req, res) => {
-  const id = Number(req.params.id);
-  const body = blockPolygonUpdateSchema.parse(req.body);
-  const auth = currentAuth(req) as AuthContext;
-  const client = await pool.connect();
-  try {
-    await client.query("begin");
-    const parent = await client.query<{ field_id: number }>(
-      `
-        select block.field_id
-        from blocks block
-        join fields field on field.id = block.field_id
-        where block.id = $1 and field.farm_id = $2
-      `,
-      [id, auth.farmId]
-    );
-    if (!parent.rows[0]) {
-      res.status(404).json({ error: "Block not found" });
-      await client.query("rollback");
-      return;
-    }
-    await createUndoSnapshot(client, auth, "Update block");
-    const result = await upsertBlockGeometry(client, {
-      id,
-      fieldId: parent.rows[0].field_id,
-      name: body.name,
-      notes: body.notes ?? null,
-      coordinates: body.coordinates
-    });
-    await pruneUndoSnapshots(client, auth);
-    await client.query("commit");
-    res.json({ ok: true, warning: result.warning });
-  } catch (error) {
-    await client.query("rollback");
-    throw error;
-  } finally {
-    client.release();
-  }
-}));
-
-app.delete("/api/blocks/:id", requireRole("planner"), asyncHandler(async (req, res) => {
-  const id = Number(req.params.id);
-  const auth = currentAuth(req) as AuthContext;
-  const client = await pool.connect();
-  try {
-    await client.query("begin");
-    const existing = await client.query<{ id: number }>(
-      `
-        select block.id
-        from blocks block
-        join fields field on field.id = block.field_id
-        where block.id = $1 and field.farm_id = $2
-      `,
-      [id, auth.farmId]
-    );
-    if (!existing.rows[0]) {
-      await client.query("rollback");
-      res.status(404).json({ error: "Block not found" });
-      return;
-    }
-    await createUndoSnapshot(client, auth, "Delete block");
-    await clearIntendedBedsForBlock(client, id);
-    await client.query(`delete from blocks where id = $1`, [id]);
-    await pruneUndoSnapshots(client, auth);
-    await client.query("commit");
-    res.json({ ok: true });
-  } catch (error) {
-    await client.query("rollback");
-    throw error;
-  } finally {
-    client.release();
-  }
-}));
-
-app.post("/api/beds", requireRole("planner"), asyncHandler(async (req, res) => {
-  const body = geometrySchema.extend({
-    blockId: z.number(),
-    name: z.string().min(1),
-    isPermanent: z.boolean(),
-    bedLengthM: z.number().positive(),
-    notes: z.string().nullable().optional()
-  }).parse(req.body);
-  const auth = currentAuth(req) as AuthContext;
-  const result = await runWithUndoSnapshot(auth, "Create bed", async (client) => {
-    await ensureBlockInFarm(client, body.blockId, auth.farmId);
-    return client.query(
-      `
-        insert into beds (
-          block_id, name, is_permanent, notes, x, y, width, height, bed_length_m,
-          geom, geometry_source, geometry_updated_at, geometry_notes
-        )
-        values ($1, $2, $3, $4, $5, $6, $7, $8, $9, ST_GeomFromText($10, 3857), 'manual', now(), 'Manual bed geometry')
-        returning id
-      `,
-      [body.blockId, body.name, body.isPermanent, body.notes ?? null, body.x, body.y, body.width, body.height, body.bedLengthM, rectangleWkt(body.x, body.y, body.width, body.height)]
-    );
-  });
-  res.status(201).json({ id: result.rows[0].id });
-}));
-
-app.put("/api/beds/:id", requireRole("planner"), asyncHandler(async (req, res) => {
-  const id = Number(req.params.id);
-  const body = geometrySchema.extend({
-    name: z.string().min(1),
-    isPermanent: z.boolean(),
-    bedLengthM: z.number().positive(),
-    notes: z.string().nullable().optional()
-  }).parse(req.body);
-  const auth = currentAuth(req) as AuthContext;
-  await runWithUndoSnapshot(auth, "Update bed", async (client) => {
-    await ensureBedInFarm(client, id, auth.farmId);
-    await client.query(
-      `
-        update beds
-        set
-          name = $2,
-          is_permanent = $3,
-          notes = $4,
-          x = $5,
-          y = $6,
-          width = $7,
-          height = $8,
-          bed_length_m = $9,
-          geom = ST_GeomFromText($10, 3857),
-          geometry_source = 'manual_update',
-          geometry_updated_at = now(),
-          geometry_notes = 'Manually updated bed geometry',
-          updated_at = now()
-        where id = $1
-      `,
-      [id, body.name, body.isPermanent, body.notes ?? null, body.x, body.y, body.width, body.height, body.bedLengthM, rectangleWkt(body.x, body.y, body.width, body.height)]
-    );
-  });
-  res.json({ ok: true });
-}));
-
-app.delete("/api/beds/:id", requireRole("planner"), asyncHandler(async (req, res) => {
-  const id = Number(req.params.id);
-  const auth = currentAuth(req) as AuthContext;
-  await runWithUndoSnapshot(auth, "Delete bed", async (client) => {
-    await ensureBedInFarm(client, id, auth.farmId);
-    const usage = await client.query<{
-      intended_plantings: string;
-      placements: string;
-      harvests: string;
-    }>(
-      `
-        select
-          (select count(*) from plantings where farm_id = $2 and intended_bed_id = $1) as intended_plantings,
-          (
-            select count(*)
-            from planting_placements placement
-            join plantings planting on planting.id = placement.planting_id
-            where planting.farm_id = $2 and placement.bed_id = $1
-          ) as placements,
-          (select count(*) from harvest_records where farm_id = $2 and bed_id = $1) as harvests
-      `,
-      [id, auth.farmId]
-    );
-    const row = usage.rows[0];
-    const intendedPlantings = Number(row?.intended_plantings ?? 0);
-    const placements = Number(row?.placements ?? 0);
-    const harvests = Number(row?.harvests ?? 0);
-    if (intendedPlantings > 0 || placements > 0 || harvests > 0) {
-      throw new Error("This bed has planned plantings, placements, or harvest records. Move or remove those records before deleting the bed.");
-    }
-
-    const bed = await client.query<{ block_id: number }>(`select block_id from beds where id = $1`, [id]);
-    await client.query(`delete from beds where id = $1`, [id]);
-    const blockId = bed.rows[0]?.block_id;
-    if (blockId != null) {
-      await upsertBlockBedMakingTask(client, auth.farmId, blockId);
-    }
-  });
-  res.json({ ok: true });
-}));
-
-// Crop planning, task recording, placements, actual dates, and harvest logging.
-app.post("/api/plantings", requireRole("planner"), asyncHandler(async (req, res) => {
-  const body = plantingSchema.parse(req.body);
-  const auth = currentAuth(req) as AuthContext;
-  const client = await pool.connect();
-  try {
-    await client.query("begin");
-    assertNoFuturePlantingStatusDate(body.status, body.plannedSowDate, body.plannedTransplantDate);
-    if (body.intendedBedId != null) {
-      await ensurePlantableBedInFarm(client, body.intendedBedId, auth.farmId);
-    }
-    if (body.seedItemId != null) {
-      await ensureSeedItemInFarm(client, body.seedItemId, auth.farmId);
-    }
-    if (body.taskFlowTemplateId != null) {
-      await ensureTaskFlowInFarm(client, body.taskFlowTemplateId, auth.farmId);
-    }
-    const { intendedFieldId, intendedBlockId } = await plantingLocationIds(client, auth, body);
-    await createUndoSnapshot(client, auth, "Create planting");
-    const result = await client.query<{ id: number }>(
-      `
-        insert into plantings (
-          farm_id, crop_id, variety_id, seed_item_id, title, status,
-          intended_field_id, intended_block_id, intended_bed_id, task_flow_template_id,
-          spacing, plant_count, bed_length_used_m, notes,
-          tray_location, tray_count, cells_per_tray, days_to_harvest,
-          field_spacing_in_row, row_spacing, rows_per_bed, dead_at_frost, bed_cover,
-          planned_sow_date, planned_transplant_date, expected_harvest_start, expected_harvest_end
-        )
-        values (
-          $1, $2, $3, $4, $5, $6,
-          $7, $8, $9, $10,
-          $11, $12, $13, $14,
-          $15, $16, $17, $18,
-          $19, $20, $21, $22, $23,
-          $24, $25, $26, $27
-        )
-        returning id
-      `,
-      [
-        auth.farmId,
-        body.cropId,
-        body.varietyId ?? null,
-        body.seedItemId ?? null,
-        body.title,
-        body.status,
-        intendedFieldId,
-        intendedBlockId,
-        body.intendedBedId ?? null,
-        body.taskFlowTemplateId ?? null,
-        body.spacing ?? null,
-        body.plantCount ?? null,
-        body.bedLengthUsedM ?? null,
-        body.notes ?? null,
-        body.trayLocation ?? null,
-        body.trayCount ?? null,
-        body.cellsPerTray ?? null,
-        body.daysToHarvest ?? null,
-        body.fieldSpacingInRow ?? null,
-        body.rowSpacing ?? null,
-        body.rowsPerBed ?? null,
-        body.deadAtFrost ?? null,
-        body.bedCover ?? null,
-        body.plannedSowDate ?? null,
-        body.plannedTransplantDate ?? null,
-        body.expectedHarvestStart ?? null,
-        body.expectedHarvestEnd ?? null
-      ]
-    );
-    await recalculatePlantingTasks(client, result.rows[0].id);
-    if (intendedBlockId != null) {
-      await upsertBlockBedMakingTask(client, auth.farmId, intendedBlockId);
-    }
-    await pruneUndoSnapshots(client, auth);
-    await client.query("commit");
-    res.status(201).json({ id: result.rows[0].id });
-  } catch (error) {
-    await client.query("rollback");
-    throw error;
-  } finally {
-    client.release();
-  }
-}));
-
-app.put("/api/plantings/:id", requireRole("planner"), asyncHandler(async (req, res) => {
-  const id = Number(req.params.id);
-  const body = plantingSchema.parse(req.body);
-  const auth = currentAuth(req) as AuthContext;
-  const client = await pool.connect();
-  try {
-    await client.query("begin");
-    assertNoFuturePlantingStatusDate(body.status, body.plannedSowDate, body.plannedTransplantDate);
-    await ensurePlantingInFarm(client, id, auth.farmId);
-    if (body.intendedBedId != null) {
-      await ensurePlantableBedInFarm(client, body.intendedBedId, auth.farmId);
-    }
-    if (body.seedItemId != null) {
-      await ensureSeedItemInFarm(client, body.seedItemId, auth.farmId);
-    }
-    if (body.taskFlowTemplateId != null) {
-      await ensureTaskFlowInFarm(client, body.taskFlowTemplateId, auth.farmId);
-    }
-    const { intendedFieldId, intendedBlockId } = await plantingLocationIds(client, auth, body);
-    await createUndoSnapshot(client, auth, "Update planting");
-    await client.query(
-      `
-        update plantings
-        set
-          crop_id = $2,
-          variety_id = $3,
-          seed_item_id = $4,
-          title = $5,
-          status = $6,
-          intended_field_id = $7,
-          intended_block_id = $8,
-          intended_bed_id = $9,
-          task_flow_template_id = $10,
-          spacing = $11,
-          plant_count = $12,
-          bed_length_used_m = $13,
-          notes = $14,
-          tray_location = $15,
-          tray_count = $16,
-          cells_per_tray = $17,
-          days_to_harvest = $18,
-          field_spacing_in_row = $19,
-          row_spacing = $20,
-          rows_per_bed = $21,
-          dead_at_frost = $22,
-          bed_cover = $23,
-          planned_sow_date = $24,
-          planned_transplant_date = $25,
-          expected_harvest_start = $26,
-          expected_harvest_end = $27,
-          updated_at = now()
-        where id = $1 and farm_id = $28
-      `,
-      [
-        id,
-        body.cropId,
-        body.varietyId ?? null,
-        body.seedItemId ?? null,
-        body.title,
-        body.status,
-        intendedFieldId,
-        intendedBlockId,
-        body.intendedBedId ?? null,
-        body.taskFlowTemplateId ?? null,
-        body.spacing ?? null,
-        body.plantCount ?? null,
-        body.bedLengthUsedM ?? null,
-        body.notes ?? null,
-        body.trayLocation ?? null,
-        body.trayCount ?? null,
-        body.cellsPerTray ?? null,
-        body.daysToHarvest ?? null,
-        body.fieldSpacingInRow ?? null,
-        body.rowSpacing ?? null,
-        body.rowsPerBed ?? null,
-        body.deadAtFrost ?? null,
-        body.bedCover ?? null,
-        body.plannedSowDate ?? null,
-        body.plannedTransplantDate ?? null,
-        body.expectedHarvestStart ?? null,
-        body.expectedHarvestEnd ?? null,
-        auth.farmId
-      ]
-    );
-    await recalculatePlantingTasks(client, id);
-    if (intendedBlockId != null) {
-      await upsertBlockBedMakingTask(client, auth.farmId, intendedBlockId);
-    }
-    await pruneUndoSnapshots(client, auth);
-    await client.query("commit");
-    res.json({ ok: true });
-  } catch (error) {
-    await client.query("rollback");
-    throw error;
-  } finally {
-    client.release();
-  }
-}));
-
-app.delete("/api/plantings/:id", requireRole("planner"), asyncHandler(async (req, res) => {
-  const id = Number(req.params.id);
-  const auth = currentAuth(req) as AuthContext;
-  const client = await pool.connect();
-  try {
-    await client.query("begin");
-    const existing = await client.query<{ id: number }>(`select id from plantings where id = $1 and farm_id = $2`, [id, auth.farmId]);
-    if (!existing.rows[0]) {
-      await client.query("rollback");
-      res.status(404).json({ error: "Planting not found" });
-      return;
-    }
-    await createUndoSnapshot(client, auth, "Delete planting");
-    await client.query(`delete from plantings where id = $1`, [id]);
-    await pruneUndoSnapshots(client, auth);
-    await client.query("commit");
-    res.json({ ok: true });
-  } catch (error) {
-    await client.query("rollback");
-    throw error;
-  } finally {
-    client.release();
-  }
-}));
-
-app.post("/api/tasks/:id/record", requireRole("worker"), asyncHandler(async (req, res) => {
-  const id = Number(req.params.id);
-  const body = taskRecordSchema.parse(req.body);
-  const auth = currentAuth(req) as AuthContext;
-  const client = await pool.connect();
-  try {
-    await client.query("begin");
-    await ensureTaskInFarm(client, id, auth.farmId);
-    await createUndoSnapshot(client, auth, "Record task");
-
-    const taskResult = await client.query<{
-      id: number;
-      planting_id: number | null;
-      bed_id: number | null;
-      task_type: string;
-    }>(
-      `select id, planting_id, bed_id, task_type from tasks where id = $1 and farm_id = $2`,
-      [id, auth.farmId]
-    );
-
-    const task = taskResult.rows[0];
-    if (!task) {
-      await client.query("rollback");
-      res.status(404).json({ error: "Task not found" });
-      return;
-    }
-
-    if (task.planting_id != null) {
-      const taskActualUpdate = actualUpdateForTaskType(task.task_type);
-      if (taskActualUpdate) {
-        assertNoFuturePlantingDate(taskActualUpdate.eventType, body.actualDate);
-      }
-      const plantingResult = await client.query<{ title: string }>(
-        `select title from plantings where id = $1`,
-        [task.planting_id]
-      );
-      const plantingTitle = plantingResult.rows[0]?.title ?? "Planting";
-      const hasPlantingAdjustments =
-        body.intendedBedId !== undefined ||
-        body.plantCount !== undefined ||
-        body.bedLengthUsedM !== undefined ||
-        body.spacing !== undefined;
-
-      if (hasPlantingAdjustments) {
-        if (auth.role !== "planner") {
-          throw new Error("Planner access required for planting adjustments");
-        }
-        if (body.intendedBedId != null) {
-          await ensurePlantableBedInFarm(client, body.intendedBedId, auth.farmId);
-        }
-        const adjustedBlockId = body.intendedBedId != null ? await blockIdForBed(client, body.intendedBedId, auth.farmId) : null;
-        const adjustedFieldId = adjustedBlockId != null ? await fieldIdForBlock(client, adjustedBlockId, auth.farmId) : null;
-        await client.query(
-          `
-            update plantings
-            set
-              intended_field_id = case when $2::boolean then $3::integer else intended_field_id end,
-              intended_block_id = case when $2::boolean then $4::integer else intended_block_id end,
-              intended_bed_id = case when $2::boolean then $5::integer else intended_bed_id end,
-              plant_count = case when $6::boolean then $7::integer else plant_count end,
-              bed_length_used_m = case when $8::boolean then $9::numeric else bed_length_used_m end,
-              spacing = case when $10::boolean then $11::text else spacing end,
-              updated_at = now()
-            where id = $1
-          `,
-          [
-            task.planting_id,
-            body.intendedBedId !== undefined,
-            adjustedFieldId,
-            adjustedBlockId,
-            body.intendedBedId ?? null,
-            body.plantCount !== undefined,
-            body.plantCount ?? null,
-            body.bedLengthUsedM !== undefined,
-            body.bedLengthUsedM ?? null,
-            body.spacing !== undefined,
-            body.spacing ?? null
-          ]
-        );
-      }
-
-      if (body.placementBedId != null && (body.placementPlantCount != null || body.placementBedLengthUsedM != null)) {
-        if (auth.role !== "planner") {
-          throw new Error("Planner access required for planting adjustments");
-        }
-        await ensurePlantableBedInFarm(client, body.placementBedId, auth.farmId);
-        const placementInsert = await client.query<{ id: number }>(
-          `
-            insert into planting_placements (
-              planting_id, bed_id, plant_count, bed_length_used_m, placed_on, location_detail, notes,
-              boundary, centroid, area_sqm
-            )
-            values (
-              $1, $2, $3, $4, $5, $6, $7,
-              case when $8::text is null then null else ST_GeomFromText($8, 4326) end,
-              case when $8::text is null then null else ST_Centroid(ST_GeomFromText($8, 4326)) end,
-              case when $8::text is null then null else ST_Area(ST_GeomFromText($8, 4326)::geography) end
-            )
-            returning id
-          `,
-          [
-            task.planting_id,
-            body.placementBedId,
-            body.placementPlantCount ?? null,
-            body.placementBedLengthUsedM ?? null,
-            body.actualDate,
-            body.placementLocationDetail ?? null,
-            body.placementNotes ?? null,
-            body.placementCoordinates && body.placementCoordinates.length >= 3 ? polygonWkt(body.placementCoordinates) : null
-          ]
-        );
-        const bedContext = await getBedContext(client, body.placementBedId);
-        await recordFarmEvent(client, {
-          farmId: auth.farmId,
-          eventDate: body.actualDate,
-          eventType: "placement_recorded",
-          title: `Placement recorded for ${plantingTitle}`,
-          notes: body.placementNotes ?? null,
-          metadata: {
-            plantCount: body.placementPlantCount ?? null,
-            bedLengthUsedM: body.placementBedLengthUsedM ?? null,
-            locationDetail: body.placementLocationDetail ?? null,
-            source: "task_record"
-          },
-          fieldId: bedContext.field_id,
-          blockId: bedContext.block_id,
-          zoneId: bedContext.zone_id,
-          bedId: body.placementBedId,
-          plantingId: task.planting_id,
-          placementId: placementInsert.rows[0].id,
-          taskId: id,
-          coordinates: body.placementCoordinates ?? null
-        });
-      }
-
-      const actualUpdate = actualUpdateForTaskType(task.task_type);
-      if (actualUpdate) {
-        await client.query(
-          `
-            update plantings
-            set ${actualUpdate.field} = $2, status = $3, notes = concat_ws(E'\n', notes, $4::text), updated_at = now()
-            where id = $1
-          `,
-          [task.planting_id, body.actualDate, actualUpdate.status, body.notes ?? null]
-        );
-      }
-
-      const bedIdForBlockTask = body.placementBedId ?? body.intendedBedId ?? null;
-      if (bedIdForBlockTask != null) {
-        const blockId = await blockIdForBed(client, bedIdForBlockTask, auth.farmId);
-        if (blockId != null) {
-          await upsertBlockBedMakingTask(client, auth.farmId, blockId);
-        }
-      }
-
-    }
-
-    await client.query(
-      `
-        update tasks
-        set
-          status = 'done',
-          completed_date = $2,
-          notes = concat_ws(E'\n', notes, $3::text),
-          updated_at = now()
-        where id = $1
-      `,
-      [id, body.actualDate, body.notes ?? null]
-    );
-
-    await recordFarmEvent(client, {
-      farmId: auth.farmId,
-      eventDate: body.actualDate,
-      eventType: "task_recorded",
-      title: task.task_type.replaceAll("_", " "),
-      notes: body.notes ?? null,
-      metadata: {
-        taskType: task.task_type
-      },
-      bedId: task.bed_id ?? null,
-      plantingId: task.planting_id ?? null,
-      taskId: id
-    });
-
-    if (task.planting_id != null) {
-      await recalculatePlantingTasks(client, task.planting_id);
-    }
-
-    await pruneUndoSnapshots(client, auth);
-    await client.query("commit");
-    res.json({ ok: true });
-  } catch (error) {
-    await client.query("rollback");
-    throw error;
-  } finally {
-    client.release();
-  }
-}));
-
-app.post("/api/plantings/:id/placements", requireRole("planner"), asyncHandler(async (req, res) => {
-  const plantingId = Number(req.params.id);
-  const body = placementSchema.parse(req.body);
-  const auth = currentAuth(req) as AuthContext;
-  const client = await pool.connect();
-  try {
-    await client.query("begin");
-      await ensurePlantingInFarm(client, plantingId, auth.farmId);
-      await ensurePlantableBedInFarm(client, body.bedId, auth.farmId);
-      if (body.actualDate && body.actualDate > todayIsoDate()) {
-        throw new Error("Planted dates cannot be in the future");
-      }
-      await createUndoSnapshot(client, auth, "Add planting placement");
-    const plantingResult = await client.query<{ title: string }>(`select title from plantings where id = $1`, [plantingId]);
-    const plantingTitle = plantingResult.rows[0]?.title ?? "Planting";
-    const placementInsert = await client.query<{ id: number }>(
-      `
-        insert into planting_placements (
-          planting_id, bed_id, plant_count, bed_length_used_m, placed_on, location_detail, notes,
-          boundary, centroid, area_sqm
-        )
-        values (
-          $1, $2, $3, $4, $5, $6, $7,
-          case when $8::text is null then null else ST_GeomFromText($8, 4326) end,
-          case when $8::text is null then null else ST_Centroid(ST_GeomFromText($8, 4326)) end,
-          case when $8::text is null then null else ST_Area(ST_GeomFromText($8, 4326)::geography) end
-        )
-        returning id
-      `,
-      [
-        plantingId,
-        body.bedId,
-        body.plantCount ?? null,
-        body.bedLengthUsedM ?? null,
-        body.actualDate ?? null,
-        body.locationDetail ?? null,
-        body.notes ?? null,
-        body.coordinates && body.coordinates.length >= 3 ? polygonWkt(body.coordinates) : null
-      ]
-    );
-    const bedContext = await getBedContext(client, body.bedId);
-    await recordFarmEvent(client, {
-      farmId: auth.farmId,
-      eventDate: body.actualDate ?? new Date().toISOString().slice(0, 10),
-      eventType: "placement_recorded",
-      title: `Placement recorded for ${plantingTitle}`,
-      notes: body.notes ?? null,
-      metadata: {
-        plantCount: body.plantCount ?? null,
-        bedLengthUsedM: body.bedLengthUsedM ?? null,
-        locationDetail: body.locationDetail ?? null,
-        source: "placement_form"
-      },
-      fieldId: bedContext.field_id,
-      blockId: bedContext.block_id,
-      zoneId: bedContext.zone_id,
-      bedId: body.bedId,
-      plantingId,
-      placementId: placementInsert.rows[0].id,
-      coordinates: body.coordinates ?? null
-    });
-    const blockId = await blockIdForBed(client, body.bedId, auth.farmId);
-    if (blockId != null) {
-      await upsertBlockBedMakingTask(client, auth.farmId, blockId);
-    }
-    await pruneUndoSnapshots(client, auth);
-    await client.query("commit");
-    res.status(201).json({ ok: true });
-  } catch (error) {
-    await client.query("rollback");
-    throw error;
-  } finally {
-    client.release();
-  }
-}));
-
-app.post("/api/plantings/:id/actuals", requireRole("planner"), asyncHandler(async (req, res) => {
-  const plantingId = Number(req.params.id);
-  const body = actualEventSchema.parse(req.body);
-  assertNoFuturePlantingDate(body.eventType, body.actualDate);
-  const auth = currentAuth(req) as AuthContext;
-  const client = await pool.connect();
-  try {
-    await client.query("begin");
-    await ensurePlantingInFarm(client, plantingId, auth.farmId);
-    await createUndoSnapshot(client, auth, "Record planting actual");
-
-    const updates: Record<ActualEventType, { field: string; status: PlantingStatus }> = {
-      tray_seeding: { field: "actual_tray_seeding_date", status: "seeded_in_tray" },
-      direct_seeding: { field: "actual_direct_seeding_date", status: "direct_seeded" },
-      transplant: { field: "actual_transplant_date", status: "transplanted" },
-      cultivation: { field: "actual_cultivation_date", status: "growing" },
-      harvest: { field: "actual_harvest_date", status: "harvested" },
-      finish: { field: "actual_finish_date", status: "finished" }
-    };
-
-    const update = updates[body.eventType];
-    await client.query(
-      `
-        update plantings
-        set ${update.field} = $2, status = $3, notes = concat_ws(E'\n', notes, $4::text), updated_at = now()
-        where id = $1
-      `,
-      [plantingId, body.actualDate, update.status, body.notes ?? null]
-    );
-
-    const plantingResult = await client.query<{ title: string }>(`select title from plantings where id = $1`, [plantingId]);
-    await recordFarmEvent(client, {
-      farmId: auth.farmId,
-      eventDate: body.actualDate,
-      eventType: "planting_actual_recorded",
-      title: `${body.eventType.replaceAll("_", " ")} recorded for ${plantingResult.rows[0]?.title ?? "planting"}`,
-      notes: body.notes ?? null,
-      metadata: {
-        actualEventType: body.eventType,
-        resultingStatus: update.status
-      },
-      plantingId
-    });
-
-    await recalculatePlantingTasks(client, plantingId);
-    await pruneUndoSnapshots(client, auth);
-    await client.query("commit");
-    res.json({ ok: true });
-  } catch (error) {
-    await client.query("rollback");
-    throw error;
-  } finally {
-    client.release();
-  }
-}));
-
-app.post("/api/harvests", requireRole("worker"), asyncHandler(async (req, res) => {
-  const body = harvestSchema.parse(req.body);
-  const auth = currentAuth(req) as AuthContext;
-  const client = await pool.connect();
-  try {
-    await client.query("begin");
-    await ensurePlantingInFarm(client, body.plantingId, auth.farmId);
-    await ensurePlantableBedInFarm(client, body.bedId, auth.farmId);
-    await createUndoSnapshot(client, auth, "Log harvest");
-    await client.query(
-      `
-        insert into harvest_records (farm_id, planting_id, bed_id, harvest_date, quantity, unit, notes)
-        values ($1, $2, $3, $4, $5, $6, $7)
-      `,
-      [auth.farmId, body.plantingId, body.bedId, body.harvestDate, body.quantity, body.unit, body.notes ?? null]
-    );
-    await client.query(
-      `update plantings set actual_harvest_date = coalesce(actual_harvest_date, $2), status = 'harvested', updated_at = now() where id = $1`,
-      [body.plantingId, body.harvestDate]
-    );
-    const plantingResult = await client.query<{ title: string }>(`select title from plantings where id = $1`, [body.plantingId]);
-    const bedContext = await getBedContext(client, body.bedId);
-    await recordFarmEvent(client, {
-      farmId: auth.farmId,
-      eventDate: body.harvestDate,
-      eventType: "harvest_logged",
-      title: `Harvest logged for ${plantingResult.rows[0]?.title ?? "planting"}`,
-      notes: body.notes ?? null,
-      metadata: {
-        quantity: body.quantity,
-        unit: body.unit
-      },
-      fieldId: bedContext.field_id,
-      blockId: bedContext.block_id,
-      zoneId: bedContext.zone_id,
-      bedId: body.bedId,
-      plantingId: body.plantingId
-    });
-    await recalculatePlantingTasks(client, body.plantingId);
-    await pruneUndoSnapshots(client, auth);
-    await client.query("commit");
-    res.status(201).json({ ok: true });
-  } catch (error) {
-    await client.query("rollback");
-    throw error;
-  } finally {
-    client.release();
-  }
-}));
 
 // Last-resort error handler. Route code throws normal Errors; this turns them
 // into JSON so the frontend can show a useful message instead of silently failing.
@@ -4970,6 +3490,7 @@ app.use((error: unknown, _req: express.Request, res: express.Response, _next: ex
       error.message === "Cover crop name not found in this farm" ||
       error.message === "Seed item not found in this farm" ||
       error.message === "Bed preset not found in this farm" ||
+      error.message === "Tractor not found in this farm" ||
       error.message === "Planting not found in this farm" ||
       error.message === "Task not found in this farm" ||
       error.message === "Task flow template not found in this farm"
@@ -5003,6 +3524,7 @@ app.use((error: unknown, _req: express.Request, res: express.Response, _next: ex
       error.message === "Beds can only be generated inside bed areas" ||
       error.message === "Selected bed area does not belong to this block" ||
       error.message === "This bed has planned plantings, placements, or harvest records. Move or remove those records before deleting the bed." ||
+      error.message === "This block has harvest records tied to its beds. Move or remove those harvest records before replacing the beds." ||
       error.message === "Select or add a cover crop name for cover crop areas" ||
       error.message === "Task flow node keys must be unique" ||
       error.message === "Task flow edge references a missing node" ||

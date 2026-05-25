@@ -49,6 +49,7 @@ export type Block = {
   fieldName: string;
   name: string;
   notes: string | null;
+  bedStartEntranceSide: "start" | "end";
   areaSqM: number;
   boundary: GeoJsonPolygon | null;
   centroid: GeoJsonPoint | null;
@@ -164,10 +165,41 @@ export type Placement = {
   bedName: string;
   plantCount: number | null;
   bedLengthUsedM: number | null;
+  startLengthM: number;
+  placementOrder: number | null;
+  planSource: string;
   placedOn: string | null;
   locationDetail: string | null;
   notes: string | null;
   boundary: GeoJsonPolygon | null;
+};
+
+export type PlacementGap = {
+  id: number;
+  farmId: number;
+  blockId: number;
+  blockName: string;
+  bedId: number;
+  bedName: string;
+  startLengthM: number;
+  bedLengthUsedM: number;
+  placementOrder: number;
+  notes: string | null;
+};
+
+export type PlacementOverflow = {
+  id: number;
+  farmId: number;
+  blockId: number;
+  blockName: string;
+  plantingId: number | null;
+  plantingTitle: string | null;
+  entryType: "planting" | "gap";
+  bedLengthUsedM: number;
+  plantCount: number | null;
+  trayCount: number | null;
+  placementOrder: number;
+  notes: string | null;
 };
 
 export type FarmEvent = {
@@ -200,6 +232,8 @@ export type Task = {
   title: string;
   iconColor: string;
   iconSecondaryColor: string;
+  tractorModel: string | null;
+  tractorProfileId: number | null;
   status: string;
   anchor: string | null;
   offsetDays: number | null;
@@ -252,6 +286,12 @@ export type UndoState = {
 
 export type Crop = { id: number; name: string };
 export type Variety = { id: number; cropId: number; name: string };
+export type SeedLot = {
+  id: number;
+  seedItemId: number;
+  lotNumber: string;
+  stockQuantity: number | null;
+};
 export type SeedItem = {
   id: number;
   farmId: number;
@@ -264,7 +304,11 @@ export type SeedItem = {
   supplier: string | null;
   catalogNumber: string | null;
   lotNumber: string | null;
+  stockQuantity: number | null;
+  lots: SeedLot[];
+  daysToMaturity: number | null;
   notes: string | null;
+  archivedAt: string | null;
   displayName: string;
 };
 export type BedPreset = {
@@ -298,9 +342,20 @@ export type TaskFlowNode = {
   offsetDays: number;
   iconColor: string;
   iconSecondaryColor: string;
+  tractorModel: string | null;
+  tractorProfileId: number | null;
   x: number;
   y: number;
   notes: string | null;
+};
+
+export type TractorProfile = {
+  id: number;
+  farmId: number;
+  name: string;
+  tractorModel: string;
+  iconColor: string;
+  iconSecondaryColor: string;
 };
 
 export type TaskFlowEdge = {
@@ -324,8 +379,11 @@ export type DashboardData = {
   taskFlowTemplates: TaskFlowTemplate[];
   taskFlowNodes: TaskFlowNode[];
   taskFlowEdges: TaskFlowEdge[];
+  tractorProfiles: TractorProfile[];
   plantings: Planting[];
   placements: Placement[];
+  placementGaps: PlacementGap[];
+  placementOverflows: PlacementOverflow[];
   events: FarmEvent[];
   tasks: Task[];
   harvests: HarvestRecord[];

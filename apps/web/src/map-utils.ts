@@ -5,7 +5,8 @@
  * and task map icons out of the main App component.
  */
 import L from "leaflet";
-import { defaultTractorAccentColor, isTractorTask, tractorFrameForBearing, tractorModelForTask, tractorSpriteHtml } from "./tractor-icons";
+import { defaultTractorAccentColor, isTractorModel, isTractorTask, tractorFrameForBearing, tractorModelForTask, tractorSpriteHtml } from "./tractor-icons";
+import { defaultVehicleAccentColor, isVehicleModel, vehicleModelForTask, vehicleSpriteHtml } from "./vehicle-icons";
 
 export type LatLngPoint = {
   lat: number;
@@ -86,35 +87,38 @@ export function vertexIcon(kind: "vertex" | "start" | "midpoint" | "selected") {
   });
 }
 
-// Prototype task marker. Tractor work uses the user-recolorable tractor sprite;
-// other work still uses a compact letter badge.
-export function taskMapIcon(taskType: string, color: string, accentColor = defaultTractorAccentColor(), bearingDegrees?: number | null) {
-  if (isTractorTask(taskType)) {
+// Prototype task marker. Tractor work follows beds; other work uses vehicle
+// sprites so every normal task has a graphic instead of a letter-only badge.
+export function taskMapIcon(
+  taskType: string,
+  color: string,
+  accentColor = defaultTractorAccentColor(),
+  bearingDegrees?: number | null,
+  runDistancePx?: number,
+  tractorModel?: string | null,
+  spriteSheetUrl?: string | null,
+  runDurationSec?: number,
+  animationDelaySec?: number,
+  oneWayRun = false,
+  animated = false
+) {
+  const model = tractorModel || (isTractorTask(taskType) ? tractorModelForTask(taskType) : vehicleModelForTask(taskType));
+  if (isTractorModel(model)) {
     const frame = tractorFrameForBearing(bearingDegrees);
+    const markerWidth = Math.max(168, Math.round((runDistancePx ?? 44) * 2 + 120));
     return L.divIcon({
       className: "",
-      html: `<div class="task-map-tractor-icon tractor-bearing-${frame.frame}">${tractorSpriteHtml(color, accentColor, { bearing: bearingDegrees, animated: true, scale: 0.84, model: tractorModelForTask(taskType) })}</div>`,
-      iconSize: [168, 168],
-      iconAnchor: [84, 84]
+      html: `<div class="task-map-tractor-icon tractor-bearing-${frame.frame}" style="width: ${markerWidth}px;">${tractorSpriteHtml(color, accentColor, { bearing: bearingDegrees, animated, oneWay: oneWayRun, scale: 0.84, model, runDistancePx, runDurationSec, animationDelaySec, spriteSheetUrl })}</div>`,
+      iconSize: [markerWidth, 168],
+      iconAnchor: [markerWidth / 2, 84]
     });
   }
 
-  const label = taskType === "cultivate" || taskType === "weed" || taskType === "mow"
-    ? "T"
-    : taskType === "transplant"
-      ? "P"
-      : taskType === "direct_seed" || taskType === "seed_in_tray"
-        ? "S"
-        : taskType === "harvest"
-          ? "H"
-          : taskType === "bed_prep"
-            ? "B"
-            : "!";
-
+  const markerWidth = Math.max(168, Math.round((runDistancePx ?? 44) * 2 + 120));
   return L.divIcon({
     className: "",
-    html: `<div class="task-map-icon" style="--task-icon-color: ${color}"><span>${label}</span></div>`,
-    iconSize: [30, 30],
-    iconAnchor: [15, 15]
+    html: `<div class="task-map-vehicle-icon" style="width: ${markerWidth}px;">${vehicleSpriteHtml(color, accentColor || defaultVehicleAccentColor(), { bearing: bearingDegrees, animated, scale: 0.84, model: isVehicleModel(model) ? model : vehicleModelForTask(taskType), runDistancePx, runDurationSec, animationDelaySec, spriteSheetUrl })}</div>`,
+    iconSize: [markerWidth, 168],
+    iconAnchor: [markerWidth / 2, 84]
   });
 }

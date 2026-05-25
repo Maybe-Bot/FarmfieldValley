@@ -32,7 +32,6 @@ type ImportRow = {
   fieldSpacingInRow: number | null;
   rowSpacing: number | null;
   rowsPerBed: number | null;
-  deadAtFrost: boolean | null;
   bedCover: "plastic" | "bare" | null;
   field: string;
   block: string;
@@ -70,8 +69,7 @@ export const plantingImportHeaders = [
   "Field spacing in row",
   "Row spacing",
   "Rows per bed",
-  "Dead at frost (y/n)",
-  "Bed cover (plastic/bare)",
+  "Bed cover (plastic mulch/bare)",
   "Field",
   "Block",
   "Bed",
@@ -296,29 +294,18 @@ function parseOptionalNumber(value: string, rowNumber: number, columnName: strin
   return numeric;
 }
 
-function parseOptionalBoolean(value: string, rowNumber: number, columnName: string) {
-  const clean = value.trim().toLowerCase();
-  if (!clean) {
-    return null;
-  }
-  if (["y", "yes", "true"].includes(clean)) {
-    return true;
-  }
-  if (["n", "no", "false"].includes(clean)) {
-    return false;
-  }
-  throw new Error(`Row ${rowNumber}: ${columnName} must be y or n`);
-}
-
 function parseOptionalBedCover(value: string, rowNumber: number, columnName: string) {
-  const clean = value.trim().toLowerCase();
+  const clean = value.trim().toLowerCase().replace(/[_-]+/g, " ");
   if (!clean) {
     return null;
   }
-  if (clean === "plastic" || clean === "bare") {
-    return clean;
+  if (clean === "plastic" || clean === "plastic mulch") {
+    return "plastic";
   }
-  throw new Error(`Row ${rowNumber}: ${columnName} must be plastic or bare`);
+  if (clean === "bare") {
+    return "bare";
+  }
+  throw new Error(`Row ${rowNumber}: ${columnName} must be plastic mulch or bare`);
 }
 
 function addDays(value: string | null, days: number | null) {
@@ -382,7 +369,6 @@ export function parsePlantingTemplateRows(rows: SpreadsheetRow[]) {
       fieldSpacingRaw,
       rowSpacingRaw,
       rowsPerBedRaw,
-      deadAtFrostRaw,
       bedCoverRaw,
       field,
       block,
@@ -412,7 +398,6 @@ export function parsePlantingTemplateRows(rows: SpreadsheetRow[]) {
       !fieldSpacingRaw.trim() ? "Field spacing in row is blank" : null,
       !rowSpacingRaw.trim() ? "Row spacing is blank" : null,
       !rowsPerBedRaw.trim() ? "Rows per bed is blank" : null,
-      !deadAtFrostRaw.trim() ? "Dead at frost is blank" : null,
       !bedCoverRaw.trim() ? "Bed cover is blank" : null,
       !bed ? "Bed is blank" : null
     ].filter((issue): issue is string => Boolean(issue));
@@ -432,8 +417,7 @@ export function parsePlantingTemplateRows(rows: SpreadsheetRow[]) {
       fieldSpacingInRow,
       rowSpacing,
       rowsPerBed,
-      deadAtFrost: parseOptionalBoolean(deadAtFrostRaw, row.rowIndex, "Dead at frost (y/n)"),
-      bedCover: parseOptionalBedCover(bedCoverRaw, row.rowIndex, "Bed cover (plastic/bare)"),
+      bedCover: parseOptionalBedCover(bedCoverRaw, row.rowIndex, "Bed cover (plastic mulch/bare)"),
       field,
       block,
       bed,
@@ -576,15 +560,25 @@ async function upsertSeedItem(
     [farmId, row.crop ?? "Needs crop", row.variety, row.seedSupplier, row.catalogNumber]
   );
   if (existing.rows[0]) {
+    if (row.daysToHarvest != null) {
+      await client.query(
+        `
+          update seed_items
+          set days_to_maturity = coalesce(days_to_maturity, $2), updated_at = now()
+          where id = $1
+        `,
+        [existing.rows[0].id, row.daysToHarvest]
+      );
+    }
     return existing.rows[0].id;
   }
 
   const result = await client.query<{ id: number }>(
     `
       insert into seed_items (
-        farm_id, crop_id, variety_id, crop_type, variety_name, supplier, catalog_number, notes
+        farm_id, crop_id, variety_id, crop_type, variety_name, supplier, catalog_number, days_to_maturity, notes
       )
-      values ($1, $2, $3, $4, $5, $6, $7, $8)
+      values ($1, $2, $3, $4, $5, $6, $7, $8, $9)
       returning id
     `,
     [
@@ -595,6 +589,7 @@ async function upsertSeedItem(
       row.variety || null,
       row.seedSupplier || null,
       row.catalogNumber || null,
+      row.daysToHarvest,
       "Created by planting spreadsheet import."
     ]
   );
@@ -616,10 +611,17 @@ async function clearPreviousPlantingSpreadsheetImport(client: DbClient, farmId: 
   );
 }
 
-export async function importPlantingSpreadsheetRowsForFarm(client: DbClient, rows: SpreadsheetRow[], farmId: number) {
+export async function importPlantingSpreadsheetRowsForFarm(
+  client: DbClient,
+  rows: SpreadsheetRow[],
+  farmId: number,
+  options: { replaceExistingImport?: boolean } = {}
+) {
   const parsedRows = parsePlantingTemplateRows(rows);
   const bedLookup = await loadBedLookup(client, farmId);
-  await clearPreviousPlantingSpreadsheetImport(client, farmId);
+  if (options.replaceExistingImport) {
+    await clearPreviousPlantingSpreadsheetImport(client, farmId);
+  }
 
   let importedPlantings = 0;
   let skippedRows = 0;
@@ -666,7 +668,6 @@ export async function importPlantingSpreadsheetRowsForFarm(client: DbClient, row
       reviewIssues.length > 0 ? `Optional fields to review: ${reviewIssues.join("; ")}.` : null,
       `Field/Block/Bed: ${[resolvedFieldName || "missing field", resolvedBlockName || "missing block", row.bed || "unassigned bed"].join(" / ")}.`,
       row.catalogNumber ? `Catalog number: ${row.catalogNumber}.` : null,
-      row.deadAtFrost == null ? null : `Dead at frost: ${row.deadAtFrost ? "yes" : "no"}.`,
       row.bedCover == null ? null : `Bed cover: ${row.bedCover}.`,
       row.bedLengthFeet == null ? null : `Bed length: ${row.bedLengthFeet} ft.`,
       row.cellsPerTray != null ? `Cells per tray: ${row.cellsPerTray}.` : null,
@@ -682,7 +683,7 @@ export async function importPlantingSpreadsheetRowsForFarm(client: DbClient, row
           intended_field_id, intended_block_id, intended_bed_id,
           spacing, plant_count, bed_length_used_m, notes, tray_count,
           cells_per_tray, days_to_harvest, field_spacing_in_row, row_spacing,
-          rows_per_bed, dead_at_frost, bed_cover,
+          rows_per_bed, bed_cover,
           planned_sow_date, planned_transplant_date, expected_harvest_start, expected_harvest_end
         )
         values (
@@ -690,8 +691,8 @@ export async function importPlantingSpreadsheetRowsForFarm(client: DbClient, row
           $6, $7, $8,
           $9, $10, $11, $12, $13,
           $14, $15, $16, $17,
-          $18, $19, $20,
-          $21, $22, $23, $23
+          $18, $19,
+          $20, $21, $22, $22
         )
         returning id
       `,
@@ -714,7 +715,6 @@ export async function importPlantingSpreadsheetRowsForFarm(client: DbClient, row
         row.fieldSpacingInRow,
         row.rowSpacing,
         row.rowsPerBed,
-        row.deadAtFrost,
         row.bedCover,
         row.startDate,
         row.transplantDate,

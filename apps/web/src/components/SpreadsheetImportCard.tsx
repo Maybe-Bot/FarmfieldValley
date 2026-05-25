@@ -30,8 +30,7 @@ const templateHeaders = [
   "Field spacing in row",
   "Row spacing",
   "Rows per bed",
-  "Dead at frost (y/n)",
-  "Bed cover (plastic/bare)",
+  "Bed cover (plastic mulch/bare)",
   "Field",
   "Block",
   "Bed",
@@ -53,8 +52,7 @@ const templateExampleRow = [
   "10",
   "12",
   "4",
-  "n",
-  "bare",
+  "plastic mulch",
   "East Field",
   "B1",
   "Bed 1",
@@ -83,6 +81,7 @@ function downloadTemplate() {
 // strict planting-plan template so users can prepare predictable data before upload.
 export function SpreadsheetImportCard({ tutorialActive = false, onImported }: { tutorialActive?: boolean; onImported: () => Promise<void> }) {
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
+  const [replaceExistingImport, setReplaceExistingImport] = useState(false);
   const [status, setStatus] = useState<string | null>(null);
   const [importing, setImporting] = useState(false);
 
@@ -100,13 +99,14 @@ export function SpreadsheetImportCard({ tutorialActive = false, onImported }: { 
       setStatus("Importing spreadsheet...");
       const result = await api.importSpreadsheet({
         fileName: selectedFile.name,
-        contentBase64
+        contentBase64,
+        replaceExistingImport
       });
       await onImported();
       const incompleteMessage = result.incompleteRows > 0
         ? ` ${result.incompleteRows} row${result.incompleteRows === 1 ? "" : "s"} need manual completion.`
         : "";
-      setStatus(`Imported ${result.importedPlantings} planting${result.importedPlantings === 1 ? "" : "s"} from ${result.parsedRows} parsed row${result.parsedRows === 1 ? "" : "s"}.${incompleteMessage}`);
+      setStatus(`${replaceExistingImport ? "Replaced the previous spreadsheet import and imported" : "Added"} ${result.importedPlantings} planting${result.importedPlantings === 1 ? "" : "s"} from ${result.parsedRows} parsed row${result.parsedRows === 1 ? "" : "s"}.${incompleteMessage}`);
     } catch (error) {
       setStatus(error instanceof Error ? error.message : "Spreadsheet import failed.");
     } finally {
@@ -123,7 +123,7 @@ export function SpreadsheetImportCard({ tutorialActive = false, onImported }: { 
         </div>
       )}
       <p className="muted">
-        Strict prototype importer: use the exact header row below. It imports planting plans and seed records only, maps rows to existing fields/blocks/beds, and replaces the previous spreadsheet import for this farm.
+        Strict prototype importer: use the exact header row below. It imports planting plans and seed records only, maps rows to existing fields/blocks/beds, and adds them to the current crop plan.
       </p>
       <form className="form-grid" onSubmit={(event) => void importSpreadsheet(event)}>
         <div className="button-row full-span">
@@ -145,8 +145,16 @@ export function SpreadsheetImportCard({ tutorialActive = false, onImported }: { 
         <div className="instruction-box full-span">
           <strong>Required header row:</strong>
           <code className="template-header-line">{templateHeaders.join(",")}</code>
-          Dates must be YYYY-MM-DD. Spacing numbers are inches. Bed length is feet. Bed cover may be blank, plastic, or bare. For direct-seeded crops, you can leave Plant count blank and fill in Bed length instead. Leave Transplant date, Tray count, and Cells per tray blank for direct-seeded crops. If important cells are blank, the row still imports with a red review marker so you can edit it later.
+          Dates must be YYYY-MM-DD. Spacing numbers are inches. Bed length is feet. Bed cover may be blank, plastic mulch, or bare. For direct-seeded crops, you can leave Plant count blank and fill in Bed length instead. Leave Transplant date, Tray count, and Cells per tray blank for direct-seeded crops. If important cells are blank, the row still imports with a red review marker so you can edit it later.
         </div>
+        <label className="inline-checkbox full-span">
+          <input
+            type="checkbox"
+            checked={replaceExistingImport}
+            onChange={(event) => setReplaceExistingImport(event.target.checked)}
+          />
+          <span>Replace earlier spreadsheet-imported rows from this farm</span>
+        </label>
         {status && <p className="muted full-span"><strong>{status}</strong></p>}
         <button className="primary-button full-span" disabled={importing || !selectedFile}>
           {importing ? "Importing..." : "Import spreadsheet"}

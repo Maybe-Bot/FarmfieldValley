@@ -10,6 +10,7 @@
     "db:seed": "tsx src/scripts/seed.ts",
     "admin:create": "tsx src/scripts/create-admin.ts",
     "db:import-demo": "tsx src/scripts/import-demo-data.ts",
+    "db:import-seeds": "tsx src/scripts/import-seed-catalog.ts",
     "map:cache": "tsx src/scripts/cache-imagery.ts"
   },
   "dependencies": {

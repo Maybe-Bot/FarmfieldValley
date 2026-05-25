@@ -38,6 +38,8 @@ type FlowNodeRow = {
   offset_days: number;
   icon_color: string;
   icon_secondary_color: string;
+  tractor_model: string | null;
+  tractor_profile_id: number | null;
 };
 
 type FlowEdgeRow = {
@@ -162,7 +164,7 @@ export async function recalculatePlantingTasks(client: PoolClient, plantingId: n
   const [nodesResult, edgesResult, existingTasksResult] = await Promise.all([
     client.query<FlowNodeRow>(
       `
-        select id, node_key, task_type, label, anchor, offset_days, icon_color, icon_secondary_color
+        select id, node_key, task_type, label, anchor, offset_days, icon_color, icon_secondary_color, tractor_model, tractor_profile_id
         from task_flow_nodes
         where flow_template_id = $1
         order by y_pos asc, x_pos asc, id asc
@@ -228,9 +230,11 @@ export async function recalculatePlantingTasks(client: PoolClient, plantingId: n
             title = $5,
             icon_color = $6,
             icon_secondary_color = $7,
-            anchor = $8,
-            offset_days = $9,
-            scheduled_date = $10,
+            tractor_model = $8,
+            tractor_profile_id = $9,
+            anchor = $10,
+            offset_days = $11,
+            scheduled_date = $12,
             updated_at = now()
           where id = $1
         `,
@@ -242,6 +246,8 @@ export async function recalculatePlantingTasks(client: PoolClient, plantingId: n
           taskLabel,
           node.icon_color,
           node.icon_secondary_color,
+          node.tractor_model,
+          node.tractor_profile_id,
           node.anchor,
           node.offset_days,
           scheduledDate
@@ -261,13 +267,15 @@ export async function recalculatePlantingTasks(client: PoolClient, plantingId: n
             title,
             icon_color,
             icon_secondary_color,
+            tractor_model,
+            tractor_profile_id,
             status,
             anchor,
             offset_days,
             scheduled_date,
             is_auto_generated
           )
-          values ($1, $2, $3, $4, $5, $6, $7, $8, 'pending', $9, $10, $11, true)
+          values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, 'pending', $11, $12, $13, true)
           returning id
         `,
         [
@@ -279,6 +287,8 @@ export async function recalculatePlantingTasks(client: PoolClient, plantingId: n
           taskLabel,
           node.icon_color,
           node.icon_secondary_color,
+          node.tractor_model,
+          node.tractor_profile_id,
           node.anchor,
           node.offset_days,
           scheduledDate

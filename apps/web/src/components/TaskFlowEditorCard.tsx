@@ -15,7 +15,9 @@ import {
   newTaskFlowNode,
   taskFlowHasCycle
 } from "../task-flow-utils";
-import { TaskFlowEdge, TaskFlowNode, TaskFlowTemplate } from "../types";
+import { isTractorTask, tractorModelForTask } from "../tractor-icons";
+import { TaskFlowEdge, TaskFlowNode, TaskFlowTemplate, TractorProfile } from "../types";
+import { vehicleModelForTask } from "../vehicle-icons";
 
 // Visual editor for one task-flow template. It stays separated from App.tsx because
 // it has its own graph state, drag handling, dependency validation, and save payload.
@@ -25,6 +27,7 @@ export function TaskFlowEditorCard({
   template,
   nodes,
   edges,
+  tractorProfiles,
   tutorialActive = false,
   onSaved
 }: {
@@ -33,9 +36,19 @@ export function TaskFlowEditorCard({
   template: TaskFlowTemplate | null;
   nodes: TaskFlowNode[];
   edges: TaskFlowEdge[];
+  tractorProfiles: TractorProfile[];
   tutorialActive?: boolean;
   onSaved: (taskFlowId: number) => Promise<void>;
 }) {
+  function defaultModelForTask(taskType: string) {
+    return isTractorTask(taskType) ? tractorModelForTask(taskType) : vehicleModelForTask(taskType);
+  }
+
+  function defaultProfileForTask(taskType: string) {
+    const model = defaultModelForTask(taskType);
+    return tractorProfiles.find((profile) => profile.tractorModel === model) ?? tractorProfiles[0] ?? null;
+  }
+
   const initialNodes = nodes.length > 0
     ? nodes.map((node) => ({
         nodeKey: node.nodeKey,
@@ -45,14 +58,16 @@ export function TaskFlowEditorCard({
         offsetDays: node.offsetDays,
         iconColor: node.iconColor ?? taskIconColor(node.taskType),
         iconSecondaryColor: node.iconSecondaryColor ?? "#f4c430",
+        tractorModel: node.tractorModel ?? defaultModelForTask(node.taskType),
+        tractorProfileId: node.tractorProfileId ?? null,
         x: Number(node.x),
         y: Number(node.y),
         notes: node.notes ?? ""
       }))
     : [
-        { ...newTaskFlowNode(0), label: "Bed prep", taskType: "bed_prep", iconColor: taskIconColor("bed_prep"), iconSecondaryColor: "#f4c430", anchor: "planned_transplant", offsetDays: -5 },
-        { ...newTaskFlowNode(1), label: "Transplant", taskType: "transplant", iconColor: taskIconColor("transplant"), iconSecondaryColor: "#f4c430", anchor: "actual_transplant", offsetDays: 0 },
-        { ...newTaskFlowNode(2), label: "Harvest start", taskType: "harvest", iconColor: taskIconColor("harvest"), iconSecondaryColor: "#f4c430", anchor: "actual_transplant", offsetDays: 35 }
+        { ...newTaskFlowNode(0), label: "Bed prep", taskType: "bed_prep", iconColor: defaultProfileForTask("bed_prep")?.iconColor ?? taskIconColor("bed_prep"), iconSecondaryColor: defaultProfileForTask("bed_prep")?.iconSecondaryColor ?? "#f4c430", tractorModel: defaultProfileForTask("bed_prep")?.tractorModel ?? defaultModelForTask("bed_prep"), tractorProfileId: defaultProfileForTask("bed_prep")?.id ?? null, anchor: "planned_transplant", offsetDays: -5 },
+        { ...newTaskFlowNode(1), label: "Transplant", taskType: "transplant", iconColor: defaultProfileForTask("transplant")?.iconColor ?? taskIconColor("transplant"), iconSecondaryColor: defaultProfileForTask("transplant")?.iconSecondaryColor ?? "#f4c430", tractorModel: defaultProfileForTask("transplant")?.tractorModel ?? defaultModelForTask("transplant"), tractorProfileId: defaultProfileForTask("transplant")?.id ?? null, anchor: "actual_transplant", offsetDays: 0 },
+        { ...newTaskFlowNode(2), label: "Harvest start", taskType: "harvest", iconColor: defaultProfileForTask("harvest")?.iconColor ?? taskIconColor("harvest"), iconSecondaryColor: defaultProfileForTask("harvest")?.iconSecondaryColor ?? "#f4c430", tractorModel: defaultProfileForTask("harvest")?.tractorModel ?? defaultModelForTask("harvest"), tractorProfileId: defaultProfileForTask("harvest")?.id ?? null, anchor: "actual_transplant", offsetDays: 35 }
       ];
   const initialEdges = edges.length > 0
     ? edges.map((edge) => ({
@@ -74,6 +89,7 @@ export function TaskFlowEditorCard({
   const [openNodeMenuKey, setOpenNodeMenuKey] = useState<string | null>(null);
   const [openNodeEditorKey, setOpenNodeEditorKey] = useState<string | null>(null);
   const [connectionDraft, setConnectionDraft] = useState<{ sourceNodeKey: string; direction: "upstream" | "downstream" } | null>(null);
+  const [editNodeSnapshots, setEditNodeSnapshots] = useState<Record<string, FlowNodeDraft>>({});
   const [tutorialAddedNodeKey, setTutorialAddedNodeKey] = useState<string | null>(null);
   const [status, setStatus] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
@@ -185,18 +201,65 @@ export function TaskFlowEditorCard({
       const nextNode = newTaskFlowNode(current.length);
       setSelectedNodeKey(nextNode.nodeKey);
       setOpenNodeEditorKey(nextNode.nodeKey);
+      setEditNodeSnapshots((snapshots) => ({ ...snapshots, [nextNode.nodeKey]: nextNode }));
       setTutorialAddedNodeKey(nextNode.nodeKey);
       return [...current, nextNode];
     });
   }
 
   function updateNodeTaskType(node: FlowNodeDraft, nextTaskType: string) {
+    const defaultProfile = defaultProfileForTask(nextTaskType);
     updateNode(node.nodeKey, {
       taskType: nextTaskType,
-      iconColor: taskIconColor(nextTaskType),
+      iconColor: defaultProfile?.iconColor ?? taskIconColor(nextTaskType),
+      iconSecondaryColor: defaultProfile?.iconSecondaryColor ?? node.iconSecondaryColor,
+      tractorModel: defaultProfile?.tractorModel ?? defaultModelForTask(nextTaskType),
+      tractorProfileId: defaultProfile?.id ?? null,
       label: !node.label.trim() || /^Task \d+$/.test(node.label) || node.label === formatTaskTypeLabel(node.taskType)
         ? formatTaskTypeLabel(nextTaskType)
         : node.label
+    });
+  }
+
+  function updateNodeTractorProfile(node: FlowNodeDraft, profileIdValue: string) {
+    const profileId = profileIdValue ? Number(profileIdValue) : null;
+    const profile = tractorProfiles.find((item) => item.id === profileId) ?? null;
+    updateNode(node.nodeKey, {
+      tractorProfileId: profile?.id ?? null,
+      tractorModel: profile?.tractorModel ?? defaultModelForTask(node.taskType),
+      iconColor: profile?.iconColor ?? node.iconColor,
+      iconSecondaryColor: profile?.iconSecondaryColor ?? node.iconSecondaryColor
+    });
+  }
+
+  function toggleNodeEditor(node: FlowNodeDraft) {
+    if (openNodeEditorKey === node.nodeKey) {
+      setOpenNodeEditorKey(null);
+      setEditNodeSnapshots((current) => {
+        const next = { ...current };
+        delete next[node.nodeKey];
+        return next;
+      });
+      return;
+    }
+
+    setSelectedNodeKey(node.nodeKey);
+    setOpenNodeMenuKey(null);
+    setConnectionDraft(null);
+    setOpenNodeEditorKey(node.nodeKey);
+    setEditNodeSnapshots((current) => ({ ...current, [node.nodeKey]: { ...node } }));
+  }
+
+  function cancelNodeEditor(nodeKey: string) {
+    const snapshot = editNodeSnapshots[nodeKey];
+    if (snapshot) {
+      setLocalNodes((current) => current.map((node) => node.nodeKey === nodeKey ? snapshot : node));
+    }
+    setOpenNodeEditorKey(null);
+    setEditNodeSnapshots((current) => {
+      const next = { ...current };
+      delete next[nodeKey];
+      return next;
     });
   }
 
@@ -312,6 +375,8 @@ export function TaskFlowEditorCard({
           offsetDays: Number(node.offsetDays),
           iconColor: node.iconColor,
           iconSecondaryColor: node.iconSecondaryColor,
+          tractorModel: node.tractorModel,
+          tractorProfileId: node.tractorProfileId,
           x: clampFlowCoordinate(Number(node.x)),
           y: clampFlowCoordinate(Number(node.y)),
           notes: node.notes.trim() || null
@@ -449,7 +514,7 @@ export function TaskFlowEditorCard({
               <div className="flow-node-card-main">
                 <strong>{node.label}</strong>
                 <span className="flow-node-icon-preview">
-                  <TaskIconMark taskType={node.taskType} color={node.iconColor} secondaryColor={node.iconSecondaryColor} mini />
+                  <TaskIconMark taskType={node.taskType} color={node.iconColor} secondaryColor={node.iconSecondaryColor} tractorModel={node.tractorModel} mini />
                 </span>
                 <span className="small-chip">{formatTaskTypeLabel(node.taskType)}</span>
                 <span className="table-subtle">{formatTaskAnchorLabel(node.anchor)} {node.offsetDays >= 0 ? "+" : ""}{node.offsetDays}d</span>
@@ -465,12 +530,10 @@ export function TaskFlowEditorCard({
                   onClick={(event) => {
                     event.stopPropagation();
                     setSelectedNodeKey(node.nodeKey);
-                    setOpenNodeMenuKey(null);
-                    setConnectionDraft(null);
-                    setOpenNodeEditorKey((current) => current === node.nodeKey ? null : node.nodeKey);
+                    toggleNodeEditor(node);
                   }}
                 >
-                  Edit
+                  {openNodeEditorKey === node.nodeKey ? "Save" : "Edit"}
                 </button>
                 <button
                   type="button"
@@ -546,12 +609,11 @@ export function TaskFlowEditorCard({
                     </select>
                   </label>
                   <label>
-                    <span>Tractor/body color</span>
-                    <input type="color" value={node.iconColor} onChange={(event) => updateNode(node.nodeKey, { iconColor: event.target.value })} />
-                  </label>
-                  <label>
-                    <span>Accent color</span>
-                    <input type="color" value={node.iconSecondaryColor} onChange={(event) => updateNode(node.nodeKey, { iconSecondaryColor: event.target.value })} />
+                    <span>Saved vehicle</span>
+                    <select value={node.tractorProfileId ?? ""} onChange={(event) => updateNodeTractorProfile(node, event.target.value)}>
+                      {tractorProfiles.length === 0 && <option value="">No saved vehicles yet</option>}
+                      {tractorProfiles.map((profile) => <option key={profile.id} value={profile.id}>{profile.name}</option>)}
+                    </select>
                   </label>
                   <label
                     className={tutorialHighlightAnchor && tutorialTargetNode?.nodeKey === node.nodeKey ? " tutorial-target" : ""}
@@ -576,6 +638,10 @@ export function TaskFlowEditorCard({
                     <span>Notes</span>
                     <textarea rows={3} value={node.notes} onChange={(event) => updateNode(node.nodeKey, { notes: event.target.value })} />
                   </label>
+                  <div className="button-row full-span">
+                    <button type="button" className="primary-button compact-button" onClick={() => toggleNodeEditor(node)}>Save</button>
+                    <button type="button" className="secondary-button compact-button" onClick={() => cancelNodeEditor(node.nodeKey)}>Cancel</button>
+                  </div>
                 </div>
               )}
             </div>
@@ -594,12 +660,11 @@ export function TaskFlowEditorCard({
             <dl className="detail-list">
               <div><dt>Label</dt><dd>{selectedNode.label}</dd></div>
               <div><dt>Task type</dt><dd>{formatTaskTypeLabel(selectedNode.taskType)}</dd></div>
-              <div><dt>Body color</dt><dd>{selectedNode.iconColor}</dd></div>
-              <div><dt>Accent color</dt><dd>{selectedNode.iconSecondaryColor}</dd></div>
+              <div><dt>Saved vehicle</dt><dd>{tractorProfiles.find((profile) => profile.id === selectedNode.tractorProfileId)?.name ?? "Default vehicle"}</dd></div>
               <div><dt>Anchor</dt><dd>{formatTaskAnchorLabel(selectedNode.anchor)}</dd></div>
               <div><dt>Offset</dt><dd>{selectedNode.offsetDays >= 0 ? "+" : ""}{selectedNode.offsetDays} days</dd></div>
               <div><dt>Notes</dt><dd>{selectedNode.notes || "—"}</dd></div>
-              <div><dt>Edit</dt><dd>Use the `Edit` button on the node card to expand its inline form.</dd></div>
+              <div><dt>Edit</dt><dd>Use the node card controls to save or cancel inline edits.</dd></div>
             </dl>
           ) : (
             <p className="muted">Select a node on the chart to edit it.</p>

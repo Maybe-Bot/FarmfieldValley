@@ -22,7 +22,7 @@ finished production app because the project has favored fast iteration.
 - `apps/api` is the Node/Express backend. It handles database reads and writes.
 - `apps/api/src/sql` contains database migrations. These build or update the
   PostgreSQL/PostGIS schema.
-- `demo data` contains spreadsheet examples used by the demo import script.
+- `demo data` is an ignored local-only folder for private spreadsheet imports.
 - `docker-compose.yml` starts PostgreSQL/PostGIS locally.
 
 ## Data Flow
@@ -121,8 +121,8 @@ Undo / redo:
   order.
 - `npm run db:seed` creates sample data. Do not run this against data you care
   about unless you have checked what it will change.
-- `npm --workspace apps/api run import:demo` imports the farm-specific demo
-  spreadsheet data.
+- `npm run db:import-demo` imports private local spreadsheets from the ignored
+  `demo data` folder.
 - `npm --workspace apps/api run cache:imagery` downloads optional map tiles for
   offline imagery experiments.
 

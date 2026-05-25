@@ -29,7 +29,8 @@ type SpreadsheetImportRouteDeps = {
 
 const spreadsheetImportSchema = z.object({
   fileName: z.string().trim().min(1).max(240),
-  contentBase64: z.string().min(1)
+  contentBase64: z.string().min(1),
+  replaceExistingImport: z.boolean().optional()
 });
 
 export function registerSpreadsheetImportRoutes(app: express.Express, deps: SpreadsheetImportRouteDeps) {
@@ -63,7 +64,9 @@ export function registerSpreadsheetImportRoutes(app: express.Express, deps: Spre
 
       await client.query("begin");
       await deps.createUndoSnapshot(client, auth, "Import spreadsheet crop plan");
-      const result = await importPlantingSpreadsheetRowsForFarm(client, rows, auth.farmId);
+      const result = await importPlantingSpreadsheetRowsForFarm(client, rows, auth.farmId, {
+        replaceExistingImport: body.replaceExistingImport ?? false
+      });
       await deps.pruneUndoSnapshots(client, auth);
       await client.query("commit");
       res.status(201).json(result);

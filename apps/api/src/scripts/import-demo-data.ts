@@ -36,7 +36,9 @@ const demoFarmName = "B/H Demo Farm";
 const allowedLocations = new Set<DemoLocation>(["B1", "B2", "B3", "H2", "H3", "H4", "H5", "H6"]);
 const feetToMeters = 0.3048;
 const projectRoot = path.resolve(__dirname, "../../../..");
-const demoDataDir = path.join(projectRoot, "demo data");
+const demoDataDir = process.env.FARMFIELD_VALLEY_DEMO_DATA_DIR
+  ? path.resolve(process.env.FARMFIELD_VALLEY_DEMO_DATA_DIR)
+  : path.join(projectRoot, "demo data");
 const defaultBedLengthM = 340 * feetToMeters;
 const demoImportYear = 2026;
 
@@ -89,6 +91,8 @@ def canonical_sheet_name(name):
         return "Fertility Needs"
     if normalized == "fertilization plan":
         return "Fertilization Plan"
+    if normalized == "seed order":
+        return "Seed Order"
     return None
 
 def ods_cell_text(cell):
@@ -526,6 +530,224 @@ async function upsertVariety(client: DbClient, cropId: number, name: string | nu
     [cropId, name]
   );
   return result.rows[0].id;
+}
+
+function catalogKey(cropName: string, varietyName: string | null) {
+  return `${normalizeCatalogText(cropName)}\u001f${normalizeCatalogText(varietyName ?? "")}`;
+}
+
+function normalizeCatalogText(value: string) {
+  return value
+    .toLowerCase()
+    .replace(/\bog\b/g, "")
+    .replace(/[^a-z0-9]+/g, " ")
+    .trim()
+    .replace(/\s+/g, " ");
+}
+
+export function inferSeedFamily(cropName: string | null | undefined) {
+  const normalized = normalizeCatalogText(cropName ?? "");
+  if (!normalized) {
+    return null;
+  }
+
+  if (/\b(arugula|asian greens|bok choy|broccolini|broccoli|brussels|cabbage|cauliflower|kale|radish|rutabaga|spicy mix)\b/.test(normalized)) {
+    return "Brassica";
+  }
+  if (/\b(eggplant|pepper|peppers|potato|potatoes|tomatillo|tomato|tomatoes)\b/.test(normalized)) {
+    return "Nightshade";
+  }
+  if (/\b(chicory|lettuce|radicchio)\b/.test(normalized)) {
+    return "Aster";
+  }
+  if (/\b(chives|leek|leeks|onion|onions|scallion)\b/.test(normalized)) {
+    return "Allium";
+  }
+  if (/\b(cucumber|squash|zucchini)\b/.test(normalized)) {
+    return "Cucurbit";
+  }
+  if (/\b(basil|oregano)\b/.test(normalized)) {
+    return "Mint";
+  }
+  if (/\b(beet|beets|spinach)\b/.test(normalized)) {
+    return "Amaranth";
+  }
+  if (/\b(carrot|carrots|celeriac|celery|fennel|parsley)\b/.test(normalized)) {
+    return "Carrot";
+  }
+  if (/\b(fava|favas)\b/.test(normalized)) {
+    return "Legume";
+  }
+  if (/\bginger\b/.test(normalized)) {
+    return "Ginger";
+  }
+
+  return null;
+}
+
+function daysBetweenIsoDates(startDate: string | null, endDate: string | null) {
+  if (!startDate || !endDate) {
+    return null;
+  }
+  const start = new Date(`${startDate}T00:00:00Z`).getTime();
+  const end = new Date(`${endDate}T00:00:00Z`).getTime();
+  if (Number.isNaN(start) || Number.isNaN(end)) {
+    return null;
+  }
+  const days = Math.round((end - start) / 86400000);
+  return days > 0 && days < 400 ? days : null;
+}
+
+function buildMaturityLookup(rows: DemoRow[]) {
+  const values = new Map<string, number[]>();
+  for (const row of rows) {
+    if (row.sheet !== "Start Chart") {
+      continue;
+    }
+    const [cropNameRaw, varietyNameRaw, plantDateRaw, , , , harvestDateRaw] = row.cells;
+    const cropName = cropNameRaw?.trim();
+    if (!cropName || cropName.toLowerCase() === "crop" || cropName.startsWith("#")) {
+      continue;
+    }
+    const varietyName = varietyNameRaw?.trim() || null;
+    const year = inferredYear(row);
+    const days = daysBetweenIsoDates(
+      parseDate(plantDateRaw, year),
+      parseDate(harvestDateRaw, year)
+    );
+    if (days == null) {
+      continue;
+    }
+    const key = catalogKey(cropName, varietyName);
+    values.set(key, [...(values.get(key) ?? []), days]);
+  }
+
+  return new Map(
+    [...values.entries()].map(([key, days]) => {
+      const sorted = [...days].sort((left, right) => left - right);
+      return [key, sorted[Math.floor(sorted.length / 2)]];
+    })
+  );
+}
+
+function maturityForSeed(
+  maturityByKey: Map<string, number>,
+  cropName: string,
+  varietyName: string | null
+) {
+  const exact = maturityByKey.get(catalogKey(cropName, varietyName));
+  if (exact != null) {
+    return exact;
+  }
+
+  const normalizedCrop = normalizeCatalogText(cropName);
+  const normalizedVariety = normalizeCatalogText(varietyName ?? "");
+  if (!normalizedVariety) {
+    return null;
+  }
+
+  for (const [key, days] of maturityByKey) {
+    const [candidateCrop, candidateVariety] = key.split("\u001f");
+    if (candidateCrop !== normalizedCrop || !candidateVariety) {
+      continue;
+    }
+    if (candidateVariety.includes(normalizedVariety) || normalizedVariety.includes(candidateVariety)) {
+      return days;
+    }
+  }
+
+  return null;
+}
+
+export async function importSeedCatalogRowsForFarm(client: DbClient, rows: DemoRow[], farmId: number) {
+  const maturityByKey = buildMaturityLookup(rows);
+  const seen = new Set<string>();
+  let imported = 0;
+
+  for (const row of rows) {
+    if (row.sheet !== "Seed Order") {
+      continue;
+    }
+
+    const [cropNameRaw, varietyNameRaw, , , , , sourceRaw] = row.cells;
+    const cropName = cropNameRaw?.trim();
+    const varietyName = varietyNameRaw?.trim() || null;
+    if (!cropName || cropName.toLowerCase() === "crop" || cropName.startsWith("#") || !varietyName) {
+      continue;
+    }
+
+    const supplier = sourceRaw?.trim() || null;
+    const dedupeKey = [normalizeCatalogText(cropName), normalizeCatalogText(varietyName), normalizeCatalogText(supplier ?? "")].join("\u001f");
+    if (seen.has(dedupeKey)) {
+      continue;
+    }
+    seen.add(dedupeKey);
+
+    const cropId = await upsertCrop(client, cropName);
+    const varietyId = await upsertVariety(client, cropId, varietyName);
+    const family = inferSeedFamily(cropName);
+    const daysToMaturity = maturityForSeed(maturityByKey, cropName, varietyName);
+
+    const existing = await client.query<{ id: number }>(
+      `
+        select id
+        from seed_items
+        where farm_id = $1
+          and lower(crop_type) = lower($2)
+          and lower(coalesce(variety_name, '')) = lower($3)
+          and lower(coalesce(supplier, '')) = lower($4)
+        limit 1
+      `,
+      [farmId, cropName, varietyName, supplier ?? ""]
+    );
+
+    if (existing.rows[0]) {
+      await client.query(
+        `
+          update seed_items
+          set
+            crop_id = $2,
+            variety_id = $3,
+            days_to_maturity = coalesce(days_to_maturity, $4),
+            family = coalesce(nullif(family, ''), $5),
+            updated_at = now()
+          where id = $1 and farm_id = $6
+        `,
+        [existing.rows[0].id, cropId, varietyId, daysToMaturity, family, farmId]
+      );
+    } else {
+      await client.query(
+        `
+          insert into seed_items (
+            farm_id, crop_id, variety_id, family, crop_type, variety_name, supplier, days_to_maturity
+          )
+          values ($1, $2, $3, $4, $5, $6, $7, $8)
+        `,
+        [farmId, cropId, varietyId, family, cropName, varietyName, supplier, daysToMaturity]
+      );
+    }
+
+    imported += 1;
+  }
+
+  return imported;
+}
+
+async function findSeedItemForPlanting(client: DbClient, farmId: number, cropId: number, varietyId: number | null) {
+  const result = await client.query<{ id: number }>(
+    `
+      select id
+      from seed_items
+      where farm_id = $1
+        and crop_id = $2
+        and (($3::integer is null and variety_id is null) or variety_id = $3)
+        and archived_at is null
+      order by supplier nulls last, id
+      limit 1
+    `,
+    [farmId, cropId, varietyId]
+  );
+  return result.rows[0]?.id ?? null;
 }
 
 async function insertTaskFlowTemplate(
@@ -976,6 +1198,7 @@ async function importPlantings(
     const plannedSowDate = parseDate(sowDateRaw, year);
     const expectedHarvestStart = parseDate(harvestStartRaw, year);
     const expectedHarvestEnd = expectedHarvestStart;
+    const daysToHarvest = daysBetweenIsoDates(plannedTransplantDate, expectedHarvestStart);
     const bedLengthUsedM = bedLengthFt != null ? Number((bedLengthFt * feetToMeters).toFixed(2)) : null;
     const parentPlantCount = plantCount != null ? Math.round(plantCount) : null;
 
@@ -985,6 +1208,7 @@ async function importPlantings(
 
     const cropId = await upsertCrop(client, cropName);
     const varietyId = await upsertVariety(client, cropId, varietyNameRaw?.trim() || null);
+    const seedItemId = await findSeedItemForPlanting(client, farmId, cropId, varietyId);
     const intendedBedId = bedIds.get(locations[0]) ?? null;
     const transplantedAlready = plannedTransplantDate != null && plannedTransplantDate <= new Date().toISOString().slice(0, 10);
     const notes = [
@@ -1001,16 +1225,16 @@ async function importPlantings(
     const result = await client.query<{ id: number }>(
       `
         insert into plantings (
-          farm_id, crop_id, variety_id, title, status, intended_bed_id, task_flow_template_id,
-          spacing, plant_count, bed_length_used_m, notes,
+          farm_id, crop_id, variety_id, seed_item_id, title, status, intended_bed_id, task_flow_template_id,
+          spacing, plant_count, bed_length_used_m, days_to_harvest, notes,
           planned_sow_date, planned_transplant_date, expected_harvest_start, expected_harvest_end,
           actual_tray_seeding_date, actual_transplant_date, actual_harvest_date, actual_finish_date
         )
         values (
-          $1, $2, $3, $4, $5, $6, $7,
-          $8, $9, $10, $11,
-          $12, $13, $14, $15,
-          $16, $17, $18, $19
+          $1, $2, $3, $4, $5, $6, $7, $8,
+          $9, $10, $11, $12, $13,
+          $14, $15, $16, $17,
+          $18, $19, $20, $21
         )
         returning id
       `,
@@ -1018,6 +1242,7 @@ async function importPlantings(
         farmId,
         cropId,
         varietyId,
+        seedItemId,
         `${year} ${cropName}${varietyNameRaw?.trim() ? ` - ${varietyNameRaw.trim()}` : ""} (${locationRaw})`,
         transplantedAlready ? "transplanted" : "planned",
         intendedBedId,
@@ -1025,6 +1250,7 @@ async function importPlantings(
         spacingRaw ? `Source spacing/cell value: ${spacingRaw}` : null,
         parentPlantCount,
         bedLengthUsedM,
+        daysToHarvest,
         notes,
         plannedSowDate,
         plannedTransplantDate,
@@ -1154,11 +1380,13 @@ export async function importSpreadsheetRowsForFarm(client: DbClient, rows: DemoR
   await clearImportedData(client, farmId);
   const { blockIds, zoneIds, bedIds, bedBoundaries } = await loadExistingDemoMap(client, farmId);
   const taskFlowTemplateId = await createDefaultTaskFlow(client, farmId);
+  const importedSeedItems = await importSeedCatalogRowsForFarm(client, rows, farmId);
   const plantings = await importPlantings(client, rows, farmId, taskFlowTemplateId, bedIds);
   const fertilityEvents = await importFertilityEvents(client, rows, farmId, blockIds, zoneIds, bedIds, bedBoundaries);
 
   return {
     parsedRows: rows.length,
+    importedSeedItems,
     importedPlantings: plantings.imported,
     importedFertilityEvents: fertilityEvents
   };

@@ -18,9 +18,7 @@ coverage
 # Large generated map cache
 apps/api/offline-imagery-cache
 
-# Local spreadsheet plans may contain real farm details. Keep examples/templates
-# tracked separately from local working data.
-demo data/*.xlsx
-demo data/*.ods
+# Local spreadsheet plans may contain real farm details.
+demo data/
 planning.txt
 PROJECT_HANDOFF_PROMPT.txt

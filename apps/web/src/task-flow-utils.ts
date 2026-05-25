@@ -1,4 +1,5 @@
 import { taskIconColor } from "./task-display";
+import { tractorModelForTask } from "./tractor-icons";
 
 export type FlowNodeDraft = {
   nodeKey: string;
@@ -8,6 +9,8 @@ export type FlowNodeDraft = {
   offsetDays: number;
   iconColor: string;
   iconSecondaryColor: string;
+  tractorModel: string | null;
+  tractorProfileId: number | null;
   x: number;
   y: number;
   notes: string;
@@ -67,6 +70,8 @@ export function newTaskFlowNode(index: number) {
     offsetDays: 0,
     iconColor: taskIconColor("bed_prep"),
     iconSecondaryColor: "#f4c430",
+    tractorModel: tractorModelForTask("bed_prep"),
+    tractorProfileId: null,
     x: Math.min(0.14 + column * 0.28, 0.9),
     y: Math.min(0.2 + row * 0.28, 0.86),
     notes: ""

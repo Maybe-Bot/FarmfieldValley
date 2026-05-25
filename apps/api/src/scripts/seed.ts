@@ -686,6 +686,34 @@ async function run() {
       [tomato.rows[0].id]
     );
 
+    await client.query(
+      `
+        insert into seed_items (
+          farm_id, crop_id, variety_id, family, crop_type, variety_name,
+          supplier, catalog_number, days_to_maturity, notes
+        )
+        values
+          ($1, $2, $3, 'Asteraceae', 'Lettuce', 'Salanova Green', 'Demo catalog', 'LET-SAL-GRN', 55, 'Demo seed catalog record.'),
+          ($1, $4, $5, 'Brassica', 'Cabbage', 'Capture', 'Demo catalog', 'CAB-CAP', 80, 'Demo seed catalog record.'),
+          ($1, $6, $7, 'Apiaceae', 'Carrot', 'Bolero', 'Demo catalog', 'CAR-BOL', 75, 'Demo seed catalog record.'),
+          ($1, $8, $9, 'Brassica', 'Kale', 'Lacinato', 'Demo catalog', 'KAL-LAC', 62, 'Demo seed catalog record.'),
+          ($1, $10, $11, 'Solanaceae', 'Tomato', 'Sungold', 'Demo catalog', 'TOM-SUN', 57, 'Demo seed catalog record.')
+      `,
+      [
+        farmId,
+        lettuce.rows[0].id,
+        salanova.rows[0].id,
+        cabbage.rows[0].id,
+        storageCabbage.rows[0].id,
+        carrot.rows[0].id,
+        nantes.rows[0].id,
+        kale.rows[0].id,
+        lacinato.rows[0].id,
+        tomato.rows[0].id,
+        sungold.rows[0].id
+      ]
+    );
+
     const brassicaFlowId = await insertTaskFlowTemplate(client, {
       farmId,
       cropId: cabbage.rows[0].id,

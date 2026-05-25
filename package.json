@@ -18,6 +18,7 @@
     "db:seed": "npm --workspace apps/api run db:seed",
     "admin:create": "npm --workspace apps/api run admin:create --",
     "db:import-demo": "npm --workspace apps/api run db:import-demo",
+    "db:import-seeds": "npm --workspace apps/api run db:import-seeds --",
     "map:cache": "npm --workspace apps/api run map:cache"
   },
   "devDependencies": {

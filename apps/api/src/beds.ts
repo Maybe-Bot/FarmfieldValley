@@ -46,6 +46,8 @@ export type LegacyBedLayoutRow = {
   bedLengthM: number;
 };
 
+const FIRST_BED_CLIP_NUDGE_M = 0.15;
+
 export function projectWgs84To3857(lat: number, lng: number): ProjectedPoint {
   const x = (lng * Math.PI * 6378137) / 180;
   const latRadians = (lat * Math.PI) / 180;
@@ -102,6 +104,59 @@ export function resolveSide(points: ProjectedPoint[], invertSide: boolean) {
   }
 
   return preferred === "left" ? "right" : "left";
+}
+
+function pointToLineDistance(point: ProjectedPoint, start: ProjectedPoint, end: ProjectedPoint) {
+  const dx = end.x - start.x;
+  const dy = end.y - start.y;
+  const length = Math.hypot(dx, dy);
+  if (length === 0) {
+    return Math.hypot(point.x - start.x, point.y - start.y);
+  }
+
+  return Math.abs(dy * point.x - dx * point.y + end.x * start.y - end.y * start.x) / length;
+}
+
+export function simplifyNearlyStraightLine(points: ProjectedPoint[]) {
+  if (points.length <= 2) {
+    return points;
+  }
+
+  const start = points[0];
+  const end = points[points.length - 1];
+  const length = Math.hypot(end.x - start.x, end.y - start.y);
+  if (length <= 0) {
+    return points;
+  }
+
+  const maxDeviation = Math.max(...points.slice(1, -1).map((point) => pointToLineDistance(point, start, end)));
+  return maxDeviation <= Math.max(3, length * 0.06) ? [start, end] : points;
+}
+
+export function straightLineFromGuide(points: ProjectedPoint[]) {
+  if (points.length <= 2) {
+    return points;
+  }
+
+  return [points[0], points[points.length - 1]];
+}
+
+export function resolveBedEdgeOffsets(options: {
+  edgeOffsetM: number;
+  layoutIndex: number;
+  bedWidthM: number;
+  pathSpacingM: number;
+  sideSign: 1 | -1;
+}) {
+  const boundaryClipNudgeM =
+    options.edgeOffsetM === 0 && options.layoutIndex === 0
+      ? Math.min(FIRST_BED_CLIP_NUDGE_M, Math.max(0, options.bedWidthM * 0.04))
+      : 0;
+  const unsignedOffset = options.edgeOffsetM + options.layoutIndex * (options.bedWidthM + options.pathSpacingM);
+
+  return {
+    clipOffsetM: (unsignedOffset + boundaryClipNudgeM) * options.sideSign
+  };
 }
 
 export function validateBedLine(lineMode: BedLineMode, linePoints: ProjectedPoint[]) {

@@ -23,8 +23,7 @@ test("parsePlantingTemplateRows reads strict planting import rows", () => {
         "18",
         "24",
         "2",
-        "y",
-        "plastic",
+        "plastic mulch",
         "East Field",
         "B1",
         "Bed 4",
@@ -36,7 +35,6 @@ test("parsePlantingTemplateRows reads strict planting import rows", () => {
   assert.equal(rows.length, 1);
   assert.equal(rows[0].crop, "Pepper");
   assert.equal(rows[0].plantCount, 288);
-  assert.equal(rows[0].deadAtFrost, true);
   assert.equal(rows[0].bedCover, "plastic");
   assert.equal(rows[0].fieldSpacingInRow, 18);
 });
@@ -69,7 +67,6 @@ test("parsePlantingTemplateRows allows blank transplant fields for direct seed",
         "2",
         "12",
         "3",
-        "n",
         "bare",
         "East Field",
         "B2",
@@ -107,7 +104,6 @@ test("parsePlantingTemplateRows rejects unsupported bed cover values", () => {
           "10",
           "12",
           "4",
-          "n",
           "mulch",
           "East Field",
           "B2",
@@ -116,7 +112,7 @@ test("parsePlantingTemplateRows rejects unsupported bed cover values", () => {
         ]
       }
     ]),
-    /Bed cover \(plastic\/bare\) must be plastic or bare/
+    /Bed cover \(plastic mulch\/bare\) must be plastic mulch or bare/
   );
 });
 
@@ -128,7 +124,6 @@ test("parsePlantingTemplateRows flags rows that need manual completion", () => {
       rowIndex: 2,
       cells: [
         "Johnny's",
-        "",
         "",
         "",
         "",
@@ -187,7 +182,6 @@ test("parsePlantingTemplateRows allows bed length for direct-seeded crops", () =
         "2",
         "12",
         "3",
-        "n",
         "bare",
         "East Field",
         "B2",

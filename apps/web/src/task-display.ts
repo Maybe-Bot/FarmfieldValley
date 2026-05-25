@@ -38,15 +38,6 @@ export function formatTaskAnchorLabel(anchor: string) {
   return sentenceCase(anchor);
 }
 
-export function taskIconLetter(taskType: string) {
-  if (taskType === "cultivate" || taskType === "weed" || taskType === "mow") return "T";
-  if (taskType === "transplant") return "P";
-  if (taskType === "harvest") return "H";
-  if (taskType === "bed_prep") return "B";
-  if (taskType === "seed_in_tray" || taskType === "direct_seed") return "S";
-  return "!";
-}
-
 export function taskIconColor(taskType: string) {
   if (taskType === "cultivate" || taskType === "weed" || taskType === "mow") return "#d98c2b";
   if (taskType === "transplant") return "#4f9b58";

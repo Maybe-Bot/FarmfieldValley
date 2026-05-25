@@ -120,30 +120,34 @@ The app has a strict crop-plan uploader in the Planning area. It accepts `.xlsx`
 `.ods`, or `.csv` files whose first row exactly matches this header:
 
 ```csv
-Seed supplier,Crop,Variety,Catalog number,Start date,Plant count,Bed length (ft),Transplant date,Tray count,Cells per tray,Days to harvest,Field spacing in row,Row spacing,Rows per bed,Dead at frost (y/n),Bed cover (plastic/bare),Field,Block,Bed,Notes
+Seed supplier,Crop,Variety,Catalog number,Start date,Plant count,Bed length (ft),Transplant date,Tray count,Cells per tray,Days to harvest,Field spacing in row,Row spacing,Rows per bed,Bed cover (plastic mulch/bare),Field,Block,Bed,Notes
 ```
 
 Dates must use `YYYY-MM-DD`. Spacing numbers are inches. Leave `Transplant date`,
 `Tray count`, and `Cells per tray` blank for direct-seeded crops. `Bed cover
-(plastic/bare)` may be blank, `plastic`, or `bare`. `Field` and `Block` must
-match existing map names; `Bed` may be blank if the exact bed is not assigned
-yet. Each upload replaces the previous planting-spreadsheet import for that
-farm, but regular manually created plantings are left alone.
+(plastic mulch/bare)` may be blank, `plastic mulch`, `plastic`, or `bare`.
+`Field` and `Block` must match existing map names; `Bed` may be blank if the
+exact bed is not assigned yet. Uploads add rows to the current crop plan by
+default. The upload card has an explicit checkbox for replacing earlier
+spreadsheet-imported rows from the same farm when that is intentional.
 
 Rows with missing essentials such as Crop, Start date, Plant count or Bed length,
 Field, or Block are still imported. The crop plan shows a red review marker for
 major problems and a yellow marker for optional missing details; their notes list
 what must be filled in manually.
 
-## Spreadsheet demo import
+## Private Spreadsheet Import
 
-To load the local `demo data` spreadsheets into the farm account `username`, run:
+The repository does not include the local `demo data` folder because farm
+spreadsheets can contain private details. If you have that ignored folder on
+your own machine and want to load those spreadsheets into the farm account
+`username`, run:
 
 ```bash
 npm run db:import-demo
 ```
 
-The importer reads the `.xlsx` files in `demo data`, imports only B1-3 and H2-6 plantings/events, and treats shorthand like `B1/2`, `B1-3`, `H45`, and `H4-6` as multiple blocks. It uses the existing Field/Block geometry in that account and does not create replacement Fields or Blocks. Before each import it saves a field/block/zone/bed snapshot in the `demo_import_map_backups` table, then replaces only earlier spreadsheet-imported plantings/events/task-flow data.
+The importer reads `.xlsx` and `.ods` files in `demo data`, imports only B1-3 and H2-6 plantings/events, and treats shorthand like `B1/2`, `B1-3`, `H45`, and `H4-6` as multiple blocks. It uses the existing Field/Block geometry in that account and does not create replacement Fields or Blocks. Before each import it saves a field/block/zone/bed snapshot in the `demo_import_map_backups` table, then replaces only earlier spreadsheet-imported plantings/events/task-flow data.
 
 ## Demo credentials
 

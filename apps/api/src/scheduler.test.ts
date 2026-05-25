@@ -56,9 +56,9 @@ function makeSchedulerClient(options?: {
         if (compactSql.includes("from task_flow_nodes")) {
           return {
             rows: [
-              { id: 1, node_key: "seed", task_type: "seed_in_tray", label: "Seed trays", anchor: "actual_tray_seeding", offset_days: 0, icon_color: "#111111", icon_secondary_color: "#aaaaaa" },
-              { id: 2, node_key: "transplant", task_type: "transplant", label: "Plant in field", anchor: "actual_transplant", offset_days: 0, icon_color: "#222222", icon_secondary_color: "#bbbbbb" },
-              { id: 3, node_key: "cultivate", task_type: "cultivate", label: "Cultivate", anchor: "actual_transplant", offset_days: 7, icon_color: "#333333", icon_secondary_color: "#cccccc" }
+              { id: 1, node_key: "seed", task_type: "seed_in_tray", label: "Seed trays", anchor: "actual_tray_seeding", offset_days: 0, icon_color: "#111111", icon_secondary_color: "#aaaaaa", tractor_model: null, tractor_profile_id: null },
+              { id: 2, node_key: "transplant", task_type: "transplant", label: "Plant in field", anchor: "actual_transplant", offset_days: 0, icon_color: "#222222", icon_secondary_color: "#bbbbbb", tractor_model: null, tractor_profile_id: null },
+              { id: 3, node_key: "cultivate", task_type: "cultivate", label: "Cultivate", anchor: "actual_transplant", offset_days: 7, icon_color: "#333333", icon_secondary_color: "#cccccc", tractor_model: "canopy", tractor_profile_id: 9 }
             ]
           };
         }
@@ -94,9 +94,9 @@ test("recalculatePlantingTasks shifts task dates from actual milestones and pres
 
   const taskInserts = calls.filter((call) => call.sql.includes("insert into tasks"));
   assert.equal(taskInserts.length, 3);
-  assert.equal(taskInserts[0].params?.[10], "2026-03-08");
-  assert.equal(taskInserts[1].params?.[10], "2026-04-10");
-  assert.equal(taskInserts[2].params?.[10], "2026-04-17");
+  assert.equal(taskInserts[0].params?.[12], "2026-03-08");
+  assert.equal(taskInserts[1].params?.[12], "2026-04-10");
+  assert.equal(taskInserts[2].params?.[12], "2026-04-17");
 
   const dependencyUpdates = calls.filter((call) => call.sql.includes("set depends_on_task_ids"));
   assert.deepEqual(dependencyUpdates[0].params, [101, []]);
@@ -123,7 +123,7 @@ test("recalculatePlantingTasks updates existing generated tasks instead of repla
   assert.equal(taskInserts.length, 1);
   assert.equal(taskInserts[0].params?.[3], 3);
 
-  const taskUpdates = calls.filter((call) => call.sql.includes("update tasks") && call.sql.includes("scheduled_date = $10"));
+  const taskUpdates = calls.filter((call) => call.sql.includes("update tasks") && call.sql.includes("scheduled_date = $12"));
   assert.deepEqual(taskUpdates.map((call) => call.params?.[0]), [501, 502]);
 
   const dependencyUpdates = calls.filter((call) => call.sql.includes("set depends_on_task_ids"));

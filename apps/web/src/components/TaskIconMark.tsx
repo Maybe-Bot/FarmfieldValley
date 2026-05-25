@@ -1,41 +1,67 @@
 import { CSSProperties } from "react";
-import { taskIconLetter } from "../task-display";
-import { defaultTractorAccentColor, isTractorTask, tractorModelForTask, tractorSpriteStyle } from "../tractor-icons";
+import { defaultTractorAccentColor, isTractorModel, isTractorTask, tractorModelForTask, tractorSpriteStyle } from "../tractor-icons";
+import { defaultVehicleAccentColor, isVehicleModel, vehicleModelForTask, vehicleSpriteStyle } from "../vehicle-icons";
 
-// Shared small task icon for lists and flow cards. Tractor tasks use the
-// recolorable sprite; non-tractor tasks keep the compact letter badge.
+// Shared small task icon for lists and flow cards. Tractor tasks use saved
+// tractor sprites; the other task types use vehicle sprites from Trucks.png.
 export function TaskIconMark({
   taskType,
   color,
   secondaryColor,
-  mini = false
+  tractorModel,
+  mini = false,
+  scale,
+  spinning = false
 }: {
   taskType: string;
   color: string;
   secondaryColor?: string | null;
+  tractorModel?: string | null;
   mini?: boolean;
+  scale?: number;
+  spinning?: boolean;
 }) {
-  if (isTractorTask(taskType)) {
+  const model = tractorModel || (isTractorTask(taskType) ? tractorModelForTask(taskType) : vehicleModelForTask(taskType));
+  const effectiveScale = scale ?? (mini ? 0.32 : 0.42);
+  const iconBoxSize = `${Math.ceil(128 * effectiveScale)}px`;
+  const iconBoxStyle = { "--icon-box-size": iconBoxSize } as CSSProperties;
+  if (isTractorModel(model)) {
     const sprite = tractorSpriteStyle(color, secondaryColor || defaultTractorAccentColor(), {
-      scale: mini ? 0.32 : 0.42,
-      model: tractorModelForTask(taskType)
+      scale: effectiveScale,
+      model
     });
+    const tractorStyle = {
+      ...sprite.styleVars,
+      "--tractor-runway-length": iconBoxSize
+    } as CSSProperties;
     return (
-      <span className={mini ? "task-tractor-icon-mini" : "task-tractor-icon-mini"}>
-        <span className="tractor-runway">
-          <span className={sprite.classes} style={sprite.styleVars as CSSProperties}>
+      <span className={`task-tractor-icon-mini${spinning ? " garage-spin" : ""}`} style={iconBoxStyle}>
+        <span className="tractor-runway" style={tractorStyle}>
+          <span className={sprite.classes} style={tractorStyle}>
+            <span className="tractor-layer tractor-backing"></span>
+            <span className="tractor-layer tractor-inner-fill"></span>
+            <span className="tractor-layer tractor-base"></span>
             <span className="tractor-layer tractor-body"></span>
             <span className="tractor-layer tractor-accent"></span>
-            <span className="tractor-layer tractor-base"></span>
           </span>
         </span>
       </span>
     );
   }
 
+  const sprite = vehicleSpriteStyle(color, secondaryColor || defaultVehicleAccentColor(), {
+    scale: effectiveScale,
+    model: isVehicleModel(model) ? model : vehicleModelForTask(taskType)
+  });
   return (
-    <span className={`task-map-icon${mini ? " mini" : ""}`} style={{ "--task-icon-color": color } as CSSProperties}>
-      <span>{taskIconLetter(taskType)}</span>
+    <span className={`task-vehicle-icon-mini${spinning ? " garage-spin" : ""}`} style={iconBoxStyle}>
+      <span className="task-vehicle-icon" style={iconBoxStyle}>
+        <span className={sprite.classes} style={sprite.styleVars as CSSProperties}>
+          <span className="vehicle-layer vehicle-base"></span>
+          <span className="vehicle-layer vehicle-body"></span>
+          <span className="vehicle-layer vehicle-accent"></span>
+        </span>
+      </span>
     </span>
   );
 }
