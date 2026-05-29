@@ -82,6 +82,73 @@ test("parsePlantingTemplateRows allows blank transplant fields for direct seed",
   assert.equal(rows[0].bed, "");
 });
 
+test("parsePlantingTemplateRows treats zero plant count as missing completion data", () => {
+  const rows = parsePlantingTemplateRows([
+    { sheet: "Plantings", rowIndex: 1, cells: [...plantingImportHeaders] },
+    {
+      sheet: "Plantings",
+      rowIndex: 28,
+      cells: [
+        "Johnny's",
+        "Lettuce",
+        "Rex",
+        "555",
+        "2026-04-01",
+        "0",
+        "",
+        "2026-05-01",
+        "2",
+        "128",
+        "45",
+        "10",
+        "12",
+        "4",
+        "bare",
+        "East Field",
+        "B2",
+        "",
+        ""
+      ]
+    }
+  ]);
+
+  assert.equal(rows[0].plantCount, null);
+  assert.ok(rows[0].completionIssues.includes("Plant count or bed length is missing"));
+});
+
+test("parsePlantingTemplateRows rounds decimal plant count", () => {
+  const rows = parsePlantingTemplateRows([
+    { sheet: "Plantings", rowIndex: 1, cells: [...plantingImportHeaders] },
+    {
+      sheet: "Plantings",
+      rowIndex: 2,
+      cells: [
+        "Johnny's",
+        "Lettuce",
+        "Rex",
+        "555",
+        "2026-04-01",
+        "127.6",
+        "",
+        "2026-05-01",
+        "2",
+        "128",
+        "45",
+        "10",
+        "12",
+        "4",
+        "bare",
+        "East Field",
+        "B2",
+        "",
+        ""
+      ]
+    }
+  ]);
+
+  assert.equal(rows[0].plantCount, 128);
+});
+
 test("parsePlantingTemplateRows rejects unsupported bed cover values", () => {
   assert.throws(
     () => parsePlantingTemplateRows([

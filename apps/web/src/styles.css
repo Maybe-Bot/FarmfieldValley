@@ -1,5 +1,5 @@
 /*
- * Main stylesheet for the Farmfield Valley frontend.
+ * Main stylesheet for the Loam Ledger frontend.
  *
  * The app uses CSS variables for colors so light/dark themes can swap values
  * without duplicating every component style. Layout styles, map controls, forms,
@@ -296,7 +296,7 @@ textarea {
 }
 
 .map-card {
-  aspect-ratio: 1 / 1;
+  aspect-ratio: 5 / 4;
   min-height: 0;
   padding: 0;
   border-radius: 0;
@@ -2274,7 +2274,7 @@ textarea {
   }
 
   .map-card {
-    aspect-ratio: 1 / 1;
+    aspect-ratio: 5 / 4;
   }
 
 }

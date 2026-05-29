@@ -14,8 +14,8 @@ import { importSeedCatalogRowsForFarm, parseSpreadsheetFiles } from "./import-de
 type FarmRow = { id: number; name: string };
 
 const projectRoot = path.resolve(__dirname, "../../../..");
-const defaultDemoDataDir = process.env.FARMFIELD_VALLEY_DEMO_DATA_DIR
-  ? path.resolve(process.env.FARMFIELD_VALLEY_DEMO_DATA_DIR)
+const defaultDemoDataDir = process.env.LOAM_LEDGER_DEMO_DATA_DIR
+  ? path.resolve(process.env.LOAM_LEDGER_DEMO_DATA_DIR)
   : path.join(projectRoot, "demo data");
 
 function collectSeedCatalogFiles() {

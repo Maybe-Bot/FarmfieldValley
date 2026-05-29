@@ -1,14 +1,14 @@
 services:
   postgres:
     image: postgis/postgis:16-3.4
-    container_name: farmfield-valley-postgres
+    container_name: loam-ledger-postgres
     restart: unless-stopped
     ports:
       - "5432:5432"
     environment:
-      POSTGRES_DB: farmfield_valley
-      POSTGRES_USER: farmfield_valley
-      POSTGRES_PASSWORD: farmfield_valley
+      POSTGRES_DB: loam_ledger
+      POSTGRES_USER: loam_ledger
+      POSTGRES_PASSWORD: loam_ledger
     volumes:
       - postgres_data:/var/lib/postgresql/data
 

@@ -36,8 +36,8 @@ const demoFarmName = "B/H Demo Farm";
 const allowedLocations = new Set<DemoLocation>(["B1", "B2", "B3", "H2", "H3", "H4", "H5", "H6"]);
 const feetToMeters = 0.3048;
 const projectRoot = path.resolve(__dirname, "../../../..");
-const demoDataDir = process.env.FARMFIELD_VALLEY_DEMO_DATA_DIR
-  ? path.resolve(process.env.FARMFIELD_VALLEY_DEMO_DATA_DIR)
+const demoDataDir = process.env.LOAM_LEDGER_DEMO_DATA_DIR
+  ? path.resolve(process.env.LOAM_LEDGER_DEMO_DATA_DIR)
   : path.join(projectRoot, "demo data");
 const defaultBedLengthM = 340 * feetToMeters;
 const demoImportYear = 2026;
@@ -833,7 +833,7 @@ async function prepareDemoAccount(client: DbClient) {
           updated_at = now()
       returning id
     `,
-    [`${demoUsername}@farmfield-valley.local`, demoUsername, hashPassword(demoPassword)]
+    [`${demoUsername}@loamledger.local`, demoUsername, hashPassword(demoPassword)]
   );
   const userId = user.rows[0].id;
 

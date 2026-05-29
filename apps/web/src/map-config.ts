@@ -8,7 +8,7 @@ export const basemaps = {
   worldLight: {
     key: "worldLight",
     name: "World Light",
-    url: "https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png",
+    url: "https://tile.openstreetmap.org/{z}/{x}/{y}.png",
     attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
   },
   usAerial: {
@@ -16,6 +16,6 @@ export const basemaps = {
     name: "US Aerial Imagery",
     url: "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}",
     attribution:
-      "Tiles &copy; Esri, Maxar, Earthstar Geographics, USDA FSA, USGS, Aerogrid, IGN, and the GIS User Community"
+      'Powered by <a href="https://www.esri.com">Esri</a> | Sources: Esri, Maxar, Earthstar Geographics, USDA FSA, USGS, Aerogrid, IGN, and the GIS User Community'
   }
 };

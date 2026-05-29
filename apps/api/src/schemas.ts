@@ -121,7 +121,14 @@ export const taskRecordSchema = z.object({
   placementBedLengthUsedM: z.number().positive().nullable().optional(),
   placementLocationDetail: z.string().nullable().optional(),
   placementCoordinates: z.array(latLngSchema).min(3).max(50).nullable().optional(),
-  placementNotes: z.string().nullable().optional()
+  placementNotes: z.string().nullable().optional(),
+  bedMakingBedCount: z.number().int().positive().max(100).nullable().optional(),
+  bedMakingMode: z.enum(["replace_existing", "add_after_existing"]).nullable().optional(),
+  bedMakingBlockFull: z.boolean().nullable().optional(),
+  bedMakingRows: z.array(z.object({
+    presetId: z.number().int().positive(),
+    count: z.number().int().positive().max(100)
+  })).max(20).optional()
 }).refine((value) => {
   if (value.placementBedId == null) {
     return true;
@@ -130,6 +137,14 @@ export const taskRecordSchema = z.object({
   return value.placementPlantCount != null || value.placementBedLengthUsedM != null;
 }, {
   message: "Placement needs plant count or bed length used"
+}).refine((value) => {
+  if (value.bedMakingMode == null && value.bedMakingBlockFull == null && value.bedMakingRows == null) {
+    return true;
+  }
+
+  return value.bedMakingBedCount != null || (value.bedMakingRows != null && value.bedMakingRows.length > 0);
+}, {
+  message: "Bed making needs the number of beds made"
 });
 
 export const blockPlacementPlanRowSchema = z.object({

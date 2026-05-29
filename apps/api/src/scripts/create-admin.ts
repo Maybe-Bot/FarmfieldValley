@@ -51,7 +51,7 @@ async function run() {
     const farmResult = await client.query<{ id: number }>(
       `
         insert into farms (name, notes, maps_private)
-        values ('Farmfield Valley Administration', 'Internal admin account farm', true)
+        values ('Loam Ledger Administration', 'Internal admin account farm', true)
         returning id
       `
     );

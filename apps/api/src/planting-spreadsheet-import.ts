@@ -276,11 +276,18 @@ function parseOptionalInteger(value: string, rowNumber: number, columnName: stri
   return parseRequiredInteger(value, rowNumber, columnName);
 }
 
-function parseOptionalPositiveWholeNumber(value: string, rowNumber: number, columnName: string) {
+function parseOptionalPlantCount(value: string, rowNumber: number) {
   if (!value.trim()) {
     return null;
   }
-  return parseRequiredInteger(value, rowNumber, columnName);
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric) || numeric < 0) {
+    throw new Error(`Row ${rowNumber}: Plant count must be zero or a positive number`);
+  }
+  if (numeric === 0) {
+    return null;
+  }
+  return Math.max(1, Math.round(numeric));
 }
 
 function parseOptionalNumber(value: string, rowNumber: number, columnName: string) {
@@ -377,7 +384,7 @@ export function parsePlantingTemplateRows(rows: SpreadsheetRow[]) {
     ] = plantingImportHeaders.map((_header, index) => cleanCell(cells[index]));
 
     const startDate = parseIsoDate(startDateRaw, row.rowIndex, "Start date");
-    const plantCount = parseOptionalPositiveWholeNumber(plantCountRaw, row.rowIndex, "Plant count");
+    const plantCount = parseOptionalPlantCount(plantCountRaw, row.rowIndex);
     const bedLengthFeet = parseOptionalNumber(bedLengthFeetRaw, row.rowIndex, "Bed length (ft)");
     const fieldSpacingInRow = parseOptionalNumber(fieldSpacingRaw, row.rowIndex, "Field spacing in row");
     const rowSpacing = parseOptionalNumber(rowSpacingRaw, row.rowIndex, "Row spacing");
@@ -596,32 +603,13 @@ async function upsertSeedItem(
   return result.rows[0].id;
 }
 
-async function clearPreviousPlantingSpreadsheetImport(client: DbClient, farmId: number) {
-  await client.query(
-    `delete from farm_events where farm_id = $1 and metadata->>'source' = 'planting_spreadsheet_import'`,
-    [farmId]
-  );
-  await client.query(
-    `
-      delete from plantings
-      where farm_id = $1
-        and notes like 'Imported from planting spreadsheet:%'
-    `,
-    [farmId]
-  );
-}
-
 export async function importPlantingSpreadsheetRowsForFarm(
   client: DbClient,
   rows: SpreadsheetRow[],
-  farmId: number,
-  options: { replaceExistingImport?: boolean } = {}
+  farmId: number
 ) {
   const parsedRows = parsePlantingTemplateRows(rows);
   const bedLookup = await loadBedLookup(client, farmId);
-  if (options.replaceExistingImport) {
-    await clearPreviousPlantingSpreadsheetImport(client, farmId);
-  }
 
   let importedPlantings = 0;
   let skippedRows = 0;

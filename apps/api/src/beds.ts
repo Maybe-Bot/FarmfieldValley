@@ -47,12 +47,23 @@ export type LegacyBedLayoutRow = {
 };
 
 const FIRST_BED_CLIP_NUDGE_M = 0.15;
+const MAX_WEB_MERCATOR_LATITUDE = 85.05112878;
 
 export function projectWgs84To3857(lat: number, lng: number): ProjectedPoint {
   const x = (lng * Math.PI * 6378137) / 180;
   const latRadians = (lat * Math.PI) / 180;
   const y = 6378137 * Math.log(Math.tan(Math.PI / 4 + latRadians / 2));
   return { x, y };
+}
+
+export function webMercatorScaleFactorForLatitude(lat: number) {
+  const clampedLat = Math.max(-MAX_WEB_MERCATOR_LATITUDE, Math.min(MAX_WEB_MERCATOR_LATITUDE, lat));
+  const cosine = Math.cos((clampedLat * Math.PI) / 180);
+  return 1 / Math.max(0.01, Math.abs(cosine));
+}
+
+export function webMercatorMetersForGroundMeters(meters: number, referenceLat: number) {
+  return meters * webMercatorScaleFactorForLatitude(referenceLat);
 }
 
 // PostGIS functions that offset/clip generated beds run in Web Mercator meters.

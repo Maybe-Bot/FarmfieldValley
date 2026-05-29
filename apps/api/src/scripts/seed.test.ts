@@ -11,19 +11,19 @@ function makeCountClient(count: number) {
 }
 
 test("assertDestructiveSeedAllowed allows an empty database without confirmation", async () => {
-  const previous = process.env.FARMFIELD_VALLEY_CONFIRM_DESTRUCTIVE_SEED;
-  delete process.env.FARMFIELD_VALLEY_CONFIRM_DESTRUCTIVE_SEED;
+  const previous = process.env.LOAM_LEDGER_CONFIRM_DESTRUCTIVE_SEED;
+  delete process.env.LOAM_LEDGER_CONFIRM_DESTRUCTIVE_SEED;
 
   try {
     await assertDestructiveSeedAllowed(makeCountClient(0) as never);
   } finally {
-    process.env.FARMFIELD_VALLEY_CONFIRM_DESTRUCTIVE_SEED = previous;
+    process.env.LOAM_LEDGER_CONFIRM_DESTRUCTIVE_SEED = previous;
   }
 });
 
 test("assertDestructiveSeedAllowed blocks existing data without explicit confirmation", async () => {
-  const previous = process.env.FARMFIELD_VALLEY_CONFIRM_DESTRUCTIVE_SEED;
-  delete process.env.FARMFIELD_VALLEY_CONFIRM_DESTRUCTIVE_SEED;
+  const previous = process.env.LOAM_LEDGER_CONFIRM_DESTRUCTIVE_SEED;
+  delete process.env.LOAM_LEDGER_CONFIRM_DESTRUCTIVE_SEED;
 
   try {
     await assert.rejects(
@@ -31,17 +31,17 @@ test("assertDestructiveSeedAllowed blocks existing data without explicit confirm
       /Refusing to run db:seed/
     );
   } finally {
-    process.env.FARMFIELD_VALLEY_CONFIRM_DESTRUCTIVE_SEED = previous;
+    process.env.LOAM_LEDGER_CONFIRM_DESTRUCTIVE_SEED = previous;
   }
 });
 
 test("assertDestructiveSeedAllowed permits existing data with explicit destructive confirmation", async () => {
-  const previous = process.env.FARMFIELD_VALLEY_CONFIRM_DESTRUCTIVE_SEED;
-  process.env.FARMFIELD_VALLEY_CONFIRM_DESTRUCTIVE_SEED = "yes";
+  const previous = process.env.LOAM_LEDGER_CONFIRM_DESTRUCTIVE_SEED;
+  process.env.LOAM_LEDGER_CONFIRM_DESTRUCTIVE_SEED = "yes";
 
   try {
     await assertDestructiveSeedAllowed(makeCountClient(3) as never);
   } finally {
-    process.env.FARMFIELD_VALLEY_CONFIRM_DESTRUCTIVE_SEED = previous;
+    process.env.LOAM_LEDGER_CONFIRM_DESTRUCTIVE_SEED = previous;
   }
 });

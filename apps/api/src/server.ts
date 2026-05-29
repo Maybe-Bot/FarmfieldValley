@@ -1,5 +1,5 @@
 /**
- * Main API server for the Farmfield Valley prototype.
+ * Main API server for the Loam Ledger prototype.
  *
  * This file wires Express routes to PostgreSQL/PostGIS. In broad terms it:
  * - validates incoming JSON with zod schemas,
@@ -26,7 +26,8 @@ import {
   resolveSide,
   simplifyNearlyStraightLine,
   straightLineFromGuide,
-  validateBedLine
+  validateBedLine,
+  webMercatorMetersForGroundMeters
 } from "./beds";
 import { pool } from "./db";
 import { config } from "./config";
@@ -588,6 +589,7 @@ async function insertGeneratedBeds(
     fillWholeBlock: boolean;
     harvestRoadEveryBeds?: number | null;
     harvestRoadWidthBeds: number;
+    pathSpacingOverrideM?: number | null;
   }
 ) {
   const presetResult = await client.query<{ bed_width_m: string; path_spacing_m: string; name: string; is_road: boolean }>(
@@ -614,7 +616,16 @@ async function insertGeneratedBeds(
   const fullLineWkt = lineMode === "straight" ? lineStringWkt3857(extendStraightLine(linePoints)) : null;
   const bedWidthM = Number(presetResult.rows[0].bed_width_m);
   const isRoadPreset = presetResult.rows[0].is_road;
-  const pathSpacingM = isRoadPreset ? 0 : Number(presetResult.rows[0].path_spacing_m);
+  const pathSpacingM = isRoadPreset
+    ? 0
+    : options.pathSpacingOverrideM != null
+      ? Math.max(0, options.pathSpacingOverrideM)
+      : Number(presetResult.rows[0].path_spacing_m);
+  const referenceLatitude =
+    options.lineCoordinates.reduce((sum, point) => sum + point.lat, 0) / options.lineCoordinates.length;
+  const bedWidthProjectedM = webMercatorMetersForGroundMeters(bedWidthM, referenceLatitude);
+  const pathSpacingProjectedM = webMercatorMetersForGroundMeters(pathSpacingM, referenceLatitude);
+  const edgeOffsetProjectedM = webMercatorMetersForGroundMeters(options.edgeOffsetM, referenceLatitude);
 
   const insertOneBed = async (side: "left" | "right", layoutBedIndex: number, sequenceIndex: number) => {
     const sideSign = side === "left" ? 1 : -1;
@@ -627,10 +638,10 @@ async function insertGeneratedBeds(
     // When building from a selected bed edge, edgeOffsetM carries the path width
     // so the next bed starts after the walkway instead of touching the old bed.
     const { clipOffsetM } = resolveBedEdgeOffsets({
-      edgeOffsetM: options.edgeOffsetM,
+      edgeOffsetM: edgeOffsetProjectedM,
       layoutIndex,
-      bedWidthM,
-      pathSpacingM,
+      bedWidthM: bedWidthProjectedM,
+      pathSpacingM: pathSpacingProjectedM,
       sideSign
     });
     const sql = lineMode === "straight" ? `
@@ -681,7 +692,7 @@ async function insertGeneratedBeds(
           clipped_bed.geom,
           ST_Envelope(clipped_bed.geom) as envelope,
           ST_Area(ST_Transform(clipped_bed.geom, 4326)::geography) as area_sqm,
-          ST_Length(trimmed_line.geom) as length_m,
+          ST_Length(ST_Transform(trimmed_line.geom, 4326)::geography) as length_m,
             GeometryType(trimmed_line.geom) = 'LINESTRING'
             and not ST_IsEmpty(clipped_bed.geom)
             and ST_Area(clipped_bed.geom) >= clipped_bed.raw_area * 0.15
@@ -788,7 +799,7 @@ async function insertGeneratedBeds(
           clipped_bed.geom,
           ST_Envelope(clipped_bed.geom) as envelope,
           ST_Area(ST_Transform(clipped_bed.geom, 4326)::geography) as area_sqm,
-          ST_Length(trimmed_line.geom) as length_m,
+          ST_Length(ST_Transform(trimmed_line.geom, 4326)::geography) as length_m,
             GeometryType(trimmed_line.geom) = 'LINESTRING'
             and not ST_IsEmpty(clipped_bed.geom)
             and ST_Area(clipped_bed.geom) >= clipped_bed.raw_area * 0.15
@@ -845,7 +856,7 @@ async function insertGeneratedBeds(
           lineWkt,
           fullLineWkt,
           clipOffsetM,
-          bedWidthM,
+          bedWidthProjectedM,
           sideOption,
           `${options.namePrefix}${options.startNumber + sequenceIndex}`,
           options.isPermanent,
@@ -860,7 +871,7 @@ async function insertGeneratedBeds(
           options.blockId,
           lineWkt,
           clipOffsetM,
-          bedWidthM,
+          bedWidthProjectedM,
           sideOption,
           `${options.namePrefix}${options.startNumber + sequenceIndex}`,
           options.isPermanent,
@@ -2849,7 +2860,7 @@ app.post("/api/auth/register", asyncHandler(async (req, res) => {
     const farmResult = await client.query<{ id: number; name: string }>(
       `
         insert into farms (name, notes, maps_private)
-        values ($1, 'Created from the Farmfield Valley landing page', true)
+        values ($1, 'Created from the Loam Ledger landing page', true)
         returning id, name
       `,
       [body.farmName.trim()]

@@ -1,6 +1,6 @@
 services:
   - type: web
-    name: farmfield-valley-api
+    name: loam-ledger-api
     runtime: node
     plan: free
     region: ohio
@@ -12,7 +12,7 @@ services:
         value: production
       - key: DATABASE_URL
         fromDatabase:
-          name: farmfield-valley-db
+          name: loam-ledger-db
           property: connectionString
       - key: CSRF_SECRET
         generateValue: true
@@ -24,7 +24,7 @@ services:
         sync: false
 
   - type: static
-    name: farmfield-valley-web
+    name: loam-ledger-web
     buildCommand: npm install && npm run build:web
     staticPublishPath: apps/web/dist
     routes:
@@ -36,7 +36,7 @@ services:
         sync: false
 
 databases:
-  - name: farmfield-valley-db
+  - name: loam-ledger-db
     plan: free
     region: ohio
     postgresMajorVersion: "17"

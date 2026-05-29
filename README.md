@@ -1,4 +1,4 @@
-# Farmfield Valley
+# Loam Ledger
 
 Local prototype for farm project management and annual crop planning.
 
@@ -80,7 +80,7 @@ The API runs on `http://localhost:4000`.
 
 The web app reads its backend URL from Vite's `VITE_API_BASE_URL`.
 
-For local development, this is optional because [api.ts](/home/name/Documents/Projects/Farmfield Valley/apps/web/src/api.ts) defaults to:
+For local development, this is optional because [api.ts](apps/web/src/api.ts) defaults to:
 
 ```env
 VITE_API_BASE_URL=http://localhost:4000
@@ -186,11 +186,12 @@ Planner accounts can create additional planner or worker logins for their farm f
 
 ## Notes
 
-- The Farm Map now uses a free-use aerial basemap and stores Field/Block polygon geometry in PostGIS using EPSG:4326.
+- The Farm Map uses third-party map basemaps with required attribution and stores Field/Block polygon geometry in PostGIS using EPSG:4326.
 - Basemap configuration is isolated in `apps/web/src/map-config.ts` so broader global imagery support can be swapped in later.
 - The code is intentionally structured so future topo and elevation layers can be added without rewriting the drawing workflow.
 - Beds are rectangle-based and can now be generated inside Blocks from reusable bed presets.
 - Offline map support uses a local tile cache served by the API from `apps/api/offline-imagery-cache`.
+- Third-party software, map, imagery, and project asset notes are tracked in `THIRD_PARTY_NOTICES.md`.
 
 ## If you are upgrading an earlier local copy
 
@@ -207,7 +208,7 @@ Do **not** run `npm run db:seed` on a database with real or beta-user data. The 
 If you intentionally want to wipe everything and reload the demo farms, run:
 
 ```bash
-FARMFIELD_VALLEY_CONFIRM_DESTRUCTIVE_SEED=yes npm run db:seed
+LOAM_LEDGER_CONFIRM_DESTRUCTIVE_SEED=yes npm run db:seed
 ```
 
 ## Offline map workflow
@@ -257,6 +258,8 @@ By default the cache uses:
 
 - USGS imagery for the lower-zoom context layer
 - Massachusetts 2023 orthophotos for the higher-zoom field-detail layer
+
+Retain the map source attribution when viewing or sharing cached imagery, and check provider terms before redistributing cached tiles outside this app.
 
 If your farm is outside Massachusetts, set `OFFLINE_IMAGERY_DETAIL_SOURCE_URL` to a different imagery service before rebuilding the cache.
 

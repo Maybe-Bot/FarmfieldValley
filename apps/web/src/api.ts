@@ -66,6 +66,36 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   return payload;
 }
 
+async function download(path: string) {
+  const response = await fetch(`${API_BASE}${path}`, {
+    credentials: "include"
+  });
+
+  if (!response.ok) {
+    const contentType = response.headers.get("content-type") ?? "";
+    let message = `Request failed: ${response.status}`;
+    if (contentType.includes("application/json")) {
+      const payload = await response.json();
+      if (typeof payload?.error === "string") {
+        message = payload.error;
+      }
+    } else {
+      const text = await response.text();
+      if (text) {
+        message = text;
+      }
+    }
+    throw new Error(message);
+  }
+
+  const disposition = response.headers.get("content-disposition") ?? "";
+  const filenameMatch = disposition.match(/filename="?([^"]+)"?/i);
+  return {
+    blob: await response.blob(),
+    filename: filenameMatch?.[1] ?? "loam-ledger-export.xlsx"
+  };
+}
+
 export const api = {
   getSession: () => request<SessionInfo>("/api/session"),
   login: (body: unknown) => request<SessionInfo>("/api/auth/login", { method: "POST", body: JSON.stringify(body) }),
@@ -82,6 +112,7 @@ export const api = {
   undoLastChange: () => request<{ ok: boolean; label: string }>("/api/undo", { method: "POST" }),
   redoLastChange: () => request<{ ok: boolean; label: string }>("/api/redo", { method: "POST" }),
   getDashboard: () => request<DashboardData>("/api/dashboard"),
+  exportSpreadsheet: () => download("/api/export/spreadsheet"),
   getOfflineImageryStatus: () => request<OfflineImageryStatus>("/api/offline-imagery/status"),
   createTaskFlow: (body: unknown) => request("/api/task-flows", { method: "POST", body: JSON.stringify(body) }),
   updateTaskFlow: (id: number, body: unknown) => request(`/api/task-flows/${id}`, { method: "PUT", body: JSON.stringify(body) }),

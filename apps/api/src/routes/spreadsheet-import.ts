@@ -11,6 +11,7 @@ import {
   parsePlantingSpreadsheetFiles,
   supportedPlantingSpreadsheetExtension
 } from "../planting-spreadsheet-import";
+import { buildFarmExportWorkbook } from "../spreadsheet-export";
 import { FarmRole } from "../types";
 
 type ConnectedClient = PoolClient;
@@ -29,11 +30,24 @@ type SpreadsheetImportRouteDeps = {
 
 const spreadsheetImportSchema = z.object({
   fileName: z.string().trim().min(1).max(240),
-  contentBase64: z.string().min(1),
-  replaceExistingImport: z.boolean().optional()
+  contentBase64: z.string().min(1)
 });
 
 export function registerSpreadsheetImportRoutes(app: express.Express, deps: SpreadsheetImportRouteDeps) {
+  app.get("/api/export/spreadsheet", deps.requireRole("planner"), deps.asyncHandler(async (req, res) => {
+    const auth = deps.currentAuth(req) as AuthContext;
+    const client = await pool.connect();
+    try {
+      const workbook = await buildFarmExportWorkbook(client, auth.farmId);
+      const date = new Date().toISOString().slice(0, 10);
+      res.setHeader("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
+      res.setHeader("Content-Disposition", `attachment; filename="loam-ledger-export-${date}.xlsx"`);
+      res.send(workbook);
+    } finally {
+      client.release();
+    }
+  }));
+
   // User-facing spreadsheet upload. This deliberately accepts only the simple
   // planting template shape and imports rows into the logged-in farm's existing blocks/beds.
   app.post("/api/import/spreadsheet", deps.requireRole("planner"), deps.asyncHandler(async (req, res) => {
@@ -51,7 +65,7 @@ export function registerSpreadsheetImportRoutes(app: express.Express, deps: Spre
       throw new Error("Spreadsheet upload is too large for this prototype");
     }
 
-    const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "farmfield-valley-spreadsheet-"));
+    const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "loam-ledger-spreadsheet-"));
     const tempFile = path.join(tempDir, `upload${extension}`);
     const client = await pool.connect();
 
@@ -64,9 +78,7 @@ export function registerSpreadsheetImportRoutes(app: express.Express, deps: Spre
 
       await client.query("begin");
       await deps.createUndoSnapshot(client, auth, "Import spreadsheet crop plan");
-      const result = await importPlantingSpreadsheetRowsForFarm(client, rows, auth.farmId, {
-        replaceExistingImport: body.replaceExistingImport ?? false
-      });
+      const result = await importPlantingSpreadsheetRowsForFarm(client, rows, auth.farmId);
       await deps.pruneUndoSnapshots(client, auth);
       await client.query("commit");
       res.status(201).json(result);

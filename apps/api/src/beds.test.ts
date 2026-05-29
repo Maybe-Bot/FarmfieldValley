@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { resolveBedEdgeOffsets, simplifyNearlyStraightLine, straightLineFromGuide } from "./beds";
+import { resolveBedEdgeOffsets, simplifyNearlyStraightLine, straightLineFromGuide, webMercatorMetersForGroundMeters } from "./beds";
 
 test("simplifyNearlyStraightLine collapses practical hand-drawn edges", () => {
   const points = [
@@ -68,4 +68,10 @@ test("resolveBedEdgeOffsets leaves later and selected-bed offsets unchanged", ()
     }),
     { clipOffsetM: 0.45 }
   );
+});
+
+test("webMercatorMetersForGroundMeters expands bed spacing away from the equator", () => {
+  assert.equal(webMercatorMetersForGroundMeters(1.22, 0), 1.22);
+  assert.ok(Math.abs(webMercatorMetersForGroundMeters(1.22, 60) - 2.44) < 0.000001);
+  assert.ok(webMercatorMetersForGroundMeters(1.22, 40) > 1.55);
 });

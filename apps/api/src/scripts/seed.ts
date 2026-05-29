@@ -2,7 +2,7 @@
  * Creates sample data for local demos.
  *
  * This script is useful for a fresh local demo database. It intentionally
- * truncates user and farm data, so it requires FARMFIELD_VALLEY_CONFIRM_DESTRUCTIVE_SEED
+ * truncates user and farm data, so it requires LOAM_LEDGER_CONFIRM_DESTRUCTIVE_SEED
  * unless the target database appears empty.
  */
 import { pool } from "../db";
@@ -29,7 +29,7 @@ export async function databaseHasExistingData(client: PoolClient) {
 }
 
 export async function assertDestructiveSeedAllowed(client: PoolClient) {
-  if (process.env.FARMFIELD_VALLEY_CONFIRM_DESTRUCTIVE_SEED === "yes") {
+  if (process.env.LOAM_LEDGER_CONFIRM_DESTRUCTIVE_SEED === "yes") {
     return;
   }
 
@@ -40,7 +40,7 @@ export async function assertDestructiveSeedAllowed(client: PoolClient) {
   throw new Error(
     "Refusing to run db:seed because this database already has user/farm data. " +
     "This seed script truncates most tables. If you intentionally want to wipe and reload demo data, run: " +
-    "FARMFIELD_VALLEY_CONFIRM_DESTRUCTIVE_SEED=yes npm run db:seed"
+    "LOAM_LEDGER_CONFIRM_DESTRUCTIVE_SEED=yes npm run db:seed"
   );
 }
 
@@ -326,7 +326,7 @@ async function run() {
     const riverOwner = await client.query<{ id: number }>(
       `
         insert into app_users (email, username, password_hash, display_name)
-        values ('river_owner@farmfield-valley.local', 'river_owner', $1, 'River Owner')
+        values ('river_owner@loamledger.local', 'river_owner', $1, 'River Owner')
         returning id
       `,
       [hashPassword("river123")]
@@ -334,7 +334,7 @@ async function run() {
     const riverCrew = await client.query<{ id: number }>(
       `
         insert into app_users (email, username, password_hash, display_name)
-        values ('river_crew@farmfield-valley.local', 'river_crew', $1, 'River Crew')
+        values ('river_crew@loamledger.local', 'river_crew', $1, 'River Crew')
         returning id
       `,
       [hashPassword("river123")]
@@ -342,7 +342,7 @@ async function run() {
     const cedarOwner = await client.query<{ id: number }>(
       `
         insert into app_users (email, username, password_hash, display_name)
-        values ('cedar_owner@farmfield-valley.local', 'cedar_owner', $1, 'Cedar Owner')
+        values ('cedar_owner@loamledger.local', 'cedar_owner', $1, 'Cedar Owner')
         returning id
       `,
       [hashPassword("cedar123")]
@@ -350,7 +350,7 @@ async function run() {
     const cedarCrew = await client.query<{ id: number }>(
       `
         insert into app_users (email, username, password_hash, display_name)
-        values ('cedar_crew@farmfield-valley.local', 'cedar_crew', $1, 'Cedar Crew')
+        values ('cedar_crew@loamledger.local', 'cedar_crew', $1, 'Cedar Crew')
         returning id
       `,
       [hashPassword("cedar123")]
