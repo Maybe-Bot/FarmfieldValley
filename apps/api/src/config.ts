@@ -59,6 +59,8 @@ export const config = {
   sessionMaxAgeDays: Number(process.env.SESSION_MAX_AGE_DAYS ?? 14),
   sessionCookieSecure: parseBoolean(process.env.SESSION_COOKIE_SECURE, process.env.NODE_ENV === "production"),
   sessionCookieSameSite: parseSameSite(process.env.SESSION_COOKIE_SAMESITE),
+  publicWebUrl: process.env.PUBLIC_WEB_URL ?? process.env.APP_BASE_URL ?? "http://localhost:5173",
+  publicApiUrl: process.env.PUBLIC_API_URL ?? "http://localhost:4000",
   offlineImageryDir: resolveApiPath(process.env.OFFLINE_IMAGERY_DIR ?? "./offline-imagery-cache"),
   offlineImagerySourceUrl:
     process.env.OFFLINE_IMAGERY_SOURCE_URL ??

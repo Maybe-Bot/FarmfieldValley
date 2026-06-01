@@ -41,15 +41,15 @@ export function registerSpreadsheetImportRoutes(app: express.Express, deps: Spre
       const workbook = await buildFarmExportWorkbook(client, auth.farmId);
       const date = new Date().toISOString().slice(0, 10);
       res.setHeader("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
-      res.setHeader("Content-Disposition", `attachment; filename="loam-ledger-export-${date}.xlsx"`);
+      res.setHeader("Content-Disposition", `attachment; filename="loam-ledger-backup-${date}.xlsx"`);
       res.send(workbook);
     } finally {
       client.release();
     }
   }));
 
-  // User-facing spreadsheet upload. This deliberately accepts only the simple
-  // planting template shape and imports rows into the logged-in farm's existing blocks/beds.
+  // User-facing spreadsheet upload. It accepts both the smaller crop-plan
+  // template and full farm backup exports. Both paths are append-only.
   app.post("/api/import/spreadsheet", deps.requireRole("planner"), deps.asyncHandler(async (req, res) => {
     const auth = deps.currentAuth(req) as AuthContext;
     const body = spreadsheetImportSchema.parse(req.body);

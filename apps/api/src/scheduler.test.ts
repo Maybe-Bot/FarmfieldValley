@@ -58,7 +58,7 @@ function makeSchedulerClient(options?: {
             rows: [
               { id: 1, node_key: "seed", task_type: "seed_in_tray", label: "Seed trays", anchor: "actual_tray_seeding", offset_days: 0, icon_color: "#111111", icon_secondary_color: "#aaaaaa", tractor_model: null, tractor_profile_id: null },
               { id: 2, node_key: "transplant", task_type: "transplant", label: "Plant in field", anchor: "actual_transplant", offset_days: 0, icon_color: "#222222", icon_secondary_color: "#bbbbbb", tractor_model: null, tractor_profile_id: null },
-              { id: 3, node_key: "cultivate", task_type: "cultivate", label: "Cultivate", anchor: "actual_transplant", offset_days: 7, icon_color: "#333333", icon_secondary_color: "#cccccc", tractor_model: "canopy", tractor_profile_id: 9 }
+              { id: 3, node_key: "cultivate", task_type: "cultivate", label: "Cultivate", anchor: "after:transplant", offset_days: 7, icon_color: "#333333", icon_secondary_color: "#cccccc", tractor_model: "canopy", tractor_profile_id: 9 }
             ]
           };
         }
@@ -111,7 +111,7 @@ test("recalculatePlantingTasks updates existing generated tasks instead of repla
   const { client, calls } = makeSchedulerClient({
     existingTasks: [
       { id: 501, task_flow_node_id: 1, status: "done", completed_date: "2026-03-08", event_count: "1" },
-      { id: 502, task_flow_node_id: 2, status: "pending", completed_date: null, event_count: "0" },
+      { id: 502, task_flow_node_id: 2, status: "done", completed_date: "2026-04-12", event_count: "1" },
       { id: 503, task_flow_node_id: 999, status: "done", completed_date: "2026-03-01", event_count: "1" },
       { id: 504, task_flow_node_id: 1000, status: "pending", completed_date: null, event_count: "0" }
     ]
@@ -119,9 +119,11 @@ test("recalculatePlantingTasks updates existing generated tasks instead of repla
 
   await recalculatePlantingTasks(client as never, 44);
 
-  const taskInserts = calls.filter((call) => call.sql.includes("insert into tasks"));
-  assert.equal(taskInserts.length, 1);
-  assert.equal(taskInserts[0].params?.[3], 3);
+    const taskInserts = calls.filter((call) => call.sql.includes("insert into tasks"));
+    assert.equal(taskInserts.length, 1);
+    assert.equal(taskInserts[0].params?.[3], 3);
+    assert.equal(taskInserts[0].params?.[10], "after:transplant");
+    assert.equal(taskInserts[0].params?.[12], "2026-04-19");
 
   const taskUpdates = calls.filter((call) => call.sql.includes("update tasks") && call.sql.includes("scheduled_date = $12"));
   assert.deepEqual(taskUpdates.map((call) => call.params?.[0]), [501, 502]);

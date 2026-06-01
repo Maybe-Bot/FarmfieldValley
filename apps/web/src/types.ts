@@ -307,6 +307,10 @@ export type SeedItem = {
   stockQuantity: number | null;
   lots: SeedLot[];
   daysToMaturity: number | null;
+  usualSpacing: string | null;
+  usualFieldSpacingInRow: number | null;
+  usualRowSpacing: number | null;
+  usualRowsPerBed: number | null;
   notes: string | null;
   archivedAt: string | null;
   displayName: string;
@@ -418,7 +422,7 @@ export type OfflineImageryStatus = {
 };
 
 export type SessionInfo =
-  | { authenticated: false }
+  | { authenticated: false; verificationRequired?: boolean; email?: string }
   | {
       authenticated: true;
       user: {
@@ -439,6 +443,7 @@ export type FarmAccount = {
   displayName: string | null;
   role: FarmRole;
   createdAt: string;
+  verificationRequired?: boolean;
 };
 
 export type AdminUser = {

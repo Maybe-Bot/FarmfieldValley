@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { api } from "../api";
-import { roleLabel, validateAccountInputs } from "../account-utils";
+import { EMAIL_VERIFICATION_BYPASS_ADDRESS, roleLabel, validateAccountInputs } from "../account-utils";
 import { formatDate } from "../display-utils";
 import { FarmAccount, FarmRole } from "../types";
 
@@ -21,6 +21,7 @@ export function TeamAccountsCard({ farmName, accounts, onCreated }: TeamAccounts
   const [status, setStatus] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const passwordHelp = "Password requirements: at least 8 characters, including one letter and one number.";
+  const emailHelp = `Real accounts must verify email before login. Use ${EMAIL_VERIFICATION_BYPASS_ADDRESS} for reusable testing accounts.`;
 
   return (
     <div className="card">
@@ -61,7 +62,7 @@ export function TeamAccountsCard({ farmName, accounts, onCreated }: TeamAccounts
             try {
               setSaving(true);
               setStatus("Creating account...");
-              await api.createAccount({
+              const createdAccount = await api.createAccount({
                 email,
                 username,
                 password,
@@ -73,7 +74,7 @@ export function TeamAccountsCard({ farmName, accounts, onCreated }: TeamAccounts
               setPassword("");
               setDisplayName("");
               setRole("worker");
-              setStatus("Account created.");
+              setStatus(createdAccount.verificationRequired ? "Account created. Have them check email before logging in." : "Account created.");
               onCreated();
             } catch (error) {
               setStatus(error instanceof Error ? error.message : "Account creation failed.");
@@ -120,6 +121,7 @@ export function TeamAccountsCard({ farmName, accounts, onCreated }: TeamAccounts
           />
         </label>
         <p className="muted full-span">{passwordHelp}</p>
+        <p className="muted full-span">{emailHelp}</p>
         <label>
           <span>Role</span>
           <select value={role} onChange={(event) => setRole(event.target.value as FarmRole)}>

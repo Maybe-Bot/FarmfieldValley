@@ -35,6 +35,10 @@ export function formatTaskTypeLabel(taskType: string) {
 }
 
 export function formatTaskAnchorLabel(anchor: string) {
+  if (anchor.startsWith("after:")) {
+    return `after ${anchor.slice("after:".length).split(",").filter(Boolean).join(", ")}`;
+  }
+
   return sentenceCase(anchor);
 }
 

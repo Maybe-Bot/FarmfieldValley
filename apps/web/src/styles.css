@@ -232,10 +232,9 @@ textarea {
 }
 
 .topbar {
-  display: flex;
-  align-items: flex-start;
-  justify-content: stretch;
-  gap: 1rem;
+  display: grid;
+  gap: 0.65rem;
+  align-items: stretch;
 }
 
 .content-grid {
@@ -558,6 +557,12 @@ textarea {
 .layer-toggle input {
   width: auto;
   margin: 0;
+}
+
+.task-list-options {
+  display: flex;
+  justify-content: flex-start;
+  margin: 0.75rem 0;
 }
 
 .search-results {
@@ -993,6 +998,49 @@ textarea {
   background: var(--surface-panel);
 }
 
+.flow-canvas-toolbar {
+  display: grid;
+  gap: 0.65rem;
+}
+
+.flow-canvas-toolbar-row,
+.flow-canvas-size-control {
+  display: flex;
+  align-items: center;
+  gap: 0.65rem;
+  flex-wrap: wrap;
+}
+
+.flow-canvas-toolbar-row {
+  justify-content: space-between;
+}
+
+.flow-canvas-size-control > span {
+  font-size: 0.82rem;
+  color: var(--text-subtle);
+}
+
+.flow-canvas-size-options {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 0.12rem;
+  padding: 0.12rem;
+  border: 1px solid var(--card-border);
+  border-radius: 999px;
+  background: var(--surface-soft);
+}
+
+.flow-canvas-size-options button {
+  min-width: 4.2rem;
+  border: 0;
+  border-radius: 999px;
+  box-shadow: none;
+}
+
+.flow-canvas-size-options .secondary-button {
+  background: transparent;
+}
+
 .flow-canvas {
   position: relative;
   min-height: 640px;
@@ -1000,7 +1048,24 @@ textarea {
   border-radius: 18px;
   background: var(--surface-canvas);
   background-size: 40px 40px, 40px 40px, auto;
-  overflow: hidden;
+  overflow: auto;
+  overscroll-behavior: contain;
+}
+
+.flow-canvas-small {
+  min-height: 480px;
+}
+
+.flow-canvas-normal {
+  min-height: 640px;
+}
+
+.flow-canvas-tall {
+  min-height: 860px;
+}
+
+.flow-canvas-huge {
+  min-height: 1120px;
 }
 
 .flow-edge-layer {
@@ -1011,7 +1076,8 @@ textarea {
   pointer-events: none;
 }
 
-.flow-edge-layer line {
+.flow-edge-layer polyline {
+  fill: none;
   stroke: #6b7a58;
   stroke-width: 0.45;
   opacity: 0.9;
@@ -1041,7 +1107,9 @@ textarea {
 }
 
 .flow-node-card.expanded {
-  width: 320px;
+  width: min(320px, calc(100% - 1rem));
+  max-height: calc(100% - 1rem);
+  overflow: auto;
   z-index: 18;
   cursor: default;
 }
@@ -1075,10 +1143,9 @@ textarea {
 
 .flow-node-menu {
   position: absolute;
-  right: 0;
-  top: calc(100% + 0.35rem);
   z-index: 20;
-  min-width: 210px;
+  width: 230px;
+  max-width: calc(100% - 1rem);
   display: grid;
   gap: 0.35rem;
   padding: 0.55rem;
@@ -1086,6 +1153,10 @@ textarea {
   border-radius: 12px;
   background: var(--card-bg);
   box-shadow: 0 10px 24px rgba(38, 51, 31, 0.16);
+}
+
+.flow-node-menu-floating {
+  z-index: 40;
 }
 
 .flow-node-menu-item {
@@ -1116,9 +1187,41 @@ textarea {
   gap: 0.25rem;
 }
 
+.flow-node-schedule-source {
+  display: grid;
+  align-content: start;
+  gap: 0.25rem;
+  min-width: 0;
+}
+
 .flow-node-editor span {
   font-size: 0.82rem;
   color: var(--text-subtle);
+}
+
+.flow-node-connections {
+  display: grid;
+  gap: 0.4rem;
+}
+
+.flow-node-connection-list {
+  display: grid;
+  gap: 0.4rem;
+}
+
+.flow-node-connection-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  padding: 0.45rem 0.5rem;
+  border-radius: 8px;
+  background: var(--surface-soft);
+}
+
+.flow-node-connection-row > span {
+  min-width: 0;
+  overflow-wrap: anywhere;
 }
 
 .flow-node-editor textarea,
@@ -1223,12 +1326,13 @@ textarea {
 }
 
 .toolbar-map-tools {
-  flex: 1 1 720px;
+  width: 100%;
   justify-content: flex-start;
 }
 
-.header-actions .toolbar-workflow-toggle {
+.toolbar-workflow-toggle {
   display: inline-flex;
+  flex: 0 0 auto;
   grid-template-columns: none;
   gap: 0;
   margin: 0;
@@ -1238,11 +1342,11 @@ textarea {
   background: var(--surface-soft);
 }
 
-.header-actions .toolbar-workflow-toggle button {
+.toolbar-workflow-toggle button {
   border-radius: 999px;
 }
 
-.header-actions .toolbar-workflow-toggle .secondary-button {
+.toolbar-workflow-toggle .secondary-button {
   background: transparent;
 }
 
@@ -1468,23 +1572,42 @@ textarea {
 }
 
 .polygon-label {
-  background: rgba(26, 35, 24, 0.85);
-  color: #fbf7ea;
-  border: 0;
-  box-shadow: none;
-  border-radius: 999px;
-  padding: 0.1rem 0.35rem;
+  background: rgba(253, 251, 242, 0.86);
+  color: #1f2a1b;
+  border: 1px solid rgba(31, 42, 27, 0.22);
+  box-shadow: 0 2px 8px rgba(31, 42, 27, 0.16);
+  border-radius: 6px;
+  padding: 0.18rem 0.45rem;
+  font-size: 0.74rem;
   font-weight: 700;
-  opacity: 0.86;
+  line-height: 1.1;
+  opacity: 0.96;
   pointer-events: none;
+  backdrop-filter: blur(2px);
 }
 
-.block-label {
-  background: rgba(109, 68, 18, 0.74);
+.polygon-label::before {
+  display: none;
+}
+
+.field-map-label {
+  background: rgba(244, 248, 235, 0.76);
+  color: #31422a;
+  border-color: rgba(73, 101, 58, 0.34);
+  font-size: 0.68rem;
+  text-transform: uppercase;
+}
+
+.block-map-label {
+  background: rgba(35, 48, 34, 0.86);
+  color: #fffaf0;
+  border-color: rgba(255, 250, 240, 0.24);
 }
 
 .bed-label {
-  background: rgba(71, 112, 139, 0.9);
+  background: rgba(235, 246, 250, 0.9);
+  color: #1e4657;
+  border-color: rgba(37, 99, 122, 0.28);
 }
 
 .tractor-runway,
@@ -2389,6 +2512,7 @@ textarea {
   }
 
   .mobile-shell .header-actions button,
+  .mobile-shell .map-tools-actions > button,
   .mobile-shell .map-workflow-toggle button,
   .mobile-shell .map-mode-grid button,
   .mobile-shell .button-row button {
@@ -2401,6 +2525,16 @@ textarea {
   .mobile-shell .map-workflow-toggle,
   .mobile-shell .map-mode-grid {
     gap: 0.5rem;
+  }
+
+  .mobile-shell .toolbar-workflow-toggle {
+    gap: 0;
+  }
+
+  .mobile-shell .toolbar-workflow-toggle button {
+    width: auto;
+    min-width: 4rem;
+    white-space: nowrap;
   }
 
   .mobile-shell .map-card,

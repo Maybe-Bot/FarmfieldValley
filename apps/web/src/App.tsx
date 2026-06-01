@@ -147,7 +147,7 @@ const emptyDashboard: DashboardData = {
 const VIEW_STORAGE_KEY = "loam-ledger-map-view";
 const SETTINGS_STORAGE_KEY = "loam-ledger-settings";
 const MOBILE_MEDIA_QUERY = "(max-width: 760px)";
-const PROTOTYPE_WARNING_VERSION = "v1";
+const PROTOTYPE_WARNING_VERSION = "v2";
 const PROTOTYPE_WARNING_STORAGE_PREFIX = "loam-ledger-prototype-warning";
 const TUTORIAL_DISMISSED_STORAGE_PREFIX = "loam-ledger-tutorial-dismissed";
 
@@ -157,6 +157,30 @@ const DEFAULT_ZOOM = 18;
 const EARTH_RADIUS_M = 6378137;
 const MAX_WEB_MERCATOR_LATITUDE = 85.05112878;
 const WEB_MERCATOR_EQUATOR_METERS_PER_PIXEL = 156543.03392;
+const FEET_TO_METERS = 0.3048;
+const DEFAULT_BED_PRESETS = [
+  {
+    name: "Bare bed 3 ft",
+    bedWidthM: 3 * FEET_TO_METERS,
+    pathSpacingM: 2 * FEET_TO_METERS,
+    isRoad: false,
+    notes: "Default bare bed: 3 ft plantable bed with 2 ft path."
+  },
+  {
+    name: "Plastic bed 3 ft",
+    bedWidthM: 3 * FEET_TO_METERS,
+    pathSpacingM: 3 * FEET_TO_METERS,
+    isRoad: false,
+    notes: "Default plastic bed: 3 ft bed with 3 ft path."
+  },
+  {
+    name: "Farm road 12 ft",
+    bedWidthM: 12 * FEET_TO_METERS,
+    pathSpacingM: 0,
+    isRoad: true,
+    notes: "Default non-plantable farm road: 12 ft wide."
+  }
+] as const;
 
 const plantingStatuses = [
   "planned",
@@ -762,6 +786,13 @@ function bedSectionBoundary(bed: Bed, startM: number, lengthM: number, reverseFr
     return null;
   }
 
+  const bedLengthM = Number(bed.bedLengthM);
+  const projectedMetersPerBedMeter =
+    Number.isFinite(bedLengthM) && bedLengthM > 0
+      ? Math.max(0.2, Math.min(5, longestEdge.length / bedLengthM))
+      : 1;
+  const projectedStartM = Math.max(0, startM) * projectedMetersPerBedMeter;
+  const projectedLengthM = Math.max(0, lengthM) * projectedMetersPerBedMeter;
   const along = {
     x: (longestEdge.end.x - longestEdge.start.x) / longestEdge.length,
     y: (longestEdge.end.y - longestEdge.start.y) / longestEdge.length
@@ -776,10 +807,10 @@ function bedSectionBoundary(bed: Bed, startM: number, lengthM: number, reverseFr
   const minAcross = Math.min(...projectedLocal.map((point) => point.across));
   const maxAcross = Math.max(...projectedLocal.map((point) => point.across));
   const boundedStartM = reverseFromEnd
-    ? Math.max(0, Number(bed.bedLengthM || 0) - Math.max(0, startM) - lengthM)
-    : Math.max(0, startM);
+    ? Math.max(0, longestEdge.length - projectedStartM - projectedLengthM)
+    : projectedStartM;
   const sectionStart = Math.min(maxAlong, minAlong + boundedStartM);
-  const sectionEnd = Math.min(maxAlong, sectionStart + lengthM);
+  const sectionEnd = Math.min(maxAlong, sectionStart + projectedLengthM);
   if (sectionEnd <= sectionStart) {
     return null;
   }
@@ -1275,6 +1306,10 @@ function formatTaskTypeLabel(taskType: string) {
 }
 
 function formatTaskAnchorLabel(anchor: string) {
+  if (anchor.startsWith("after:")) {
+    return `after ${anchor.slice("after:".length).split(",").filter(Boolean).join(", ")}`;
+  }
+
   return sentenceCase(anchor);
 }
 
@@ -1711,6 +1746,7 @@ function App() {
   const [bedPreviewCoordinates, setBedPreviewCoordinates] = useState<CoordinateDraft[]>([]);
   const [bedAllocationPreview, setBedAllocationPreview] = useState<BedAllocationPreview[]>([]);
   const [bedLineMode, setBedLineMode] = useState<"straight" | "curved">("straight");
+  const [bedInvertSide, setBedInvertSide] = useState(false);
   const [bedEntranceSideDrafts, setBedEntranceSideDrafts] = useState<Record<number, "start" | "end">>({});
   const [bedLineSource, setBedLineSource] = useState<BedLineSource>("manual");
   const [editCoordinates, setEditCoordinates] = useState<CoordinateDraft[]>([]);
@@ -1739,6 +1775,7 @@ function App() {
   const [userLocation, setUserLocation] = useState<UserLocation | null>(null);
   const [selectedMapWeekStart, setSelectedMapWeekStart] = useState(() => startOfWeekDate(todayDateInputValue()));
   const [taskListWeekStart, setTaskListWeekStart] = useState(() => startOfWeekDate(todayDateInputValue()));
+  const [showPastUndoneTasks, setShowPastUndoneTasks] = useState(true);
   const [selectedPlanPlantingIds, setSelectedPlanPlantingIds] = useState<number[]>([]);
   const [isSavingMapObject, setIsSavingMapObject] = useState(false);
   const [feedbackOpen, setFeedbackOpen] = useState(false);
@@ -2529,16 +2566,29 @@ function App() {
       return boundary ? [{ ...preview, boundary }] : [];
     });
   }, [bedAllocationPreview, blocksById, data.beds]);
+  const currentTaskWeekStart = startOfWeekDate(todayDateInputValue());
   const taskListWeekEnd = addDaysToDate(taskListWeekStart, 6);
+  const isCurrentTaskListWeek = taskListWeekStart === currentTaskWeekStart;
   const currentPlanYear = Number(todayDateInputValue().slice(0, 4));
   const visibleTaskList = useMemo(() => {
-    return data.tasks.filter((task) => {
+    const weekTasks = data.tasks.filter((task) => {
       if (!task.scheduledDate) {
         return false;
       }
       return task.scheduledDate >= taskListWeekStart && task.scheduledDate <= taskListWeekEnd;
     });
-  }, [data.tasks, taskListWeekStart, taskListWeekEnd]);
+    if (!isCurrentTaskListWeek || !showPastUndoneTasks) {
+      return weekTasks;
+    }
+    const pastUndoneTasks = data.tasks
+      .filter((task) => (
+        task.status !== "done" &&
+        task.scheduledDate != null &&
+        task.scheduledDate < currentTaskWeekStart
+      ))
+      .sort((left, right) => (left.scheduledDate ?? "").localeCompare(right.scheduledDate ?? ""));
+    return [...pastUndoneTasks, ...weekTasks];
+  }, [currentTaskWeekStart, data.tasks, isCurrentTaskListWeek, showPastUndoneTasks, taskListWeekStart, taskListWeekEnd]);
   const planGroups = useMemo(() => {
     const grouped = new Map<number, Planting[]>();
     for (const planting of data.plantings) {
@@ -2801,6 +2851,127 @@ function App() {
       ? ownBeds.filter((bed) => bed.blockId === selectedBlockContext.id && bed.source !== "road")
       : []
   ), [ownBeds, selectedBlockContext]);
+  const selectedBlockPlacementColorsActive = Boolean(
+    selectedBlockContext
+    && selectedBlockPlantableBeds.length > 0
+    && mapPlantingBeds.length === 0
+    && canPlan
+    && selectedBlockContext.farmId === data.farm?.id
+  );
+  const selectedBlockPlacementColorOverlays = useMemo(
+    () => {
+      if (!selectedBlockContext || !selectedBlockPlacementColorsActive) {
+        return [] as Array<{
+          key: string;
+          blockId: number;
+          bedId: number;
+          plantingId: number | null;
+          label: string;
+          overlayBoundary: DashboardData["beds"][number]["boundary"];
+          bedLengthUsedM: number;
+          placementOrder: number;
+          color: PlantingMapColor;
+          isGap: boolean;
+        }>;
+      }
+
+      const blockBedsByBlockId = new Map<number, Bed[]>([[selectedBlockContext.id, selectedBlockPlantableBeds]]);
+      const overlays: Array<{
+        key: string;
+        blockId: number;
+        bedId: number;
+        plantingId: number | null;
+        label: string;
+        overlayBoundary: DashboardData["beds"][number]["boundary"];
+        bedLengthUsedM: number;
+        placementOrder: number;
+        color: PlantingMapColor;
+        isGap: boolean;
+      }> = [];
+
+      for (const placement of data.placements) {
+        if (placement.planSource !== "auto_block_plan") {
+          continue;
+        }
+        const bed = bedsById.get(placement.bedId);
+        const planting = plantingsById.get(placement.plantingId);
+        if (!bed || bed.blockId !== selectedBlockContext.id || !planting) {
+          continue;
+        }
+        const placementOrder = placement.placementOrder ?? 100000 + placement.id;
+        const block = blocksById.get(bed.blockId) ?? null;
+        const overlayBoundary = placement.boundary ?? bedSectionBoundary(
+          bed,
+          Number(placement.startLengthM || 0),
+          Number(placement.bedLengthUsedM || 0),
+          bedSerpentineReversesFromEnd(bed, block, blockBedsByBlockId.get(bed.blockId) ?? [])
+        );
+        if (!overlayBoundary) {
+          continue;
+        }
+        overlays.push({
+          key: `selected-block-placement-${placement.id}`,
+          blockId: bed.blockId,
+          bedId: placement.bedId,
+          plantingId: planting.id,
+          label: plantingCropVarietyLabel(planting),
+          overlayBoundary,
+          bedLengthUsedM: Number(placement.bedLengthUsedM || bed.bedLengthM || 0),
+          placementOrder,
+          color: plantingMapColorForOrder(placementOrder),
+          isGap: false
+        });
+      }
+
+      for (const gap of data.placementGaps) {
+        if (gap.blockId !== selectedBlockContext.id) {
+          continue;
+        }
+        const bed = bedsById.get(gap.bedId);
+        if (!bed) {
+          continue;
+        }
+        const placementOrder = gap.placementOrder;
+        const block = blocksById.get(bed.blockId) ?? null;
+        const overlayBoundary = bedSectionBoundary(
+          bed,
+          Number(gap.startLengthM || 0),
+          Number(gap.bedLengthUsedM || 0),
+          bedSerpentineReversesFromEnd(bed, block, blockBedsByBlockId.get(bed.blockId) ?? [])
+        );
+        if (!overlayBoundary) {
+          continue;
+        }
+        overlays.push({
+          key: `selected-block-gap-${gap.id}`,
+          blockId: bed.blockId,
+          bedId: gap.bedId,
+          plantingId: null,
+          label: "Gap",
+          overlayBoundary,
+          bedLengthUsedM: Number(gap.bedLengthUsedM || bed.bedLengthM || 0),
+          placementOrder,
+          color: plantingMapColorForOrder(placementOrder),
+          isGap: true
+        });
+      }
+
+      return colorizeBlockPlacementRows(overlays);
+    },
+    [
+      blocksById,
+      bedsById,
+      canPlan,
+      data.farm?.id,
+      data.placementGaps,
+      data.placements,
+      mapPlantingBeds.length,
+      plantingsById,
+      selectedBlockContext,
+      selectedBlockPlacementColorsActive,
+      selectedBlockPlantableBeds
+    ]
+  );
   const selectedBlockIsEmpty = useMemo(() => {
     if (!selectedBlockContext || selectedBlockPlantableBeds.length === 0) {
       return false;
@@ -2905,30 +3076,46 @@ function App() {
       }
     }
 
-    return data.tasks
-      .filter((task) => {
-        if (!isDateInWeek(task.scheduledDate, selectedMapWeekStart)) {
-          return false;
-        }
-        if (matchesSelectedPlanting(task)) {
-          return true;
-        }
-        return Boolean(
-          selectedPlanting == null
-          && blockBedIds
-          && blockPlantingIds
-          && (
-            (task.bedId != null && blockBedIds.has(task.bedId))
-            || (task.plantingId != null && blockPlantingIds.has(task.plantingId))
-          )
-        );
-      })
+    const matchesMapTaskContext = (task: Task) => {
+      if (matchesSelectedPlanting(task)) {
+        return true;
+      }
+      return Boolean(
+        selectedPlanting == null
+        && blockBedIds
+        && blockPlantingIds
+        && (
+          (task.bedId != null && blockBedIds.has(task.bedId))
+          || (task.plantingId != null && blockPlantingIds.has(task.plantingId))
+        )
+      );
+    };
+
+    const weekTasks = data.tasks.filter((task) => (
+      isDateInWeek(task.scheduledDate, selectedMapWeekStart) && matchesMapTaskContext(task)
+    ));
+
+    const tasks = selectedMapWeekStart === currentTaskWeekStart && showPastUndoneTasks
+      ? [
+          ...data.tasks
+            .filter((task) => (
+              task.status !== "done" &&
+              task.scheduledDate != null &&
+              task.scheduledDate < currentTaskWeekStart &&
+              matchesMapTaskContext(task)
+            ))
+            .sort((left, right) => (left.scheduledDate ?? "").localeCompare(right.scheduledDate ?? "")),
+          ...weekTasks
+        ]
+      : weekTasks;
+
+    return tasks
       .sort((left, right) => {
         if (left.status !== "done" && right.status === "done") return -1;
         if (right.status !== "done" && left.status === "done") return 1;
         return (left.scheduledDate ?? "9999-12-31").localeCompare(right.scheduledDate ?? "9999-12-31");
       });
-  }, [data.beds, data.placements, data.plantings, data.tasks, mapWorkflowMode, selectedBlockContext, selectedMapWeekStart, selectedPlanting]);
+  }, [currentTaskWeekStart, data.beds, data.placements, data.plantings, data.tasks, mapWorkflowMode, selectedBlockContext, selectedMapWeekStart, selectedPlanting, showPastUndoneTasks]);
   const mapWorkTasksOnly = Boolean(
     mapWorkflowMode === "field_work"
     && mapPlantingBeds.length === 0
@@ -3456,6 +3643,27 @@ function App() {
     setMapNotice("Choose a bed preset, then pick the block edge beds should build from.");
   }
 
+  function startBedLineDraw(_mode: "straight" | "curved") {
+    if (!canPlan) {
+      setMapNotice("Planner access required.");
+      return;
+    }
+    if (!selectedBlockContext) {
+      setMapNotice("Select a block first.");
+      return;
+    }
+    if (!selectedBlockContextIsOwnFarm) {
+      setMapNotice("That block belongs to another farm. You can view it, but not edit it.");
+      return;
+    }
+    resetMapDrafts("draw_bed_line", { preserveBedLine: true });
+    setBedLineCoordinates([]);
+    setBedPreviewCoordinates([]);
+    setBedLineMode("straight");
+    setBedLineSource("manual");
+    setMapNotice("Click 2 points to define a straight bed line inside the selected block.");
+  }
+
   function setZoneCreationMethod(method: ZoneDraftMethod) {
     if (!zoneDraftActive) {
       return;
@@ -3523,6 +3731,7 @@ function App() {
     setBedLineCoordinates([]);
     setBedPreviewCoordinates([]);
     setBedLineMode("straight");
+    setBedInvertSide(false);
     setMapNotice(null);
   }
 
@@ -3873,6 +4082,7 @@ function App() {
     if (nextSession.authenticated) {
       await load(nextSession.user.role === "planner", nextSession.user.isAdmin, { allowAuthReset: false, authBootstrap: true });
     }
+    return nextSession;
   }
 
   async function handleLogout() {
@@ -4116,15 +4326,14 @@ function App() {
     ["settings", "Settings"],
     ["admin", "Admin"]
   ]);
-  const planningToolbarAvailable = !isMobileViewport && canPlan && (mapWorkflowMode === "planning" || view === "plan" || view === "flows" || view === "seed-bank" || tutorialOpen);
-  const planningToolbarNavItems: Array<[View, string]> = planningToolbarAvailable
-    ? [["plan", "Annual Crop Plan"], ["flows", "Task Flows"], ["seed-bank", "Seed Bank"]]
-    : [];
   const mainToolbarNavItems: Array<[View, string]> = [
     ["map", "Map"],
-    ...(selectedPlanting ? [["planting", "Planting"]] as Array<[View, string]> : []),
     ["tasks", "Tasks"],
-    ["record", "Record"]
+    ...(canPlan ? [
+      ["plan", "Annual Crop Plan"],
+      ["flows", "Task Flows"],
+      ["seed-bank", "Seed Bank"]
+    ] as Array<[View, string]> : [])
   ];
   const utilityToolbarNavItems: Array<[View, string]> = [
     ["settings", "Settings"],
@@ -4316,7 +4525,7 @@ function App() {
       if (tutorialFlowNeedsSelection) {
         return "Click the highlighted Cabbage tutorial flow in the reusable task flows list.";
       }
-      return "Click the highlighted Add node button. Set the new node to mow, anchor it to actual harvest, link Harvest to Mow, then save the flow.";
+        return "Click the highlighted Add node button. Set the new node to mow, link Harvest to Mow, then save the flow.";
     }
 
     if (activeTutorialStep === 5) {
@@ -4340,86 +4549,6 @@ function App() {
               {mainToolbarNavItems.length > 0 && (
                 <div className="toolbar-nav" aria-label="Main navigation">
                   {mainToolbarNavItems.map(([value, label]) => (
-                    <button
-                      key={value}
-                      type="button"
-                      className={`${view === value ? "primary-button" : "secondary-button"} compact-button${tutorialTargetClass(tutorialHighlightNav(value))}`}
-                      onClick={() => setView(value)}
-                    >
-                      {label}
-                    </button>
-                  ))}
-                </div>
-              )}
-              {view === "map" && !isMobileViewport && (
-                <div className="map-tools-actions toolbar-map-tools" aria-label="Map tools">
-                  <div className="map-workflow-toggle toolbar-workflow-toggle" aria-label="Map workflow">
-                    <button
-                      type="button"
-                      className={`${mapWorkflowMode === "planning" ? "primary-button" : "secondary-button"} compact-button${tutorialTargetClass(tutorialHighlightPlanningMode)}`}
-                      onClick={() => changeMapWorkflowMode("planning")}
-                      disabled={!canPlan}
-                    >
-                      Plan
-                    </button>
-                    <button
-                      type="button"
-                      className={`${mapWorkflowMode === "field_work" ? "primary-button" : "secondary-button"} compact-button${tutorialTargetClass(tutorialHighlightWorkMode)}`}
-                      onClick={() => changeMapWorkflowMode("field_work")}
-                    >
-                      Work
-                    </button>
-                  </div>
-                  {planningToolbarNavItems.length > 0 && (
-                    <div className="toolbar-nav" aria-label="Planning navigation">
-                      {planningToolbarNavItems.map(([value, label]) => (
-                        <button
-                          key={value}
-                          type="button"
-                          className={`${view === value ? "primary-button" : "secondary-button"} compact-button${tutorialTargetClass(tutorialHighlightNav(value))}`}
-                          onClick={() => setView(value)}
-                        >
-                          {label}
-                        </button>
-                      ))}
-                    </div>
-                  )}
-                  {mapWorkflowMode === "planning" ? (
-                    <>
-                      <button className={`${mapMode === "select" ? "primary-button" : "secondary-button"} compact-button${tutorialTargetClass(tutorialHighlightMapSelect)}`} onClick={() => resetMapDrafts("select")}>Select</button>
-                      <button className={`${mapMode === "draw_field" ? "primary-button" : "secondary-button"} compact-button${tutorialTargetClass(tutorialHighlightDrawField)}`} onClick={startDrawField} disabled={!canPlan}>Draw field</button>
-                      {selectedField && (
-                        <>
-                          <button className={`${mapMode === "draw_block" ? "primary-button" : "secondary-button"} compact-button${tutorialTargetClass(tutorialHighlightDrawBlock)}`} onClick={startDrawBlock} disabled={!canPlan || !selectedFieldIsOwnFarm}>Draw block</button>
-                          <button className={`${mapMode === "edit" ? "primary-button" : "secondary-button"} compact-button`} onClick={startEditSelection} disabled={!canEditSelectedMapItem}>Edit field</button>
-                        </>
-                      )}
-                      {selectedBlockContext && canEditSelectedBlockContext && (
-                        <>
-                          <button className={`${mapMode === "edit" ? "primary-button" : "secondary-button"} compact-button`} onClick={startEditSelection} disabled={!canEditSelectedMapItem}>Edit selected</button>
-                          <button className={`${mapMode === "bed_tools" || mapMode === "pick_bed_edge" || mapMode === "draw_bed_line" ? "primary-button" : "secondary-button"} compact-button${tutorialTargetClass(tutorialHighlightGenerateBeds)}`} onClick={startBedTools}>Generate beds</button>
-                          <button className={`${zoneDraftActive && draftPlannedUse === "beds" ? "primary-button" : "secondary-button"} compact-button`} onClick={() => startDrawZone("beds")}>Plan crop area</button>
-                          <button className={`${zoneDraftActive && draftPlannedUse === "cover_crop" ? "primary-button" : "secondary-button"} compact-button`} onClick={() => startDrawZone("cover_crop")}>Add cover crop area</button>
-                        </>
-                      )}
-                      {selectedBlockContext && !canEditSelectedBlockContext && (
-                        <>
-                          <button className="secondary-button compact-button" disabled>Edit selected</button>
-                          <button className="secondary-button compact-button" disabled>Generate beds</button>
-                        </>
-                      )}
-                    </>
-                  ) : (
-                    <>
-                      <button className={`${mapMode === "select" ? "primary-button" : "secondary-button"} compact-button`} onClick={() => resetMapDrafts("select")}>Select</button>
-                      <button className="secondary-button compact-button" onClick={() => setView("tasks")}>Open task list</button>
-                    </>
-                  )}
-                </div>
-              )}
-              {view !== "map" && planningToolbarNavItems.length > 0 && (
-                <div className="toolbar-nav" aria-label="Planning navigation">
-                  {planningToolbarNavItems.map(([value, label]) => (
                     <button
                       key={value}
                       type="button"
@@ -4472,6 +4601,35 @@ function App() {
               </span>
             </div>
           </div>
+          {view === "map" && (
+            <div className="map-tools-actions toolbar-map-tools" aria-label="Map tools">
+              <div className="map-workflow-toggle toolbar-workflow-toggle" aria-label="Map workflow">
+                <button
+                  type="button"
+                  className={`${mapWorkflowMode === "planning" ? "primary-button" : "secondary-button"} compact-button${tutorialTargetClass(tutorialHighlightPlanningMode)}`}
+                  onClick={() => changeMapWorkflowMode("planning")}
+                  disabled={!canPlan}
+                >
+                  Plan
+                </button>
+                <button
+                  type="button"
+                  className={`${mapWorkflowMode === "field_work" ? "primary-button" : "secondary-button"} compact-button${tutorialTargetClass(tutorialHighlightWorkMode)}`}
+                  onClick={() => changeMapWorkflowMode("field_work")}
+                >
+                  Work
+                </button>
+              </div>
+              {mapWorkflowMode === "planning" && (
+                <>
+                  <button className={`${mapMode === "select" ? "primary-button" : "secondary-button"} compact-button${tutorialTargetClass(tutorialHighlightMapSelect)}`} onClick={() => resetMapDrafts("select")}>Select</button>
+                  <button className={`${mapMode === "draw_field" ? "primary-button" : "secondary-button"} compact-button${tutorialTargetClass(tutorialHighlightDrawField)}`} onClick={startDrawField} disabled={!canPlan}>Draw field</button>
+                  <button className={`${mapMode === "draw_block" ? "primary-button" : "secondary-button"} compact-button${tutorialTargetClass(tutorialHighlightDrawBlock)}`} onClick={startDrawBlock} disabled={!canPlan || !selectedField || !selectedFieldIsOwnFarm}>Draw block</button>
+                  <button className={`${mapMode === "edit" ? "primary-button" : "secondary-button"} compact-button`} onClick={startEditSelection} disabled={!canEditSelectedMapItem}>Edit field/block</button>
+                </>
+              )}
+            </div>
+          )}
         </header>
 
         {feedbackOpen && (
@@ -4514,13 +4672,13 @@ function App() {
         {prototypeWarningOpen && (
           <div className="modal-backdrop" role="dialog" aria-modal="true" aria-labelledby="prototype-warning-title">
             <div className="card prototype-warning-dialog">
-              <p className="eyebrow">Testing prototype</p>
-              <h2 id="prototype-warning-title">Use this only for testing</h2>
+              <p className="eyebrow">Beta testing</p>
+              <h2 id="prototype-warning-title">Loam Ledger is in beta</h2>
               <p>
-                Loam Ledger is an early prototype. It may break, give incorrect results, or lose data while it is being tested and changed.
+                Bugs or incorrect results are still possible while testing continues.
               </p>
               <p>
-                Do not rely on it for real farm records, safety decisions, payroll, compliance, or anything important yet. Use it only to try the workflow and share feedback.
+                If something looks wrong, please share feedback so it can be fixed.
               </p>
               <button className="primary-button full-span" type="button" onClick={dismissPrototypeWarning}>
                 I understand
@@ -4670,7 +4828,7 @@ function App() {
                         }
                       }}
                     >
-                      <Tooltip permanent direction="center" className="polygon-label">
+                      <Tooltip permanent direction="top" offset={[0, -18]} className="polygon-label field-map-label">
                         {mapObjectLabel(field.name)}
                       </Tooltip>
                     </Polygon>
@@ -4739,7 +4897,7 @@ function App() {
                         }
                       }}
                     >
-                      <Tooltip permanent direction="center" className="polygon-label block-label">
+                      <Tooltip permanent direction="bottom" offset={[0, 14]} className="polygon-label block-map-label">
                         {mapObjectLabel(block.name)}
                       </Tooltip>
                     </Polygon>
@@ -4877,6 +5035,47 @@ function App() {
                 })}
 
                 {showPlannedPlantingsLayer && showCropSectionsAtZoom && plannedPlacementOverlays.map((overlay) => {
+                  if (selectedBlockPlacementColorsActive && overlay.blockId === selectedBlockContext?.id) {
+                    return null;
+                  }
+                  const positions = polygonPositions(geoJsonPolygonToLatLngs(overlay.overlayBoundary));
+                  if (positions.length < 3) {
+                    return null;
+                  }
+
+                  return (
+                    <Polygon
+                      key={overlay.key}
+                      positions={positions}
+                      interactive={mapWorkflowMode === "field_work"}
+                      bubblingMouseEvents={false}
+                      pathOptions={overlay.isGap ? {
+                        color: "#84776b",
+                        fillColor: "#d6d0c6",
+                        fillOpacity: 0.42,
+                        weight: 1.5,
+                        dashArray: "5 4",
+                        className: mapWorkflowMode === "field_work" ? "map-work-select-path" : undefined
+                      } : plantingOverlayStyleForColor(overlay.color, mapWorkflowMode === "field_work" ? "map-work-select-path" : undefined)}
+                      eventHandlers={{
+                        click: () => {
+                          if (mapWorkflowMode !== "field_work") {
+                            return;
+                          }
+                          const bed = bedsById.get(overlay.bedId) ?? null;
+                          const planting = overlay.plantingId != null ? plantingsById.get(overlay.plantingId) ?? null : null;
+                          if (planting) {
+                            selectPlantingOnMap(planting, bed);
+                          } else if (bed) {
+                            selectBedOnMap(bed);
+                          }
+                        }
+                      }}
+                    />
+                  );
+                })}
+
+                {selectedBlockPlacementColorsActive && showCropSectionsAtZoom && selectedBlockPlacementColorOverlays.map((overlay) => {
                   const positions = polygonPositions(geoJsonPolygonToLatLngs(overlay.overlayBoundary));
                   if (positions.length < 3) {
                     return null;
@@ -4972,11 +5171,7 @@ function App() {
                         weight: 3,
                         dashArray: "4 3"
                       }}
-                    >
-                      <Tooltip permanent direction="top" className="polygon-label">
-                        {preview.label}
-                      </Tooltip>
-                    </Polygon>
+                    />
                   );
                 })}
 
@@ -5263,6 +5458,9 @@ function App() {
                   contextLabel={mapWorkTaskContextLabel}
                   tasks={mapSelectedTaskList}
                   undoTaskId={recentlyCompletedTaskId}
+                  showPastUndoneOption={selectedMapWeekStart === currentTaskWeekStart}
+                  pastUndoneChecked={showPastUndoneTasks}
+                  onPastUndoneChange={setShowPastUndoneTasks}
                   onSelectTask={(task) => {
                     selectTask(task, taskNeedsRecordForm(task.taskType) ? "record" : undefined);
                     setMapNotice(`Selected ${task.title}.`);
@@ -5506,10 +5704,14 @@ function App() {
                   bedLineCoordinates={bedLineCoordinates}
                   bedLineSource={bedLineSource}
                   bedLineMode={bedLineMode}
+                  invertSide={bedInvertSide}
+                  isPickingLine={mapMode === "draw_bed_line"}
                   isPickingEdge={mapMode === "pick_bed_edge"}
                   tutorialActive={activeTutorialStep === 2 && tutorialMapPlanningReady}
                   onPickEdge={startBedEdgePick}
+                  onStartLine={startBedLineDraw}
                   onCancelLine={cancelBedLinePick}
+                  onInvertSideChange={setBedInvertSide}
                   onEntranceSideChange={(blockId, entranceSide) => {
                     setBedEntranceSideDrafts((current) => ({ ...current, [blockId]: entranceSide }));
                   }}
@@ -6123,6 +6325,18 @@ function App() {
                   <button type="button" className="secondary-button compact-button" onClick={() => setTaskListWeekStart((current) => addDaysToDate(current, 7))}>Next week</button>
                 </div>
               </div>
+              {isCurrentTaskListWeek && (
+                <div className="task-list-options">
+                  <label className="layer-toggle">
+                    <input
+                      type="checkbox"
+                      checked={showPastUndoneTasks}
+                      onChange={(event) => setShowPastUndoneTasks(event.target.checked)}
+                    />
+                    <span>Past undone</span>
+                  </label>
+                </div>
+              )}
               {isMobileViewport ? (
                 <div className="mobile-card-list">
                   {visibleTaskList.map((task) => (
@@ -6153,7 +6367,7 @@ function App() {
                         </div>
                         <div className="mobile-summary-row">
                           <span className="muted">Rule</span>
-                          <strong>{task.anchor ? `${task.anchor} ${task.offsetDays && task.offsetDays >= 0 ? "+" : ""}${task.offsetDays ?? 0}d` : "manual"}</strong>
+                            <strong>{task.anchor ? `${formatTaskAnchorLabel(task.anchor)} ${task.offsetDays && task.offsetDays >= 0 ? "+" : ""}${task.offsetDays ?? 0}d` : "manual"}</strong>
                         </div>
                       </div>
                       <div className="button-row">
@@ -6218,7 +6432,7 @@ function App() {
                         <td>{task.bedName ?? "—"}</td>
                         <td>{task.status}</td>
                         <td>{task.dependsOnTaskIds.length > 0 ? task.dependsOnTaskIds.map((dependencyId) => tasksById.get(dependencyId)?.title ?? `Task ${dependencyId}`).join(", ") : "—"}</td>
-                        <td>{task.anchor ? `${task.anchor} ${task.offsetDays && task.offsetDays >= 0 ? "+" : ""}${task.offsetDays ?? 0}d` : "manual"}</td>
+                          <td>{task.anchor ? `${formatTaskAnchorLabel(task.anchor)} ${task.offsetDays && task.offsetDays >= 0 ? "+" : ""}${task.offsetDays ?? 0}d` : "manual"}</td>
                         <td>
                           {task.status === "done" ? "Done" : (
                             <button
@@ -6259,7 +6473,7 @@ function App() {
             />
               <div className="card">
                 <h2>How shifting works</h2>
-                <p>Future tasks are generated from milestone anchors. When an actual seeding, transplant, cultivation, or harvest date is recorded, later task dates recalculate from that actual date instead of staying fixed to the original plan.</p>
+                  <p>Future tasks are generated from planned planting dates and task-flow arrows. When connected work is recorded, later connected task dates recalculate from that actual date instead of staying fixed to the original plan.</p>
                 <p className="muted">Task recording now starts from the task list itself, with today filled in automatically and optional planting adjustments available before saving.</p>
               </div>
             </div>
@@ -7559,6 +7773,9 @@ function TaskWeekCard({
   contextLabel,
   tasks,
   undoTaskId,
+  showPastUndoneOption,
+  pastUndoneChecked,
+  onPastUndoneChange,
   onSelectTask,
   onQuickComplete,
   onUndoTask
@@ -7568,6 +7785,9 @@ function TaskWeekCard({
   contextLabel: string;
   tasks: Task[];
   undoTaskId: number | null;
+  showPastUndoneOption: boolean;
+  pastUndoneChecked: boolean;
+  onPastUndoneChange: (checked: boolean) => void;
   onSelectTask: (task: Task) => void;
   onQuickComplete: (task: Task) => void;
   onUndoTask: (task: Task) => void;
@@ -7580,6 +7800,18 @@ function TaskWeekCard({
           <p className="muted">{contextLabel} / {formatWeekRange(weekStart)}</p>
         </div>
       </div>
+      {showPastUndoneOption && (
+        <div className="task-list-options">
+          <label className="layer-toggle">
+            <input
+              type="checkbox"
+              checked={pastUndoneChecked}
+              onChange={(event) => onPastUndoneChange(event.target.checked)}
+            />
+            <span>Past undone</span>
+          </label>
+        </div>
+      )}
       {tasks.length === 0 ? (
         <p className="muted">No tasks scheduled for this selection.</p>
       ) : (
@@ -8990,7 +9222,7 @@ function BedPresetCard({
   }
 
   return (
-    <details className="full-span foldout-panel">
+    <details className="full-span foldout-panel" open={bedPresets.length === 0 ? true : undefined}>
       <summary>Manage bed presets</summary>
       <p className="muted">Store each farm bed system once, then reuse it when filling blocks. Bed width is the plantable bed only; path spacing is left as open space. Use a road/path preset for non-plantable access lanes.</p>
       {notice && <p className="muted"><strong>{notice}</strong></p>}
@@ -9031,7 +9263,7 @@ function BedPresetCard({
           })
         }
       >
-        <label><span>Name</span><input name="name" defaultValue="Market Garden Bed" /></label>
+        <label><span>Name</span><input key={isRoadPreset ? "road-name" : "bed-name"} name="name" defaultValue={isRoadPreset ? "Farm road 12 ft" : "Bare bed 3 ft"} /></label>
         <label className="inline-checkbox">
           <input type="checkbox" checked={isRoadPreset} onChange={(event) => setIsRoadPreset(event.target.checked)} />
           <span>Road/path preset, not plantable</span>
@@ -9043,7 +9275,7 @@ function BedPresetCard({
             name="bedWidthM"
             type="number"
             step="0.01"
-            defaultValue={formatLengthInputValue(isRoadPreset ? 3.05 : 0.76, distanceUnit)}
+            defaultValue={formatLengthInputValue(isRoadPreset ? 12 * FEET_TO_METERS : 3 * FEET_TO_METERS, distanceUnit)}
           />
         </label>
         <label>
@@ -9052,11 +9284,11 @@ function BedPresetCard({
             name="pathSpacingM"
             type="number"
             step="0.01"
-            defaultValue={formatLengthInputValue(0.46, distanceUnit)}
+            defaultValue={formatLengthInputValue(2 * FEET_TO_METERS, distanceUnit)}
             disabled={isRoadPreset}
           />
         </label>
-        <label className="full-span"><span>Notes</span><textarea name="notes" rows={2} defaultValue="Preset for repeatable bed spacing" /></label>
+        <label className="full-span"><span>Notes</span><textarea key={isRoadPreset ? "road-notes" : "bed-notes"} name="notes" rows={2} defaultValue={isRoadPreset ? "Default non-plantable farm road: 12 ft wide." : "Default bare bed: 3 ft plantable bed with 2 ft path."} /></label>
         <button className="primary-button full-span">Save preset</button>
       </form>
     </details>
@@ -9074,10 +9306,14 @@ function BedGeneratorCard({
   bedLineCoordinates,
   bedLineSource,
   bedLineMode,
+  invertSide,
+  isPickingLine,
   isPickingEdge,
   tutorialActive,
   onPickEdge,
+  onStartLine,
   onCancelLine,
+  onInvertSideChange,
   onEntranceSideChange,
   onPreviewChange,
   onStatusChange,
@@ -9095,10 +9331,14 @@ function BedGeneratorCard({
   bedLineCoordinates: CoordinateDraft[];
   bedLineSource: BedLineSource;
   bedLineMode: "straight" | "curved";
+  invertSide: boolean;
+  isPickingLine: boolean;
   isPickingEdge: boolean;
   tutorialActive: boolean;
   onPickEdge: () => void;
+  onStartLine: (mode: "straight" | "curved") => void;
   onCancelLine: () => void;
+  onInvertSideChange: (value: boolean) => void;
   onEntranceSideChange?: (blockId: number, entranceSide: "start" | "end") => void;
   onPreviewChange: (points: CoordinateDraft[]) => void;
   onStatusChange: (message: string | null) => void;
@@ -9120,11 +9360,12 @@ function BedGeneratorCard({
   const [harvestRoadEveryBeds, setHarvestRoadEveryBeds] = useState("12");
   const [harvestRoadWidthBeds, setHarvestRoadWidthBeds] = useState("2");
   const [isGenerating, setIsGenerating] = useState(false);
+  const [isCreatingStarterPreset, setIsCreatingStarterPreset] = useState(false);
   const [localNotice, setLocalNotice] = useState<string | null>(null);
   const selectedPreset = bedPresets.find((preset) => String(preset.id) === selectedPresetId) ?? bedPresets[0];
   const tutorialBedHint = tutorialActive
     ? bedLineCoordinates.length < minPoints
-      ? isPickingEdge
+      ? isPickingEdge || isPickingLine
         ? "Click two points on the map along the block edge that beds should follow."
         : "Click Pick block edge, then choose the edge on the map that beds should build from."
       : "The bed edge is ready. Click Fill remaining block to fill the block with beds."
@@ -9170,7 +9411,7 @@ function BedGeneratorCard({
       presetPathSpacing,
       bedLineSource === "selected_bed" ? 0 : replaceExisting ? 0 : existingBeds.length,
       selectedBedEdgeOffsetM,
-      false,
+      invertSide,
       roadEvery && Number.isFinite(roadEvery) ? roadEvery : null,
       Number.isFinite(roadWidth) ? roadWidth : 0
     );
@@ -9186,6 +9427,7 @@ function BedGeneratorCard({
     harvestRoadEveryBeds,
     harvestRoadsEnabled,
     harvestRoadWidthBeds,
+    invertSide,
     maxPoints,
     minPoints,
     onPreviewChange,
@@ -9243,7 +9485,7 @@ function BedGeneratorCard({
         startNumber: parsedStartNumber,
         isPermanent: true,
         replaceExisting,
-        invertSide: false,
+        invertSide,
         entranceSide,
         fillWholeBlock: options.fillWholeBlock,
         harvestRoadEveryBeds: roadEvery,
@@ -9282,6 +9524,40 @@ function BedGeneratorCard({
     });
   }
 
+  async function createStarterPresets() {
+    if (!farmId) {
+      const message = "Farm not loaded";
+      setLocalNotice(message);
+      onStatusChange(message);
+      return;
+    }
+
+    try {
+      setIsCreatingStarterPreset(true);
+      setLocalNotice("Creating starter bed presets...");
+      onStatusChange("Creating starter bed presets...");
+      for (const preset of DEFAULT_BED_PRESETS) {
+        await api.createBedPreset({
+          farmId,
+          name: preset.name,
+          bedWidthM: preset.bedWidthM,
+          pathSpacingM: preset.pathSpacingM,
+          isRoad: preset.isRoad,
+          notes: preset.notes
+        });
+      }
+      await onSave();
+      setLocalNotice("Starter bed presets created. Pick the block edge next.");
+      onStatusChange("Starter bed presets created. Pick the block edge next.");
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Could not create starter bed presets.";
+      setLocalNotice(message);
+      onStatusChange(message);
+    } finally {
+      setIsCreatingStarterPreset(false);
+    }
+  }
+
   return (
     <div className="card">
       <h2>Generate beds in block</h2>
@@ -9296,7 +9572,20 @@ function BedGeneratorCard({
       )}
       {bedPresets.length === 0 ? (
         <>
-          <p className="muted">Save a bed preset first.</p>
+          <div className="instruction-box">
+            <strong>No bed preset yet:</strong> Before beds can be generated, save the bed width and path spacing to use. You can create starter presets now, then adjust them later if your farm uses different measurements.
+          </div>
+          {localNotice && <p className="muted"><strong>{localNotice}</strong></p>}
+          <div className="button-row">
+            <button
+              type="button"
+              className="primary-button"
+              disabled={isCreatingStarterPreset}
+              onClick={() => void createStarterPresets()}
+            >
+              {isCreatingStarterPreset ? "Creating..." : "Create default bed presets"}
+            </button>
+          </div>
           <BedPresetCard farmId={farmId} bedPresets={bedPresets} distanceUnit={distanceUnit} onSave={onSave} />
         </>
       ) : (
@@ -9317,7 +9606,7 @@ function BedGeneratorCard({
                   >
                     {isPickingEdge ? "Click an edge..." : "Pick block edge"}
                   </button>
-                  {isPickingEdge && (
+                  {(isPickingLine || isPickingEdge) && (
                     <button type="button" className="secondary-button" onClick={onCancelLine}>
                       Cancel line
                     </button>
@@ -9342,9 +9631,24 @@ function BedGeneratorCard({
                 : "The shaded shape on the map previews the next bed."}
             </p>
             {bedLineSource === "selected_bed" && (
+              <div className="instruction-box full-span">
+                <strong>Next-bed mode:</strong> A bed is selected, so this card is only showing the quick tool for adding one bed beside it. Use the button below to show the full Generate Beds card with count, fill, line, and road controls.
+                <div className="button-row">
+                  <button type="button" className="primary-button" onClick={onPickEdge}>
+                    Show full bed generator
+                  </button>
+                </div>
+              </div>
+            )}
+            {bedLineSource !== "selected_bed" && (
+              <div className="instruction-box full-span">
+                <strong>Full bed generator:</strong> Count, fill, line, entrance-side, and harvest-road controls are available below.
+              </div>
+            )}
+            {bedLineSource !== "selected_bed" && (
               <div className="full-span button-row">
                 <button type="button" className="secondary-button" onClick={onPickEdge}>
-                  Pick block edge instead
+                  Pick a different block edge
                 </button>
               </div>
             )}
@@ -9361,10 +9665,18 @@ function BedGeneratorCard({
                 ))}
               </select>
             </label>
-            <label className="inline-checkbox">
-              <input type="checkbox" checked={entranceSide === "end"} onChange={(event) => updateEntranceSide(event.target.checked)} />
-              <span>First bed entrance switch</span>
-            </label>
+            {!selectedPreset?.isRoad && (
+              <label>
+                <span>First-bed entrance side</span>
+                <select
+                  value={entranceSide}
+                  onChange={(event) => updateEntranceSide(event.target.value === "end")}
+                >
+                  <option value="start">Start side of first bed</option>
+                  <option value="end">Far side of first bed</option>
+                </select>
+              </label>
+            )}
             <div className="button-row">
               <button
                 type="button"
@@ -9404,6 +9716,23 @@ function BedGeneratorCard({
                   <span>Fill whole block</span>
                 </label>
               </>
+            )}
+            {bedLineSource !== "selected_bed" && (
+              <details className="full-span foldout-panel" open>
+                <summary>Advanced line controls</summary>
+                <div className="button-row">
+                  <button type="button" className="secondary-button" onClick={() => onStartLine("straight")}>
+                    {isPickingLine && bedLineMode === "straight" ? "Picking straight line..." : "Draw straight line"}
+                  </button>
+                </div>
+                <div className="form-grid">
+                  <label className="inline-checkbox">
+                    <input type="checkbox" checked={invertSide} onChange={(event) => onInvertSideChange(event.target.checked)} />
+                    <span>Build off the other side of the line</span>
+                  </label>
+                </div>
+                <p className="muted">Picking a block edge is the normal path. Draw a straight line only when you need to aim the bed direction manually.</p>
+              </details>
             )}
             {bedLineSource !== "selected_bed" && (
               <details className="full-span foldout-panel">

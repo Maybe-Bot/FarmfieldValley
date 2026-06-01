@@ -13,7 +13,7 @@ import { pool } from "../db";
 import { hashPassword } from "../auth";
 import { boundingBox, Coordinate, polygonWkt } from "../geometry";
 import { recalculatePlantingTasks } from "../scheduler";
-import { TaskAnchor, TaskType } from "../types";
+import { TaskType } from "../types";
 
 type DemoRow = {
   file: string;
@@ -762,7 +762,7 @@ async function insertTaskFlowTemplate(
       nodeKey: string;
       taskType: TaskType;
       label: string;
-      anchor: TaskAnchor;
+      anchor: string;
       offsetDays: number;
       x: number;
       y: number;
@@ -823,13 +823,14 @@ function sourceLabel(row: DemoRow) {
 async function prepareDemoAccount(client: DbClient) {
   const user = await client.query<{ id: number }>(
     `
-      insert into app_users (email, username, password_hash, display_name, is_active)
-      values ($1, $2, $3, 'Demo B/H Planner', true)
+      insert into app_users (email, username, password_hash, display_name, is_active, email_verified_at)
+      values ($1, $2, $3, 'Demo B/H Planner', true, now())
       on conflict (username) do update
       set email = excluded.email,
           password_hash = excluded.password_hash,
           display_name = excluded.display_name,
           is_active = true,
+          email_verified_at = coalesce(app_users.email_verified_at, now()),
           updated_at = now()
       returning id
     `,
@@ -1047,13 +1048,15 @@ async function ensureBedForBlock(
 async function upsertDemoBedPresets(client: DbClient, farmId: number) {
   await client.query(
     `
-      insert into bed_presets (farm_id, name, bed_width_m, path_spacing_m, notes)
+      insert into bed_presets (farm_id, name, bed_width_m, path_spacing_m, is_road, notes)
       values
-        ($1, 'Demo 4 ft bed', 1.22, 0.46, 'Imported demo default bed width'),
-        ($1, 'Demo narrow bed', 0.91, 0.46, 'Imported demo narrower bed width')
+        ($1, 'Bare bed 3 ft', 0.9144, 0.6096, false, 'Default bare bed: 3 ft plantable bed with 2 ft path.'),
+        ($1, 'Plastic bed 3 ft', 0.9144, 0.9144, false, 'Default plastic bed: 3 ft bed with 3 ft path.'),
+        ($1, 'Farm road 12 ft', 3.6576, 0, true, 'Default non-plantable farm road: 12 ft wide.')
       on conflict (farm_id, name) do update
       set bed_width_m = excluded.bed_width_m,
           path_spacing_m = excluded.path_spacing_m,
+          is_road = excluded.is_road,
           notes = excluded.notes,
           updated_at = now()
     `,
@@ -1119,22 +1122,26 @@ async function loadExistingDemoMap(client: DbClient, farmId: number) {
 async function createDefaultTaskFlow(client: DbClient, farmId: number) {
   return insertTaskFlowTemplate(client, farmId, {
     name: "Imported crop default flow",
-    notes: "Simple default flow used by the B/H spreadsheet demo import.",
+    notes: "Eight-node sample flow used by the B/H spreadsheet demo import.",
     isDefault: true,
     nodes: [
-      { nodeKey: "bed_prep", taskType: "bed_prep", label: "Prep bed or block", anchor: "planned_transplant", offsetDays: -7, x: 0.14, y: 0.34 },
-      { nodeKey: "seed", taskType: "seed_in_tray", label: "Seed or start crop", anchor: "actual_tray_seeding", offsetDays: 0, x: 0.14, y: 0.68 },
-      { nodeKey: "transplant", taskType: "transplant", label: "Plant in field", anchor: "actual_transplant", offsetDays: 0, x: 0.42, y: 0.52 },
-      { nodeKey: "cultivate", taskType: "cultivate", label: "Cultivate or weed", anchor: "actual_transplant", offsetDays: 12, x: 0.66, y: 0.34 },
-      { nodeKey: "harvest", taskType: "harvest", label: "Harvest start", anchor: "actual_transplant", offsetDays: 45, x: 0.66, y: 0.68 },
-      { nodeKey: "finish", taskType: "finish_crop", label: "Finish crop", anchor: "actual_harvest", offsetDays: 21, x: 0.9, y: 0.68 }
+      { nodeKey: "seed_tray", taskType: "seed_in_tray", label: "Seed trays", anchor: "planned_sow", offsetDays: 0, x: 0.08, y: 0.7 },
+      { nodeKey: "disk", taskType: "bed_prep", label: "Disk ground", anchor: "planned_transplant", offsetDays: -21, x: 0.08, y: 0.28 },
+      { nodeKey: "lime", taskType: "bed_prep", label: "Spread lime", anchor: "after:disk", offsetDays: 1, x: 0.22, y: 0.28 },
+      { nodeKey: "fertilize", taskType: "bed_prep", label: "Fertilize", anchor: "after:lime", offsetDays: 10, x: 0.36, y: 0.28 },
+      { nodeKey: "perfecta", taskType: "bed_prep", label: "Perfecta pass", anchor: "after:fertilize", offsetDays: 1, x: 0.5, y: 0.28 },
+      { nodeKey: "bed_shape", taskType: "bed_prep", label: "Bed shape", anchor: "after:perfecta", offsetDays: 1, x: 0.64, y: 0.28 },
+      { nodeKey: "transplant", taskType: "transplant", label: "Transplant", anchor: "after:seed_tray,bed_shape", offsetDays: 1, x: 0.64, y: 0.58 },
+      { nodeKey: "harvest", taskType: "harvest", label: "Harvest start", anchor: "after:transplant", offsetDays: 35, x: 0.86, y: 0.58 }
     ],
     edges: [
-      { fromNodeKey: "bed_prep", toNodeKey: "transplant" },
-      { fromNodeKey: "seed", toNodeKey: "transplant" },
-      { fromNodeKey: "transplant", toNodeKey: "cultivate" },
-      { fromNodeKey: "transplant", toNodeKey: "harvest" },
-      { fromNodeKey: "harvest", toNodeKey: "finish" }
+      { fromNodeKey: "disk", toNodeKey: "lime" },
+      { fromNodeKey: "lime", toNodeKey: "fertilize" },
+      { fromNodeKey: "fertilize", toNodeKey: "perfecta" },
+      { fromNodeKey: "perfecta", toNodeKey: "bed_shape" },
+      { fromNodeKey: "seed_tray", toNodeKey: "transplant" },
+      { fromNodeKey: "bed_shape", toNodeKey: "transplant" },
+      { fromNodeKey: "transplant", toNodeKey: "harvest" }
     ]
   });
 }

@@ -6,7 +6,7 @@ import { seedStarterSeedCatalog } from "../default-seed-catalog";
 import { pool } from "../db";
 import { polygonWkt } from "../geometry";
 import { recalculatePlantingTasks } from "../scheduler";
-import { ActualEventType, FarmRole, PlantingStatus, TaskAnchor, TaskType } from "../types";
+import { ActualEventType, FarmRole, PlantingStatus, TaskType } from "../types";
 import { registerSpreadsheetImportRoutes } from "./spreadsheet-import";
 import {
   actualEventSchema,
@@ -74,6 +74,7 @@ type FarmRouteDeps = {
   ensureTractorProfileInFarm: any;
   ensureSeedItemInFarm: any;
   ensureSeedItemLot: any;
+  learnSeedItemSpacingFromPlanting: any;
   upsertCoverCropName: any;
   insertGeneratedBeds: any;
   blockIdForBed: any;
@@ -106,6 +107,69 @@ type LatLngInput = { lat: number; lng: number };
 type GeoJsonPolygonInput = { type: "Polygon"; coordinates: number[][][] } | null;
 
 const ROUTE_EARTH_RADIUS_M = 6378137;
+
+async function syncSingleBlockZoneToBlockBoundary(
+  client: PoolClient,
+  deps: Pick<FarmRouteDeps, "upsertBlockZoneGeometry">,
+  options: {
+    blockId: number;
+    farmId: number;
+    coordinates: LatLngInput[];
+  }
+) {
+  const zoneResult = await client.query<{
+    id: number;
+    name: string;
+    planned_use: "beds" | "cover_crop" | null;
+    actual_state: z.infer<typeof zoneActualStateSchema>;
+    cover_crop_name_id: number | null;
+    planned_cover_crop_seed_date: string | null;
+    planned_cover_crop_terminate_date: string | null;
+    actual_cover_crop_seed_date: string | null;
+    actual_cover_crop_terminate_date: string | null;
+    notes: string | null;
+  }>(
+    `
+      select
+        id,
+        name,
+        planned_use,
+        actual_state,
+        cover_crop_name_id,
+        planned_cover_crop_seed_date::text,
+        planned_cover_crop_terminate_date::text,
+        actual_cover_crop_seed_date::text,
+        actual_cover_crop_terminate_date::text,
+        notes
+      from block_zones
+      where block_id = $1
+      order by id
+    `,
+    [options.blockId]
+  );
+
+  if (zoneResult.rows.length !== 1) {
+    return;
+  }
+
+  const zone = zoneResult.rows[0];
+  await deps.upsertBlockZoneGeometry(client, {
+    id: zone.id,
+    blockId: options.blockId,
+    farmId: options.farmId,
+    name: zone.name,
+    plannedUse: zone.planned_use,
+    actualState: zone.actual_state,
+    coverCropNameId: zone.cover_crop_name_id,
+    coverCropName: null,
+    plannedCoverCropSeedDate: zone.planned_cover_crop_seed_date,
+    plannedCoverCropTerminateDate: zone.planned_cover_crop_terminate_date,
+    actualCoverCropSeedDate: zone.actual_cover_crop_seed_date,
+    actualCoverCropTerminateDate: zone.actual_cover_crop_terminate_date,
+    notes: zone.notes,
+    coordinates: options.coordinates
+  });
+}
 
 function geoJsonPolygonToLatLngs(value: GeoJsonPolygonInput | unknown) {
   if (!value || typeof value !== "object" || (value as { type?: unknown }).type !== "Polygon") {
@@ -249,8 +313,10 @@ async function resolveBedMakingPreset(
     : null;
   const bedWidthM = inferredWidth && Number.isFinite(inferredWidth) && inferredWidth > 0
     ? Math.min(3, Math.max(0.3, inferredWidth))
-    : 0.76;
-  const pathSpacingM = Math.max(0.3, Math.min(1.2, bedWidthM * 0.6));
+    : 0.9144;
+  const pathSpacingM = inferredWidth && Number.isFinite(inferredWidth) && inferredWidth > 0
+    ? Math.max(0.3, Math.min(1.2, bedWidthM * 0.6))
+    : 0.6096;
   const inserted = await client.query<{ id: number; bed_width_m: string; path_spacing_m: string }>(
     `
       insert into bed_presets (farm_id, name, bed_width_m, path_spacing_m, is_road, notes)
@@ -323,6 +389,7 @@ export function registerFarmRoutes(app: express.Express, deps: FarmRouteDeps) {
     ensureTractorProfileInFarm,
     ensureSeedItemInFarm,
     ensureSeedItemLot,
+    learnSeedItemSpacingFromPlanting,
     upsertCoverCropName,
     insertGeneratedBeds,
     blockIdForBed,
@@ -518,6 +585,10 @@ app.get("/api/dashboard", requireRole("worker"), asyncHandler(async (req, res) =
           where lot.seed_item_id = seed_items.id
         ) as lots,
         days_to_maturity as "daysToMaturity",
+        usual_spacing as "usualSpacing",
+        usual_field_spacing_in_row as "usualFieldSpacingInRow",
+        usual_row_spacing as "usualRowSpacing",
+        usual_rows_per_bed as "usualRowsPerBed",
         notes,
         archived_at as "archivedAt",
         concat_ws(' / ', crop_type, variety_name, breed_name, supplier, nullif(catalog_number, ''), nullif(lot_number, '')) as "displayName"
@@ -812,6 +883,12 @@ app.post("/api/bed-presets", requireRole("planner"), asyncHandler(async (req, re
       `
         insert into bed_presets (farm_id, name, bed_width_m, path_spacing_m, is_road, notes)
         values ($1, $2, $3, $4, $5, $6)
+        on conflict (farm_id, name) do update
+        set bed_width_m = excluded.bed_width_m,
+            path_spacing_m = excluded.path_spacing_m,
+            is_road = excluded.is_road,
+            notes = excluded.notes,
+            updated_at = now()
         returning id
       `,
       [auth.farmId, body.name, body.bedWidthM, body.pathSpacingM, body.isRoad, body.notes ?? null]
@@ -1475,7 +1552,7 @@ app.post("/api/task-flows/:id/copy", requireRole("planner"), asyncHandler(async 
       node_key: string;
       task_type: TaskType;
       label: string;
-      anchor: TaskAnchor;
+      anchor: string;
       offset_days: number;
       icon_color: string;
       icon_secondary_color: string;
@@ -1518,7 +1595,7 @@ app.post("/api/task-flows/:id/copy", requireRole("planner"), asyncHandler(async 
         node_key: string;
         task_type: TaskType;
         label: string;
-        anchor: TaskAnchor;
+        anchor: string;
         offset_days: number;
         icon_color: string;
         icon_secondary_color: string;
@@ -1834,6 +1911,11 @@ app.put("/api/blocks/:id", requireRole("planner"), asyncHandler(async (req, res)
       fieldId: parent.rows[0].field_id,
       name: body.name,
       notes: body.notes ?? null,
+      coordinates: body.coordinates
+    });
+    await syncSingleBlockZoneToBlockBoundary(client, deps, {
+      blockId: id,
+      farmId: auth.farmId,
       coordinates: body.coordinates
     });
     await pruneUndoSnapshots(client, auth);
@@ -2173,6 +2255,7 @@ app.put("/api/plantings/:id", requireRole("planner"), asyncHandler(async (req, r
         auth.farmId
       ]
     );
+    await learnSeedItemSpacingFromPlanting(client, auth.farmId, id);
     await recalculatePlantingTasks(client, id);
     const blockIdsToReflow = new Set<number>();
     if (previousBlockId != null) blockIdsToReflow.add(previousBlockId);
@@ -2443,6 +2526,7 @@ app.post("/api/tasks/:id/record", requireRole("worker"), asyncHandler(async (req
           `update block_zones set actual_state = 'beds_made', updated_at = now() where id = $1`,
           [targetBed.zone_id]
         );
+        await learnSeedItemSpacingFromPlanting(client, auth.farmId, task.planting_id);
       }
 
       if (!blockFull && mode === "replace_existing" && bedCount < plannedBedCount && insertedIds.length) {

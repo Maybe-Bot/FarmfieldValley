@@ -66,7 +66,7 @@ Local prototype for farm project management and annual crop planning.
 
 7. Open the app at `http://localhost:5173` and log in with one of the seeded demo accounts below.
 
-If you want a brand-new farm instead of the seeded demo farms, use `Create account` on the landing page to create a new farm and its first planner login.
+If you want a brand-new farm instead of the seeded demo farms, use `Create account` on the landing page to create a new farm and its first planner login. New real-email accounts must be verified before login. In local development the API prints the verification link to the terminal; `junk@trash.com` is reserved for reusable test accounts and skips verification and email uniqueness.
 
 If you need the first global admin account for the admin panel, create it from the terminal instead of the public login page:
 
@@ -101,6 +101,8 @@ Before putting the API on the public internet, set these in `apps/api/.env` or y
 ```env
 NODE_ENV=production
 CORS_ALLOWED_ORIGINS=https://your-frontend.example.com
+PUBLIC_WEB_URL=https://your-frontend.example.com
+PUBLIC_API_URL=https://your-api.example.com
 CSRF_SECRET=replace-with-a-long-random-string
 SESSION_COOKIE_SECURE=true
 SESSION_COOKIE_SAMESITE=Lax
@@ -114,10 +116,11 @@ The first admin account is no longer created from the public website. Create it 
 
 The admin password is read from the `ADMIN_CREATE_PASSWORD` environment variable so it does not need to be passed on the command line.
 
-## User spreadsheet import
+## User spreadsheet import and backup
 
-The app has a strict crop-plan uploader in the Planning area. It accepts `.xlsx`,
-`.ods`, or `.csv` files whose first row exactly matches this header:
+The app has a spreadsheet uploader in the Planning area. It accepts full farm
+backup exports downloaded from the app, and it also accepts `.xlsx`, `.ods`, or
+`.csv` crop-plan template files whose first row exactly matches this header:
 
 ```csv
 Seed supplier,Crop,Variety,Catalog number,Start date,Plant count,Bed length (ft),Transplant date,Tray count,Cells per tray,Days to harvest,Field spacing in row,Row spacing,Rows per bed,Bed cover (plastic mulch/bare),Field,Block,Bed,Notes
@@ -126,15 +129,19 @@ Seed supplier,Crop,Variety,Catalog number,Start date,Plant count,Bed length (ft)
 Dates must use `YYYY-MM-DD`. Spacing numbers are inches. Leave `Transplant date`,
 `Tray count`, and `Cells per tray` blank for direct-seeded crops. `Bed cover
 (plastic mulch/bare)` may be blank, `plastic mulch`, `plastic`, or `bare`.
-`Field` and `Block` must match existing map names; `Bed` may be blank if the
-exact bed is not assigned yet. Uploads add rows to the current crop plan by
-default. The upload card has an explicit checkbox for replacing earlier
-spreadsheet-imported rows from the same farm when that is intentional.
+`Field` and `Block` must match existing map names when using the crop-plan
+template; `Bed` may be blank if the exact bed is not assigned yet. Uploads add
+rows to the current crop plan and do not delete existing crop-plan rows.
 
 Rows with missing essentials such as Crop, Start date, Plant count or Bed length,
 Field, or Block are still imported. The crop plan shows a red review marker for
 major problems and a yellow marker for optional missing details; their notes list
 what must be filled in manually.
+
+Full farm backup uploads can bring in map data, bed presets, seed records and
+lots, vehicles, crop plans, task flows, tasks, harvests, and event history. Team
+account rows are exported for reference, but logins and passwords are not
+restored from spreadsheet backup files.
 
 ## Private Spreadsheet Import
 

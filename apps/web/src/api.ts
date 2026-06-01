@@ -92,8 +92,16 @@ async function download(path: string) {
   const filenameMatch = disposition.match(/filename="?([^"]+)"?/i);
   return {
     blob: await response.blob(),
-    filename: filenameMatch?.[1] ?? "loam-ledger-export.xlsx"
+    filename: filenameMatch?.[1] ?? defaultBackupFilename()
   };
+}
+
+function defaultBackupFilename() {
+  const now = new Date();
+  const year = now.getFullYear();
+  const month = String(now.getMonth() + 1).padStart(2, "0");
+  const day = String(now.getDate()).padStart(2, "0");
+  return `loam-ledger-backup-${year}-${month}-${day}.xlsx`;
 }
 
 export const api = {
@@ -127,7 +135,20 @@ export const api = {
   updateSeedItem: (id: number, body: unknown) => request<{ ok: boolean }>(`/api/seed-items/${id}`, { method: "PUT", body: JSON.stringify(body) }),
   archiveSeedItem: (id: number) => request<{ ok: boolean }>(`/api/seed-items/${id}`, { method: "DELETE" }),
   restoreSeedItem: (id: number) => request<{ ok: boolean }>(`/api/seed-items/${id}/restore`, { method: "POST" }),
-  importSpreadsheet: (body: unknown) => request<{ parsedRows: number; importedPlantings: number; skippedRows: number; incompleteRows: number }>("/api/import/spreadsheet", { method: "POST", body: JSON.stringify(body) }),
+  importSpreadsheet: (body: unknown) => request<{
+    parsedRows: number;
+    importedPlantings: number;
+    skippedRows: number;
+    incompleteRows: number;
+    importedFields?: number;
+    skippedDuplicateFields?: number;
+    importedBlocks?: number;
+    skippedDuplicateBlocks?: number;
+    importedBeds?: number;
+    skippedDuplicateBeds?: number;
+    importedRecords?: number;
+    importedVehicles?: number;
+  }>("/api/import/spreadsheet", { method: "POST", body: JSON.stringify(body) }),
   createCoverCropName: (body: unknown) => request("/api/cover-crops", { method: "POST", body: JSON.stringify(body) }),
   createField: (body: unknown) => request("/api/fields", { method: "POST", body: JSON.stringify(body) }),
   updateField: (id: number, body: unknown) => request(`/api/fields/${id}`, { method: "PUT", body: JSON.stringify(body) }),

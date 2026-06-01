@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { isTightAccountEmail } from "./account-email";
 import { TaskAnchor, TaskType, taskAnchors, taskTypes } from "./types";
 
 // Zod schemas define what each API route accepts. They are the first line of
@@ -178,7 +179,11 @@ export const loginSchema = z.object({
 });
 
 export const usernameSchema = z.string().trim().min(3, "Username must be at least 3 characters").max(50);
-export const emailSchema = z.string().trim().email("Enter a valid email address").max(200);
+export const emailSchema = z
+  .string()
+  .trim()
+  .toLowerCase()
+  .refine(isTightAccountEmail, "Enter a valid email address.");
 export const passwordSchema = z
   .string()
   .min(8, "Password must be at least 8 characters")
@@ -324,7 +329,7 @@ export const taskFlowNodeSchema = z.object({
   nodeKey: z.string().min(1),
   taskType: taskTypeSchema,
   label: z.string().min(1),
-  anchor: taskAnchorSchema,
+  anchor: z.string().min(1),
   offsetDays: z.number().int(),
   iconColor: z.string().regex(/^#[0-9A-Fa-f]{6}$/).default("#4f84aa"),
   iconSecondaryColor: z.string().regex(/^#[0-9A-Fa-f]{6}$/).default("#f4c430"),

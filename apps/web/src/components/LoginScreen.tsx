@@ -1,11 +1,12 @@
 import { FormEvent, useState } from "react";
 import { api } from "../api";
-import { validateAccountInputs } from "../account-utils";
+import { EMAIL_VERIFICATION_BYPASS_ADDRESS, validateAccountInputs } from "../account-utils";
+import { SessionInfo } from "../types";
 
 type LoginScreenProps = {
   error: string | null;
   onLogin: (username: string, password: string) => Promise<void>;
-  onRegister: (farmName: string, displayName: string, email: string, username: string, password: string) => Promise<void>;
+  onRegister: (farmName: string, displayName: string, email: string, username: string, password: string) => Promise<SessionInfo>;
   themeMode: "light" | "dark";
 };
 
@@ -22,13 +23,26 @@ export function LoginScreen({
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [displayName, setDisplayName] = useState("");
-  const [status, setStatus] = useState<string | null>(null);
+  const [status, setStatus] = useState<string | null>(() => {
+    if (typeof window === "undefined") {
+      return null;
+    }
+    const verified = new URLSearchParams(window.location.search).get("verified");
+    if (verified === "invalid") {
+      return "That verification link is invalid or expired.";
+    }
+    if (verified === "missing") {
+      return "That verification link is missing its token.";
+    }
+    return null;
+  });
   const [saving, setSaving] = useState(false);
   const [feedbackOpen, setFeedbackOpen] = useState(false);
   const [feedbackComment, setFeedbackComment] = useState("");
   const [feedbackStatus, setFeedbackStatus] = useState<string | null>(null);
   const [isSavingFeedback, setIsSavingFeedback] = useState(false);
   const passwordHelp = "Password requirements: at least 8 characters, including one letter and one number.";
+  const emailHelp = `Real accounts must verify email before login. Use ${EMAIL_VERIFICATION_BYPASS_ADDRESS} for reusable testing accounts.`;
 
   async function submitLoginFeedback(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -160,7 +174,11 @@ export function LoginScreen({
                 if (mode === "login") {
                   await onLogin(username, password);
                 } else {
-                  await onRegister(farmName, displayName, email, username, password);
+                  const nextSession = await onRegister(farmName, displayName, email, username, password);
+                  if (!nextSession.authenticated && nextSession.verificationRequired) {
+                    setStatus(`Check ${nextSession.email ?? "your email"} for the verification link before logging in.`);
+                    return;
+                  }
                 }
                 setStatus(null);
               } catch (loginError) {
@@ -185,6 +203,7 @@ export function LoginScreen({
                 <span>Email</span>
                 <input value={email} onChange={(event) => setEmail(event.target.value)} type="email" autoComplete="email" placeholder="you@example.com" required />
               </label>
+              <p className="muted full-span">{emailHelp}</p>
             </>
           )}
           <label className="full-span">

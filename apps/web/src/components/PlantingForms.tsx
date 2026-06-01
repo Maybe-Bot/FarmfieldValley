@@ -1,6 +1,6 @@
 import { FormEvent, useEffect, useState } from "react";
 import { api } from "../api";
-import { Bed, DashboardData, Planting, TaskFlowTemplate } from "../types";
+import { Bed, DashboardData, Planting, SeedItem, TaskFlowTemplate } from "../types";
 
 type DistanceUnit = "m" | "ft";
 type PlantCountSource = "plant_count" | "tray_count" | "bed_length" | "full_block";
@@ -115,6 +115,113 @@ function parseSpacingPairForUnit(value: string | null, unit: DistanceUnit) {
     inRow: first == null ? "" : spacingMetersToInput(first, unit).toFixed(unit === "ft" ? 1 : 0),
     betweenRows: second == null ? "" : spacingMetersToInput(second, unit).toFixed(unit === "ft" ? 1 : 0)
   };
+}
+
+type SpacingSuggestion = {
+  inRow: string;
+  betweenRows: string;
+  rowsPerBed: string | null;
+};
+
+function spacingSuggestionFromValues(
+  spacing: string | null,
+  fieldSpacingInRow: number | null,
+  rowSpacing: number | null,
+  rowsPerBed: number | null,
+  unit: DistanceUnit
+): SpacingSuggestion | null {
+  const parsed = parseSpacingPairForUnit(spacing, unit);
+  const inRow = parsed.inRow || (fieldSpacingInRow == null ? "" : String(fieldSpacingInRow));
+  const betweenRows = parsed.betweenRows || (rowSpacing == null ? "" : String(rowSpacing)) || inRow;
+  if (!inRow) {
+    return null;
+  }
+  return {
+    inRow,
+    betweenRows,
+    rowsPerBed: rowsPerBed == null ? null : String(rowsPerBed)
+  };
+}
+
+function normalizedCropGroup(value: string | null | undefined) {
+  const lower = (value ?? "").toLowerCase();
+  if (!lower.trim()) return null;
+  if (lower.includes("tomato")) return "tomato";
+  if (lower.includes("pepper") || lower.includes("chile") || lower.includes("chili") || lower.includes("capsicum")) return "pepper";
+  if (lower.includes("eggplant") || lower.includes("aubergine")) return "eggplant";
+  return lower.replace(/[^a-z0-9]+/g, " ").trim().replace(/s\b/g, "");
+}
+
+function isTomatoGroup(value: string | null) {
+  return value === "tomato";
+}
+
+function seedSpacingSuggestion(seed: SeedItem, data: DashboardData, unit: DistanceUnit): SpacingSuggestion | null {
+  const learned = spacingSuggestionFromValues(
+    seed.usualSpacing,
+    seed.usualFieldSpacingInRow,
+    seed.usualRowSpacing,
+    seed.usualRowsPerBed,
+    unit
+  );
+  if (learned) {
+    return learned;
+  }
+
+  const seedById = new Map(data.seedItems.map((item) => [item.id, item]));
+  const targetCropGroup = normalizedCropGroup(seed.cropType);
+  const targetFamily = normalizedCropGroup(seed.family);
+  const candidates = new Map<string, { suggestion: SpacingSuggestion; count: number; score: number; latestId: number }>();
+
+  for (const planting of data.plantings) {
+    const plantingSeed = planting.seedItemId == null ? null : seedById.get(planting.seedItemId) ?? null;
+    const plantingCropGroup = normalizedCropGroup(plantingSeed?.cropType ?? planting.cropName);
+    const plantingFamily = normalizedCropGroup(plantingSeed?.family);
+    let score = 0;
+    if (planting.seedItemId === seed.id) {
+      score = 100;
+    } else if (seed.cropId != null && planting.cropId === seed.cropId) {
+      score = 80;
+    } else if (targetCropGroup && plantingCropGroup === targetCropGroup) {
+      score = 70;
+    } else if (
+      targetFamily &&
+      plantingFamily === targetFamily &&
+      !isTomatoGroup(targetCropGroup) &&
+      !isTomatoGroup(plantingCropGroup)
+    ) {
+      score = 45;
+    }
+    if (score === 0) {
+      continue;
+    }
+
+    const suggestion = spacingSuggestionFromValues(
+      planting.spacing,
+      planting.fieldSpacingInRow,
+      planting.rowSpacing,
+      planting.rowsPerBed,
+      unit
+    );
+    if (!suggestion) {
+      continue;
+    }
+    const key = `${suggestion.inRow}|${suggestion.betweenRows}|${suggestion.rowsPerBed ?? ""}`;
+    const current = candidates.get(key);
+    candidates.set(key, {
+      suggestion,
+      count: (current?.count ?? 0) + 1,
+      score: Math.max(current?.score ?? 0, score),
+      latestId: Math.max(current?.latestId ?? 0, planting.id)
+    });
+  }
+
+  return [...candidates.values()]
+    .sort((left, right) => (
+      right.score - left.score ||
+      right.count - left.count ||
+      right.latestId - left.latestId
+    ))[0]?.suggestion ?? null;
 }
 
 function formatSpacingPair(inRow: string, betweenRows: string, unit: DistanceUnit) {
@@ -867,6 +974,14 @@ export function PlantingForm({
               if (nextSeedItem?.daysToMaturity != null) {
                 setDaysToHarvest(String(nextSeedItem.daysToMaturity));
                 setLastDateInput("daysToHarvest");
+              }
+              const spacingSuggestion = nextSeedItem ? seedSpacingSuggestion(nextSeedItem, data, distanceUnit) : null;
+              if (spacingSuggestion) {
+                setSpacingInRow(spacingSuggestion.inRow);
+                setSpacingBetweenRows(spacingSuggestion.betweenRows);
+                if (spacingSuggestion.rowsPerBed) {
+                  setRowsPerBed(spacingSuggestion.rowsPerBed);
+                }
               }
             }}
           >

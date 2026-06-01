@@ -59,8 +59,8 @@ async function run() {
 
     const userResult = await client.query<{ id: number }>(
       `
-        insert into app_users (email, username, password_hash, display_name, is_admin)
-        values ($1, $2, $3, $4, true)
+        insert into app_users (email, username, password_hash, display_name, is_admin, email_verified_at)
+        values ($1, $2, $3, $4, true, now())
         returning id
       `,
       [args.email, args.username, hashPassword(args.password), args.displayName]

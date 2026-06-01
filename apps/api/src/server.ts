@@ -13,9 +13,11 @@
  */
 import express from "express";
 import cors from "cors";
+import crypto from "node:crypto";
 import fs from "node:fs/promises";
 import { PoolClient } from "pg";
 import { z } from "zod";
+import { isEmailVerificationBypassAddress, normalizeAccountEmail } from "./account-email";
 import { AuthContext, AuthenticatedRequest, clearSessionCookie, createSessionToken, csrfTokenForRequest, csrfTokenForSession, hashPassword, readSessionToken, resolveAuthContext, setSessionCookie, verifyPassword } from "./auth";
 import {
   BedLineMode,
@@ -52,12 +54,13 @@ import {
   SeedItemLotInput,
   ZoneActualStateInput
 } from "./schemas";
-import { ActualEventType, FarmRole, PlantingStatus, TaskAnchor, TaskType } from "./types";
+import { ActualEventType, FarmRole, PlantingStatus, TaskType } from "./types";
 import { assertUndoRestoreIsAccountSafe } from "./undo-safety";
 
 const app = express();
 app.use(cors({
   credentials: true,
+  exposedHeaders: ["Content-Disposition"],
   origin(origin, callback) {
     // Browser requests must come from an explicitly configured frontend origin.
     // Non-browser same-origin/server-to-server requests often omit Origin.
@@ -71,6 +74,25 @@ app.use(cors({
 // Spreadsheet uploads are sent as base64 JSON so the prototype does not need a multipart parser.
 app.use("/api/import/spreadsheet", express.json({ limit: "12mb" }));
 app.use(express.json({ limit: "512kb" }));
+
+async function seedDefaultBedPresets(client: PoolClient, farmId: number) {
+  await client.query(
+    `
+      insert into bed_presets (farm_id, name, bed_width_m, path_spacing_m, is_road, notes)
+      values
+        ($1, 'Bare bed 3 ft', 0.9144, 0.6096, false, 'Default bare bed: 3 ft plantable bed with 2 ft path.'),
+        ($1, 'Plastic bed 3 ft', 0.9144, 0.9144, false, 'Default plastic bed: 3 ft bed with 3 ft path.'),
+        ($1, 'Farm road 12 ft', 3.6576, 0, true, 'Default non-plantable farm road: 12 ft wide.')
+      on conflict (farm_id, name) do update
+      set bed_width_m = excluded.bed_width_m,
+          path_spacing_m = excluded.path_spacing_m,
+          is_road = excluded.is_road,
+          notes = excluded.notes,
+          updated_at = now()
+    `,
+    [farmId]
+  );
+}
 
 type RateLimitBucket = {
   count: number;
@@ -160,6 +182,58 @@ function recordLoginFailure(req: express.Request, username: string) {
 
 function clearLoginFailures(req: express.Request, username: string) {
   loginLockoutBuckets.delete(loginLockoutKey(req, username));
+}
+
+function createEmailVerificationToken() {
+  return crypto.randomBytes(32).toString("base64url");
+}
+
+function emailVerificationTokenHash(token: string) {
+  return crypto.createHash("sha256").update(token).digest("hex");
+}
+
+function emailVerificationUrl(token: string) {
+  const url = new URL("/api/auth/verify-email", config.publicApiUrl);
+  url.searchParams.set("token", token);
+  return url.toString();
+}
+
+async function sendVerificationEmail(email: string, username: string, token: string) {
+  const url = emailVerificationUrl(token);
+  // There is no SMTP dependency in this prototype yet. Logging the link keeps
+  // local/dev signup usable and gives hosted deployments a single integration
+  // point for a real mail provider later.
+  console.info(`[email verification] ${email} (${username}): ${url}`);
+}
+
+async function createVerifiedSession(
+  client: PoolClient,
+  res: express.Response,
+  user: { id: number; username: string; display_name: string | null; is_admin: boolean },
+  membership: { farm_id: number; farm_name: string; role: FarmRole }
+) {
+  const token = createSessionToken();
+  await client.query(
+    `
+      insert into user_sessions (user_id, farm_id, session_token, expires_at)
+      values ($1, $2, $3, now() + ($4::text || ' days')::interval)
+    `,
+    [user.id, membership.farm_id, token, String(config.sessionMaxAgeDays)]
+  );
+  setSessionCookie(res, token);
+  return {
+    authenticated: true,
+    user: {
+      id: user.id,
+      username: user.username,
+      displayName: user.display_name,
+      farmId: membership.farm_id,
+      farmName: membership.farm_name,
+      role: membership.role,
+      isAdmin: user.is_admin
+    },
+    csrfToken: csrfTokenForSession(token)
+  };
 }
 
 function stringifiedLength(value: unknown) {
@@ -264,11 +338,13 @@ function requireAdmin() {
   };
 }
 
-// Attach auth data to API requests. Login/session/offline imagery are allowed to
-// run without an existing authenticated farm session.
+// Attach auth data to API requests. Auth bootstrap/session/offline imagery are
+// allowed to run without an existing authenticated farm session.
 app.use("/api", asyncHandler(async (req, _res, next) => {
   if (
     req.path === "/auth/login" ||
+    req.path === "/auth/register" ||
+    req.path === "/auth/verify-email" ||
     req.path === "/session" ||
     req.path.startsWith("/offline-imagery/")
   ) {
@@ -538,6 +614,49 @@ async function ensureSeedItemLot(client: PoolClient, seedItemId: number, farmId:
       where id = $1 and farm_id = $3
     `,
     [seedItemId, lotNumber, farmId]
+  );
+}
+
+async function learnSeedItemSpacingFromPlanting(client: PoolClient, farmId: number, plantingId: number) {
+  const result = await client.query<{
+    seed_item_id: number | null;
+    spacing: string | null;
+    field_spacing_in_row: string | null;
+    row_spacing: string | null;
+    rows_per_bed: number | null;
+  }>(
+    `
+      select seed_item_id, spacing, field_spacing_in_row, row_spacing, rows_per_bed
+      from plantings
+      where id = $1 and farm_id = $2
+    `,
+    [plantingId, farmId]
+  );
+  const row = result.rows[0];
+  if (!row?.seed_item_id) {
+    return;
+  }
+
+  const spacing = row.spacing?.trim() || null;
+  const fieldSpacingInRow = row.field_spacing_in_row == null ? null : Number(row.field_spacing_in_row);
+  const rowSpacing = row.row_spacing == null ? null : Number(row.row_spacing);
+  const rowsPerBed = row.rows_per_bed;
+  if (spacing == null && fieldSpacingInRow == null && rowSpacing == null && rowsPerBed == null) {
+    return;
+  }
+
+  await client.query(
+    `
+      update seed_items
+      set
+        usual_spacing = coalesce($3, usual_spacing),
+        usual_field_spacing_in_row = coalesce($4, usual_field_spacing_in_row),
+        usual_row_spacing = coalesce($5, usual_row_spacing),
+        usual_rows_per_bed = coalesce($6, usual_rows_per_bed),
+        updated_at = now()
+      where id = $1 and farm_id = $2
+    `,
+    [row.seed_item_id, farmId, spacing, fieldSpacingInRow, rowSpacing, rowsPerBed]
   );
 }
 
@@ -1053,6 +1172,7 @@ async function createPlantingFromInput(client: PoolClient, auth: AuthContext, bo
     ]
   );
   const plantingId = result.rows[0].id;
+  await learnSeedItemSpacingFromPlanting(client, auth.farmId, plantingId);
   await recalculatePlantingTasks(client, plantingId);
   if (intendedBlockId != null) {
     await upsertBlockBedMakingTask(client, auth.farmId, intendedBlockId);
@@ -1961,6 +2081,7 @@ const undoSnapshotTableNames = [
   "blocks",
   "cover_crop_names",
   "seed_items",
+  "seed_item_lots",
   "bed_presets",
   "tractor_profiles",
   "block_zones",
@@ -1983,6 +2104,7 @@ const undoSnapshotSequenceNames = [
   "blocks",
   "cover_crop_names",
   "seed_items",
+  "seed_item_lots",
   "bed_presets",
   "tractor_profiles",
   "block_zones",
@@ -2016,6 +2138,12 @@ async function captureFarmSnapshot(
         ),
         'cover_crop_names', (select coalesce(jsonb_agg(to_jsonb(cover_crop) order by cover_crop.id), '[]'::jsonb) from cover_crop_names cover_crop where cover_crop.farm_id = $1),
         'seed_items', (select coalesce(jsonb_agg(to_jsonb(seed) order by seed.id), '[]'::jsonb) from seed_items seed where seed.farm_id = $1),
+        'seed_item_lots', (
+          select coalesce(jsonb_agg(to_jsonb(lot) order by lot.id), '[]'::jsonb)
+          from seed_item_lots lot
+          join seed_items seed on seed.id = lot.seed_item_id
+          where seed.farm_id = $1
+        ),
         'bed_presets', (select coalesce(jsonb_agg(to_jsonb(preset) order by preset.id), '[]'::jsonb) from bed_presets preset where preset.farm_id = $1),
         'tractor_profiles', (select coalesce(jsonb_agg(to_jsonb(profile) order by profile.id), '[]'::jsonb) from tractor_profiles profile where profile.farm_id = $1),
         'block_zones', (
@@ -2136,6 +2264,18 @@ async function restoreFarmSnapshot(
   farmId: number,
   snapshot: Record<string, unknown>
 ) {
+  const snapshotHasSeedItemLots = Object.prototype.hasOwnProperty.call(snapshot, "seed_item_lots");
+  const fallbackSeedItemLots = snapshotHasSeedItemLots
+    ? null
+    : await client.query<{ lots: unknown }>(
+        `
+          select coalesce(jsonb_agg(to_jsonb(lot) order by lot.id), '[]'::jsonb) as lots
+          from seed_item_lots lot
+          join seed_items seed on seed.id = lot.seed_item_id
+          where seed.farm_id = $1
+        `,
+        [farmId]
+      ).then((result) => result.rows[0]?.lots ?? []);
   await client.query(`delete from farm_events where farm_id = $1`, [farmId]);
   await client.query(`delete from harvest_records where farm_id = $1`, [farmId]);
   await client.query(`delete from tasks where farm_id = $1`, [farmId]);
@@ -2172,17 +2312,36 @@ async function restoreFarmSnapshot(
     [farmId]
   );
   await client.query(`delete from cover_crop_names where farm_id = $1`, [farmId]);
+  if (snapshotHasSeedItemLots) {
+    await client.query(`delete from seed_item_lots where seed_item_id in (select id from seed_items where farm_id = $1)`, [farmId]);
+  }
   await client.query(`delete from seed_items where farm_id = $1`, [farmId]);
   await client.query(`delete from bed_presets where farm_id = $1`, [farmId]);
+  await client.query(`delete from tractor_profiles where farm_id = $1`, [farmId]);
   await client.query(`delete from blocks where field_id in (select id from fields where farm_id = $1)`, [farmId]);
   await client.query(`delete from fields where farm_id = $1`, [farmId]);
 
   // jsonb_populate_recordset lets Postgres rehydrate date, numeric, array, jsonb,
   // and PostGIS geometry columns using the same text representations it exported.
   for (const tableName of undoSnapshotTableNames) {
+    if (tableName === "seed_item_lots" && !snapshotHasSeedItemLots) {
+      continue;
+    }
     await client.query(
       `insert into ${tableName} select * from jsonb_populate_recordset(null::${tableName}, $1::jsonb->'${tableName}')`,
       [JSON.stringify(snapshot)]
+    );
+  }
+
+  if (!snapshotHasSeedItemLots && fallbackSeedItemLots) {
+    await client.query(
+      `
+        insert into seed_item_lots
+        select lot.*
+        from jsonb_populate_recordset(null::seed_item_lots, $1::jsonb) as lot
+        where exists (select 1 from seed_items seed where seed.id = lot.seed_item_id)
+      `,
+      [JSON.stringify(fallbackSeedItemLots)]
     );
   }
 
@@ -2586,7 +2745,7 @@ async function saveTaskFlowTemplate(
       nodeKey: string;
       taskType: TaskType;
       label: string;
-      anchor: TaskAnchor;
+      anchor: string;
       offsetDays: number;
       iconColor: string;
       iconSecondaryColor: string;
@@ -2777,12 +2936,14 @@ app.post("/api/auth/login", asyncHandler(async (req, res) => {
       id: number;
       username: string;
       display_name: string | null;
+      email: string;
+      email_verified_at: string | null;
       password_hash: string;
       is_active: boolean;
       is_admin: boolean;
     }>(
       `
-        select id, username, display_name, password_hash, is_active, is_admin
+        select id, username, display_name, email, email_verified_at, password_hash, is_active, is_admin
         from app_users
         where lower(username) = lower($1)
         limit 1
@@ -2793,6 +2954,11 @@ app.post("/api/auth/login", asyncHandler(async (req, res) => {
     if (!user || !user.is_active || !verifyPassword(body.password, user.password_hash)) {
       recordLoginFailure(req, body.username);
       res.status(401).json({ error: "Invalid username or password" });
+      return;
+    }
+    if (!isEmailVerificationBypassAddress(user.email) && !user.email_verified_at) {
+      recordLoginFailure(req, body.username);
+      res.status(403).json({ error: "Check your email to verify this account before logging in." });
       return;
     }
     clearLoginFailures(req, body.username);
@@ -2818,28 +2984,7 @@ app.post("/api/auth/login", asyncHandler(async (req, res) => {
       return;
     }
 
-    const token = createSessionToken();
-    await client.query(
-      `
-        insert into user_sessions (user_id, farm_id, session_token, expires_at)
-        values ($1, $2, $3, now() + ($4::text || ' days')::interval)
-      `,
-      [user.id, membership.farm_id, token, String(config.sessionMaxAgeDays)]
-    );
-    setSessionCookie(res, token);
-    res.status(201).json({
-      authenticated: true,
-      user: {
-        id: user.id,
-        username: user.username,
-        displayName: user.display_name,
-        farmId: membership.farm_id,
-        farmName: membership.farm_name,
-        role: membership.role,
-        isAdmin: user.is_admin
-      },
-      csrfToken: csrfTokenForSession(token)
-    });
+    res.status(201).json(await createVerifiedSession(client, res, user, membership));
   } finally {
     client.release();
   }
@@ -2847,6 +2992,9 @@ app.post("/api/auth/login", asyncHandler(async (req, res) => {
 
 app.post("/api/auth/register", asyncHandler(async (req, res) => {
   const body = registerSchema.parse(req.body);
+  const email = normalizeAccountEmail(body.email);
+  const bypassEmailVerification = isEmailVerificationBypassAddress(email);
+  const verificationToken = bypassEmailVerification ? null : createEmailVerificationToken();
   if (!enforceRateLimit(req, res, `register:${requestIp(req)}`, {
     limit: 8,
     windowMs: 60 * 60 * 1000,
@@ -2867,17 +3015,35 @@ app.post("/api/auth/register", asyncHandler(async (req, res) => {
     );
     const farm = farmResult.rows[0];
     await seedStarterSeedCatalog(client, farm.id);
+    await seedDefaultBedPresets(client, farm.id);
     const userResult = await client.query<{
       id: number;
       username: string;
       display_name: string | null;
+      is_admin: boolean;
     }>(
       `
-        insert into app_users (email, username, password_hash, display_name)
-        values ($1, $2, $3, $4)
-        returning id, username, display_name
+        insert into app_users (
+          email,
+          username,
+          password_hash,
+          display_name,
+          email_verified_at,
+          email_verification_token_hash,
+          email_verification_expires_at
+        )
+        values ($1, $2, $3, $4, $5, $6, $7)
+        returning id, username, display_name, is_admin
       `,
-      [body.email.trim().toLowerCase(), body.username.trim(), hashPassword(body.password), body.displayName?.trim() || null]
+      [
+        email,
+        body.username.trim(),
+        hashPassword(body.password),
+        body.displayName?.trim() || null,
+        bypassEmailVerification ? new Date().toISOString() : null,
+        verificationToken ? emailVerificationTokenHash(verificationToken) : null,
+        verificationToken ? new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString() : null
+      ]
     );
     const user = userResult.rows[0];
 
@@ -2889,30 +3055,22 @@ app.post("/api/auth/register", asyncHandler(async (req, res) => {
       [farm.id, user.id]
     );
 
-    const token = createSessionToken();
-    await client.query(
-      `
-        insert into user_sessions (user_id, farm_id, session_token, expires_at)
-        values ($1, $2, $3, now() + ($4::text || ' days')::interval)
-      `,
-      [user.id, farm.id, token, String(config.sessionMaxAgeDays)]
-    );
-
     await client.query("commit");
-    setSessionCookie(res, token);
-    res.status(201).json({
-      authenticated: true,
-      user: {
-        id: user.id,
-        username: user.username,
-        displayName: user.display_name,
-        farmId: farm.id,
-        farmName: farm.name,
-        role: "planner" satisfies FarmRole,
-        isAdmin: false
-      },
-      csrfToken: csrfTokenForSession(token)
-    });
+    if (verificationToken) {
+      await sendVerificationEmail(email, user.username, verificationToken);
+      res.status(201).json({
+        authenticated: false,
+        verificationRequired: true,
+        email
+      });
+      return;
+    }
+
+    res.status(201).json(await createVerifiedSession(client, res, user, {
+      farm_id: farm.id,
+      farm_name: farm.name,
+      role: "planner" satisfies FarmRole
+    }));
   } catch (error) {
     await client.query("rollback");
     const maybeError = error as { code?: string };
@@ -2924,6 +3082,89 @@ app.post("/api/auth/register", asyncHandler(async (req, res) => {
   } finally {
     client.release();
   }
+}));
+
+async function verifyEmailTokenAndCreateSession(token: string, res: express.Response) {
+  const tokenHash = emailVerificationTokenHash(token);
+  const client = await pool.connect();
+  try {
+    await client.query("begin");
+    const userResult = await client.query<{
+      id: number;
+      username: string;
+      display_name: string | null;
+      is_admin: boolean;
+    }>(
+      `
+        update app_users
+        set
+          email_verified_at = now(),
+          email_verification_token_hash = null,
+          email_verification_expires_at = null,
+          updated_at = now()
+        where email_verification_token_hash = $1
+          and email_verification_expires_at > now()
+          and is_active = true
+        returning id, username, display_name, is_admin
+      `,
+      [tokenHash]
+    );
+    const user = userResult.rows[0];
+    if (!user) {
+      await client.query("rollback");
+      return null;
+    }
+
+    const membershipResult = await client.query<{
+      farm_id: number;
+      farm_name: string;
+      role: FarmRole;
+    }>(
+      `
+        select membership.farm_id, farm.name as farm_name, membership.role
+        from farm_memberships membership
+        join farms farm on farm.id = membership.farm_id
+        where membership.user_id = $1
+        order by membership.farm_id
+        limit 1
+      `,
+      [user.id]
+    );
+    const membership = membershipResult.rows[0];
+    if (!membership) {
+      await client.query("rollback");
+      return null;
+    }
+
+    const sessionInfo = await createVerifiedSession(client, res, user, membership);
+    await client.query("commit");
+    return sessionInfo;
+  } catch (error) {
+    await client.query("rollback");
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
+app.post("/api/auth/verify-email", asyncHandler(async (req, res) => {
+  const token = z.object({ token: z.string().min(20) }).parse(req.body).token;
+  const sessionInfo = await verifyEmailTokenAndCreateSession(token, res);
+  if (!sessionInfo) {
+    res.status(400).json({ error: "That verification link is invalid or expired." });
+    return;
+  }
+  res.status(201).json(sessionInfo);
+}));
+
+app.get("/api/auth/verify-email", asyncHandler(async (req, res) => {
+  const token = typeof req.query.token === "string" ? req.query.token : "";
+  if (!token) {
+    res.redirect(`${config.publicWebUrl}?verified=missing`);
+    return;
+  }
+  const sessionInfo = await verifyEmailTokenAndCreateSession(token, res);
+  res.redirect(`${config.publicWebUrl}?verified=${sessionInfo ? "1" : "invalid"}`);
 }));
 
 app.post("/api/auth/logout", asyncHandler(async (req, res) => {
@@ -2980,6 +3221,9 @@ app.get("/api/accounts", requireRole("planner"), asyncHandler(async (req, res) =
 app.post("/api/accounts", requireRole("planner"), asyncHandler(async (req, res) => {
   const auth = currentAuth(req) as AuthContext;
   const body = accountCreateSchema.parse(req.body);
+  const email = normalizeAccountEmail(body.email);
+  const bypassEmailVerification = isEmailVerificationBypassAddress(email);
+  const verificationToken = bypassEmailVerification ? null : createEmailVerificationToken();
   const client = await pool.connect();
   try {
     await client.query("begin");
@@ -2990,11 +3234,27 @@ app.post("/api/accounts", requireRole("planner"), asyncHandler(async (req, res) 
       created_at: string;
     }>(
       `
-        insert into app_users (email, username, password_hash, display_name)
-        values ($1, $2, $3, $4)
+        insert into app_users (
+          email,
+          username,
+          password_hash,
+          display_name,
+          email_verified_at,
+          email_verification_token_hash,
+          email_verification_expires_at
+        )
+        values ($1, $2, $3, $4, $5, $6, $7)
         returning id, username, display_name, created_at
       `,
-      [body.email.trim().toLowerCase(), body.username.trim(), hashPassword(body.password), body.displayName?.trim() || null]
+      [
+        email,
+        body.username.trim(),
+        hashPassword(body.password),
+        body.displayName?.trim() || null,
+        bypassEmailVerification ? new Date().toISOString() : null,
+        verificationToken ? emailVerificationTokenHash(verificationToken) : null,
+        verificationToken ? new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString() : null
+      ]
     );
     await client.query(
       `
@@ -3004,12 +3264,16 @@ app.post("/api/accounts", requireRole("planner"), asyncHandler(async (req, res) 
       [auth.farmId, userResult.rows[0].id, body.role]
     );
     await client.query("commit");
+    if (verificationToken) {
+      await sendVerificationEmail(email, userResult.rows[0].username, verificationToken);
+    }
     res.status(201).json({
       id: userResult.rows[0].id,
       username: userResult.rows[0].username,
       displayName: userResult.rows[0].display_name,
       role: body.role,
-      createdAt: userResult.rows[0].created_at
+      createdAt: userResult.rows[0].created_at,
+      verificationRequired: Boolean(verificationToken)
     });
   } catch (error) {
     await client.query("rollback");
@@ -3417,6 +3681,7 @@ registerFarmRoutes(app, {
   ensureTractorProfileInFarm,
   ensureSeedItemInFarm,
   ensureSeedItemLot,
+  learnSeedItemSpacingFromPlanting,
   upsertCoverCropName,
   insertGeneratedBeds,
   blockIdForBed,

@@ -1,14 +1,15 @@
 /**
  * Task scheduler for planting work.
  *
- * A planting points at a task-flow template. Each flow node says what task to
- * create, which date milestone to anchor to, and how many days to offset. When
- * actual work dates are recorded, this module updates generated tasks in place
- * so task IDs, farm_events.task_id links, and user-visible history survive.
+ * A planting points at a task-flow template. Starter nodes schedule from a
+ * planting date milestone; nodes with an `after:<node_key>` anchor schedule
+ * from the linked task's completed date, falling back to that task's planned
+ * date until work is recorded. This module updates generated tasks in place so
+ * task IDs, farm_events.task_id links, and user-visible history survive.
  */
 import { PoolClient } from "pg";
 import { titleCase } from "./utils";
-import { TaskAnchor, TaskType } from "./types";
+import { TaskAnchor, taskAnchors, TaskType } from "./types";
 
 type PlantingRow = {
   id: number;
@@ -34,7 +35,7 @@ type FlowNodeRow = {
   node_key: string;
   task_type: TaskType;
   label: string;
-  anchor: TaskAnchor;
+  anchor: string;
   offset_days: number;
   icon_color: string;
   icon_secondary_color: string;
@@ -53,6 +54,11 @@ type ExistingGeneratedTaskRow = {
   status: string;
   completed_date: string | Date | null;
   event_count: string | number;
+};
+
+type GeneratedTaskTiming = {
+  id: number;
+  sourceDate: string;
 };
 
 // Prefer actual dates when they exist, otherwise fall back to the planned dates.
@@ -102,6 +108,67 @@ function addDays(dateValue: string | Date, offsetDays: number) {
   const next = new Date(`${dateString}T00:00:00Z`);
   next.setUTCDate(next.getUTCDate() + offsetDays);
   return next.toISOString().slice(0, 10);
+}
+
+function isTaskAnchor(value: string): value is TaskAnchor {
+  return (taskAnchors as string[]).includes(value);
+}
+
+function afterNodeKeys(anchor: string) {
+  if (!anchor.startsWith("after:")) {
+    return [];
+  }
+
+  return anchor
+    .slice("after:".length)
+    .split(",")
+    .map((nodeKey) => nodeKey.trim())
+    .filter(Boolean);
+}
+
+function latestDate(dates: string[]) {
+  return dates.reduce((latest, date) => date > latest ? date : latest, dates[0]);
+}
+
+function orderNodesByEdges(nodes: FlowNodeRow[], edges: FlowEdgeRow[]) {
+  const nodesByKey = new Map(nodes.map((node) => [node.node_key, node]));
+  const indegreeByKey = new Map(nodes.map((node) => [node.node_key, 0]));
+  const downstreamByKey = new Map(nodes.map((node) => [node.node_key, [] as string[]]));
+
+  for (const edge of edges) {
+    if (!nodesByKey.has(edge.from_node_key) || !nodesByKey.has(edge.to_node_key)) {
+      continue;
+    }
+    downstreamByKey.get(edge.from_node_key)?.push(edge.to_node_key);
+    indegreeByKey.set(edge.to_node_key, (indegreeByKey.get(edge.to_node_key) ?? 0) + 1);
+  }
+
+  const ready = nodes.filter((node) => (indegreeByKey.get(node.node_key) ?? 0) === 0);
+  const ordered: FlowNodeRow[] = [];
+  const queued = new Set(ready.map((node) => node.node_key));
+
+  while (ready.length > 0) {
+    const node = ready.shift() as FlowNodeRow;
+    ordered.push(node);
+    for (const downstreamNodeKey of downstreamByKey.get(node.node_key) ?? []) {
+      const nextIndegree = (indegreeByKey.get(downstreamNodeKey) ?? 0) - 1;
+      indegreeByKey.set(downstreamNodeKey, nextIndegree);
+      if (nextIndegree === 0 && !queued.has(downstreamNodeKey)) {
+        const downstreamNode = nodesByKey.get(downstreamNodeKey);
+        if (downstreamNode) {
+          ready.push(downstreamNode);
+          queued.add(downstreamNodeKey);
+        }
+      }
+    }
+  }
+
+  if (ordered.length !== nodes.length) {
+    const orderedKeys = new Set(ordered.map((node) => node.node_key));
+    ordered.push(...nodes.filter((node) => !orderedKeys.has(node.node_key)));
+  }
+
+  return ordered;
 }
 
 // Synchronizes auto-generated tasks for one planting from its selected/default
@@ -201,20 +268,29 @@ export async function recalculatePlantingTasks(client: PoolClient, plantingId: n
   ]);
 
   const taskIdsByNodeKey = new Map<string, number>();
+  const taskTimingByNodeKey = new Map<string, GeneratedTaskTiming>();
   const existingTasksByFlowNodeId = new Map(
     existingTasksResult.rows
       .filter((task) => task.task_flow_node_id != null)
       .map((task) => [task.task_flow_node_id as number, task])
   );
   const activeTaskIds = new Set<number>();
+  const orderedNodes = orderNodesByEdges(nodesResult.rows, edgesResult.rows);
 
-  for (const node of nodesResult.rows) {
-    const anchorDate = resolveAnchorDate(planting, node.anchor);
-    if (!anchorDate) {
+  for (const node of orderedNodes) {
+    const sourceNodeKeys = afterNodeKeys(node.anchor);
+    const sourceDates = sourceNodeKeys
+      .map((nodeKey) => taskTimingByNodeKey.get(nodeKey)?.sourceDate)
+      .filter((value: string | undefined): value is string => value != null);
+    const baseDate = sourceNodeKeys.length > 0
+      ? sourceDates.length === sourceNodeKeys.length ? latestDate(sourceDates) : null
+      : isTaskAnchor(node.anchor) ? resolveAnchorDate(planting, node.anchor) : null;
+    if (!baseDate) {
       continue;
     }
 
-    const scheduledDate = addDays(anchorDate, node.offset_days);
+    const scheduledDate = addDays(baseDate, node.offset_days);
+    const taskAnchor = node.anchor;
     const fallbackLabel = `${titleCase(node.task_type)} ${planting.crop_name}`;
     const taskLabel = `${node.label || fallbackLabel} - ${planting.crop_name}${planting.variety_name ? ` (${planting.variety_name})` : ""}`;
     const existingTask = existingTasksByFlowNodeId.get(node.id);
@@ -248,12 +324,16 @@ export async function recalculatePlantingTasks(client: PoolClient, plantingId: n
           node.icon_secondary_color,
           node.tractor_model,
           node.tractor_profile_id,
-          node.anchor,
+          taskAnchor,
           node.offset_days,
           scheduledDate
         ]
       );
       taskIdsByNodeKey.set(node.node_key, existingTask.id);
+      taskTimingByNodeKey.set(node.node_key, {
+        id: existingTask.id,
+        sourceDate: existingTask.completed_date ? toDateOnlyString(existingTask.completed_date) : scheduledDate
+      });
       activeTaskIds.add(existingTask.id);
     } else {
       const result = await client.query<{ id: number }>(
@@ -289,12 +369,16 @@ export async function recalculatePlantingTasks(client: PoolClient, plantingId: n
           node.icon_secondary_color,
           node.tractor_model,
           node.tractor_profile_id,
-          node.anchor,
+          taskAnchor,
           node.offset_days,
           scheduledDate
         ]
       );
       taskIdsByNodeKey.set(node.node_key, result.rows[0].id);
+      taskTimingByNodeKey.set(node.node_key, {
+        id: result.rows[0].id,
+        sourceDate: scheduledDate
+      });
       activeTaskIds.add(result.rows[0].id);
     }
   }

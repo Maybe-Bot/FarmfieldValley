@@ -105,7 +105,12 @@ export function SpreadsheetImportCard({ tutorialActive = false, onImported }: { 
       const incompleteMessage = result.incompleteRows > 0
         ? ` ${result.incompleteRows} row${result.incompleteRows === 1 ? "" : "s"} need manual completion.`
         : "";
-      setStatus(`Added ${result.importedPlantings} planting${result.importedPlantings === 1 ? "" : "s"} from ${result.parsedRows} parsed row${result.parsedRows === 1 ? "" : "s"}.${incompleteMessage}`);
+      const importedMapItems = (result.importedFields ?? 0) + (result.importedBlocks ?? 0) + (result.importedBeds ?? 0);
+      const duplicateMapItems = (result.skippedDuplicateFields ?? 0) + (result.skippedDuplicateBlocks ?? 0) + (result.skippedDuplicateBeds ?? 0);
+      const backupMessage = importedMapItems > 0 || duplicateMapItems > 0 || (result.importedRecords ?? 0) > 0 || (result.importedVehicles ?? 0) > 0
+        ? ` Imported ${importedMapItems} map item${importedMapItems === 1 ? "" : "s"}, ${result.importedVehicles ?? 0} vehicle${(result.importedVehicles ?? 0) === 1 ? "" : "s"}, and ${result.importedRecords ?? 0} related record${(result.importedRecords ?? 0) === 1 ? "" : "s"}. Skipped ${duplicateMapItems} duplicate map item${duplicateMapItems === 1 ? "" : "s"}.`
+        : "";
+      setStatus(`Added ${result.importedPlantings} planting${result.importedPlantings === 1 ? "" : "s"} from ${result.parsedRows} parsed row${result.parsedRows === 1 ? "" : "s"}.${backupMessage}${incompleteMessage}`);
     } catch (error) {
       setStatus(error instanceof Error ? error.message : "Spreadsheet import failed.");
     } finally {
@@ -137,11 +142,11 @@ export function SpreadsheetImportCard({ tutorialActive = false, onImported }: { 
       <h2>Import crop plan spreadsheet</h2>
       {tutorialActive && (
         <div className="tutorial-helper-bubble">
-          <strong>Tutorial next:</strong> This is the spreadsheet uploader. You do not need to use it now; it is here for importing a prepared crop plan later.
+          <strong>Tutorial next:</strong> This is the spreadsheet uploader. You do not need to use it now; it is here for importing a prepared crop plan or farm backup later.
         </div>
       )}
       <p className="muted">
-        Strict prototype importer: use the exact header row below. It imports planting plans and seed records only, maps rows to existing fields/blocks/beds, and adds them to the current crop plan.
+        Upload a farm export to bring in map data, vehicles, seed records, crop plans, tasks, harvests, and event history. You can also use the smaller crop-plan template below.
       </p>
       <form className="form-grid" onSubmit={(event) => void importSpreadsheet(event)}>
         <div className="button-row full-span">

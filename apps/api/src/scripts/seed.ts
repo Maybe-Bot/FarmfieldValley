@@ -11,7 +11,7 @@ import { hashPassword } from "../auth";
 import { generateBedLayouts } from "../beds";
 import { boundingBox, Coordinate, polygonWkt } from "../geometry";
 import { recalculatePlantingTasks } from "../scheduler";
-import { TaskAnchor, TaskType } from "../types";
+import { TaskType } from "../types";
 
 export async function databaseHasExistingData(client: PoolClient) {
   const result = await client.query<{ count: string }>(
@@ -241,7 +241,7 @@ async function insertTaskFlowTemplate(
       nodeKey: string;
       taskType: TaskType;
       label: string;
-      anchor: TaskAnchor;
+      anchor: string;
       offsetDays: number;
       x: number;
       y: number;
@@ -325,32 +325,32 @@ async function run() {
 
     const riverOwner = await client.query<{ id: number }>(
       `
-        insert into app_users (email, username, password_hash, display_name)
-        values ('river_owner@loamledger.local', 'river_owner', $1, 'River Owner')
+        insert into app_users (email, username, password_hash, display_name, email_verified_at)
+        values ('river_owner@loamledger.local', 'river_owner', $1, 'River Owner', now())
         returning id
       `,
       [hashPassword("river123")]
     );
     const riverCrew = await client.query<{ id: number }>(
       `
-        insert into app_users (email, username, password_hash, display_name)
-        values ('river_crew@loamledger.local', 'river_crew', $1, 'River Crew')
+        insert into app_users (email, username, password_hash, display_name, email_verified_at)
+        values ('river_crew@loamledger.local', 'river_crew', $1, 'River Crew', now())
         returning id
       `,
       [hashPassword("river123")]
     );
     const cedarOwner = await client.query<{ id: number }>(
       `
-        insert into app_users (email, username, password_hash, display_name)
-        values ('cedar_owner@loamledger.local', 'cedar_owner', $1, 'Cedar Owner')
+        insert into app_users (email, username, password_hash, display_name, email_verified_at)
+        values ('cedar_owner@loamledger.local', 'cedar_owner', $1, 'Cedar Owner', now())
         returning id
       `,
       [hashPassword("cedar123")]
     );
     const cedarCrew = await client.query<{ id: number }>(
       `
-        insert into app_users (email, username, password_hash, display_name)
-        values ('cedar_crew@loamledger.local', 'cedar_crew', $1, 'Cedar Crew')
+        insert into app_users (email, username, password_hash, display_name, email_verified_at)
+        values ('cedar_crew@loamledger.local', 'cedar_crew', $1, 'Cedar Crew', now())
         returning id
       `,
       [hashPassword("cedar123")]
@@ -422,7 +422,7 @@ async function run() {
     const standardPreset = await client.query<{ id: number }>(
       `
         insert into bed_presets (farm_id, name, bed_width_m, path_spacing_m, notes)
-        values ($1, 'Standard Veg Bed', 0.76, 0.46, '30 inch bed with 18 inch path')
+        values ($1, 'Bare bed 3 ft', 0.9144, 0.6096, 'Default bare bed: 3 ft plantable bed with 2 ft path.')
         returning id
       `,
       [farmId]
@@ -430,16 +430,32 @@ async function run() {
     const narrowPreset = await client.query<{ id: number }>(
       `
         insert into bed_presets (farm_id, name, bed_width_m, path_spacing_m, notes)
-        values ($1, 'Narrow Salad Bed', 0.91, 0.30, '36 inch bed with 12 inch path')
+        values ($1, 'Plastic bed 3 ft', 0.9144, 0.9144, 'Default plastic bed: 3 ft bed with 3 ft path.')
         returning id
+      `,
+      [farmId]
+    );
+    await client.query(
+      `
+        insert into bed_presets (farm_id, name, bed_width_m, path_spacing_m, is_road, notes)
+        values ($1, 'Farm road 12 ft', 3.6576, 0, true, 'Default non-plantable farm road: 12 ft wide.')
       `,
       [farmId]
     );
     const cedarPreset = await client.query<{ id: number }>(
       `
         insert into bed_presets (farm_id, name, bed_width_m, path_spacing_m, notes)
-        values ($1, 'Cedar Standard Bed', 0.76, 0.41, '30 inch bed with 16 inch path')
+        values ($1, 'Bare bed 3 ft', 0.9144, 0.6096, 'Default bare bed: 3 ft plantable bed with 2 ft path.')
         returning id
+      `,
+      [secondFarmId]
+    );
+    await client.query(
+      `
+        insert into bed_presets (farm_id, name, bed_width_m, path_spacing_m, is_road, notes)
+        values
+          ($1, 'Plastic bed 3 ft', 0.9144, 0.9144, false, 'Default plastic bed: 3 ft bed with 3 ft path.'),
+          ($1, 'Farm road 12 ft', 3.6576, 0, true, 'Default non-plantable farm road: 12 ft wide.')
       `,
       [secondFarmId]
     );
@@ -547,8 +563,8 @@ async function run() {
     }> = [];
 
     for (const row of generateBedLayouts(await blockBounds3857(client, northA.rows[0].id), {
-      bedWidthM: 0.76,
-      pathSpacingM: 0.46,
+      bedWidthM: 0.9144,
+      pathSpacingM: 0.6096,
       count: 6,
       direction: "north_south",
       namePrefix: "A-",
@@ -565,8 +581,8 @@ async function run() {
     }
 
     for (const row of generateBedLayouts(await blockBounds3857(client, northB.rows[0].id), {
-      bedWidthM: 0.76,
-      pathSpacingM: 0.46,
+      bedWidthM: 0.9144,
+      pathSpacingM: 0.6096,
       count: 6,
       direction: "north_south",
       namePrefix: "B-",
@@ -583,8 +599,8 @@ async function run() {
     }
 
     for (const row of generateBedLayouts(await blockBounds3857(client, tunnelBlock.rows[0].id), {
-      bedWidthM: 0.91,
-      pathSpacingM: 0.30,
+      bedWidthM: 0.9144,
+      pathSpacingM: 0.9144,
       count: 3,
       direction: "east_west",
       namePrefix: "T-",
@@ -600,8 +616,8 @@ async function run() {
       });
     }
     for (const row of generateBedLayouts(await blockBounds3857(client, cedarBlock.rows[0].id), {
-      bedWidthM: 0.76,
-      pathSpacingM: 0.41,
+      bedWidthM: 0.9144,
+      pathSpacingM: 0.6096,
       count: 3,
       direction: "north_south",
       namePrefix: "C-",
@@ -717,47 +733,65 @@ async function run() {
     const brassicaFlowId = await insertTaskFlowTemplate(client, {
       farmId,
       cropId: cabbage.rows[0].id,
-      name: "Brassica transplant flow",
-      notes: "Standard transplant flow for cabbage, kale, and similar crops.",
+      name: "Full brassica transplant flow",
+      notes: "Fourteen-node sample with tray seeding, pot-up, field prep, transplanting, cultivation, spray/check passes, and harvest.",
       isDefault: true,
       nodes: [
-        { nodeKey: "bed_prep", taskType: "bed_prep", label: "Bed prep", anchor: "planned_transplant", offsetDays: -5, x: 0.12, y: 0.26 },
-        { nodeKey: "seed", taskType: "seed_in_tray", label: "Seed in tray", anchor: "actual_tray_seeding", offsetDays: 0, x: 0.12, y: 0.68 },
-        { nodeKey: "transplant", taskType: "transplant", label: "Transplant", anchor: "actual_transplant", offsetDays: 0, x: 0.42, y: 0.47 },
-        { nodeKey: "cultivate_1", taskType: "cultivate", label: "First cultivation", anchor: "actual_transplant", offsetDays: 10, x: 0.66, y: 0.28 },
-        { nodeKey: "weed", taskType: "weed", label: "Weed pass", anchor: "actual_cultivation", offsetDays: 7, x: 0.84, y: 0.28 },
-        { nodeKey: "harvest", taskType: "harvest", label: "Harvest start", anchor: "actual_transplant", offsetDays: 80, x: 0.66, y: 0.64 },
-        { nodeKey: "finish", taskType: "finish_crop", label: "Finish crop", anchor: "actual_harvest", offsetDays: 21, x: 0.86, y: 0.64 }
+        { nodeKey: "seed_tray", taskType: "seed_in_tray", label: "Seed trays", anchor: "planned_sow", offsetDays: 0, x: 0.08, y: 0.72 },
+        { nodeKey: "pot_up", taskType: "seed_in_tray", label: "Pot up", anchor: "after:seed_tray", offsetDays: 21, x: 0.22, y: 0.72 },
+        { nodeKey: "disk", taskType: "bed_prep", label: "Disk ground", anchor: "planned_transplant", offsetDays: -35, x: 0.08, y: 0.24 },
+        { nodeKey: "lime", taskType: "bed_prep", label: "Spread lime", anchor: "after:disk", offsetDays: 1, x: 0.22, y: 0.24 },
+        { nodeKey: "fertilize", taskType: "bed_prep", label: "Fertilize", anchor: "after:lime", offsetDays: 14, x: 0.36, y: 0.24 },
+        { nodeKey: "perfecta", taskType: "bed_prep", label: "Perfecta pass", anchor: "after:fertilize", offsetDays: 1, x: 0.5, y: 0.24 },
+        { nodeKey: "bed_shape", taskType: "bed_prep", label: "Bed shape", anchor: "after:perfecta", offsetDays: 1, x: 0.64, y: 0.24 },
+        { nodeKey: "transplant", taskType: "transplant", label: "Transplant", anchor: "after:pot_up,bed_shape", offsetDays: 1, x: 0.64, y: 0.52 },
+        { nodeKey: "water_in", taskType: "irrigation_check", label: "Water in", anchor: "after:transplant", offsetDays: 1, x: 0.78, y: 0.38 },
+        { nodeKey: "cultivate_1", taskType: "cultivate", label: "First cultivation", anchor: "after:transplant", offsetDays: 7, x: 0.78, y: 0.62 },
+        { nodeKey: "cultivate_2", taskType: "cultivate", label: "Second cultivation", anchor: "after:cultivate_1", offsetDays: 10, x: 0.9, y: 0.62 },
+        { nodeKey: "spray", taskType: "irrigation_check", label: "Spray/check pests", anchor: "after:cultivate_2", offsetDays: 3, x: 0.9, y: 0.38 },
+        { nodeKey: "cultivate_3", taskType: "cultivate", label: "Third cultivation", anchor: "after:spray", offsetDays: 7, x: 0.9, y: 0.76 },
+        { nodeKey: "harvest", taskType: "harvest", label: "Harvest start", anchor: "after:cultivate_3", offsetDays: 40, x: 0.9, y: 0.9 }
       ],
       edges: [
-        { fromNodeKey: "bed_prep", toNodeKey: "transplant" },
-        { fromNodeKey: "seed", toNodeKey: "transplant" },
+        { fromNodeKey: "seed_tray", toNodeKey: "pot_up" },
+        { fromNodeKey: "pot_up", toNodeKey: "transplant" },
+        { fromNodeKey: "disk", toNodeKey: "lime" },
+        { fromNodeKey: "lime", toNodeKey: "fertilize" },
+        { fromNodeKey: "fertilize", toNodeKey: "perfecta" },
+        { fromNodeKey: "perfecta", toNodeKey: "bed_shape" },
+        { fromNodeKey: "bed_shape", toNodeKey: "transplant" },
+        { fromNodeKey: "transplant", toNodeKey: "water_in" },
         { fromNodeKey: "transplant", toNodeKey: "cultivate_1" },
-        { fromNodeKey: "cultivate_1", toNodeKey: "weed" },
-        { fromNodeKey: "transplant", toNodeKey: "harvest" },
-        { fromNodeKey: "harvest", toNodeKey: "finish" }
+        { fromNodeKey: "cultivate_1", toNodeKey: "cultivate_2" },
+        { fromNodeKey: "cultivate_2", toNodeKey: "spray" },
+        { fromNodeKey: "spray", toNodeKey: "cultivate_3" },
+        { fromNodeKey: "cultivate_3", toNodeKey: "harvest" }
       ]
     });
     const lettuceFlowId = await insertTaskFlowTemplate(client, {
       farmId,
       cropId: lettuce.rows[0].id,
-      name: "Lettuce transplant flow",
-      notes: "Copied from brassicas and tightened for quick lettuce turns.",
+      name: "Eight-node transplant flow",
+      notes: "Compact sample showing field prep leading into transplant and harvest.",
       isDefault: true,
       nodes: [
-        { nodeKey: "bed_prep", taskType: "bed_prep", label: "Quick bed prep", anchor: "planned_transplant", offsetDays: -3, x: 0.12, y: 0.32 },
-        { nodeKey: "seed", taskType: "seed_in_tray", label: "Seed in tray", anchor: "actual_tray_seeding", offsetDays: 0, x: 0.12, y: 0.7 },
-        { nodeKey: "transplant", taskType: "transplant", label: "Transplant", anchor: "actual_transplant", offsetDays: 0, x: 0.42, y: 0.5 },
-        { nodeKey: "cultivate_1", taskType: "cultivate", label: "First cultivation", anchor: "actual_transplant", offsetDays: 7, x: 0.7, y: 0.34 },
-        { nodeKey: "harvest", taskType: "harvest", label: "Harvest start", anchor: "actual_transplant", offsetDays: 35, x: 0.7, y: 0.66 },
-        { nodeKey: "finish", taskType: "finish_crop", label: "Finish crop", anchor: "actual_harvest", offsetDays: 14, x: 0.9, y: 0.66 }
+        { nodeKey: "seed_tray", taskType: "seed_in_tray", label: "Seed trays", anchor: "planned_sow", offsetDays: 0, x: 0.08, y: 0.7 },
+        { nodeKey: "disk", taskType: "bed_prep", label: "Disk ground", anchor: "planned_transplant", offsetDays: -21, x: 0.08, y: 0.28 },
+        { nodeKey: "lime", taskType: "bed_prep", label: "Spread lime", anchor: "after:disk", offsetDays: 1, x: 0.22, y: 0.28 },
+        { nodeKey: "fertilize", taskType: "bed_prep", label: "Fertilize", anchor: "after:lime", offsetDays: 10, x: 0.36, y: 0.28 },
+        { nodeKey: "perfecta", taskType: "bed_prep", label: "Perfecta pass", anchor: "after:fertilize", offsetDays: 1, x: 0.5, y: 0.28 },
+        { nodeKey: "bed_shape", taskType: "bed_prep", label: "Bed shape", anchor: "after:perfecta", offsetDays: 1, x: 0.64, y: 0.28 },
+        { nodeKey: "transplant", taskType: "transplant", label: "Transplant", anchor: "after:seed_tray,bed_shape", offsetDays: 1, x: 0.64, y: 0.58 },
+        { nodeKey: "harvest", taskType: "harvest", label: "Harvest start", anchor: "after:transplant", offsetDays: 35, x: 0.86, y: 0.58 }
       ],
       edges: [
-        { fromNodeKey: "bed_prep", toNodeKey: "transplant" },
-        { fromNodeKey: "seed", toNodeKey: "transplant" },
-        { fromNodeKey: "transplant", toNodeKey: "cultivate_1" },
-        { fromNodeKey: "transplant", toNodeKey: "harvest" },
-        { fromNodeKey: "harvest", toNodeKey: "finish" }
+        { fromNodeKey: "disk", toNodeKey: "lime" },
+        { fromNodeKey: "lime", toNodeKey: "fertilize" },
+        { fromNodeKey: "fertilize", toNodeKey: "perfecta" },
+        { fromNodeKey: "perfecta", toNodeKey: "bed_shape" },
+        { fromNodeKey: "seed_tray", toNodeKey: "transplant" },
+        { fromNodeKey: "bed_shape", toNodeKey: "transplant" },
+        { fromNodeKey: "transplant", toNodeKey: "harvest" }
       ]
     });
     const directSeedFlowId = await insertTaskFlowTemplate(client, {
