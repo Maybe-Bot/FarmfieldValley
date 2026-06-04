@@ -100,7 +100,7 @@ export function taskMapIcon(
   runDurationSec?: number,
   animationDelaySec?: number,
   oneWayRun = false,
-  animated = false
+  animated = true
 ) {
   const model = tractorModel || (isTractorTask(taskType) ? tractorModelForTask(taskType) : vehicleModelForTask(taskType));
   if (isTractorModel(model)) {

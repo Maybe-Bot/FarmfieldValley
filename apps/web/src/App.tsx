@@ -146,6 +146,7 @@ const emptyDashboard: DashboardData = {
 // Local storage keeps lightweight UI preferences on this browser only.
 const VIEW_STORAGE_KEY = "loam-ledger-map-view";
 const SETTINGS_STORAGE_KEY = "loam-ledger-settings";
+const MAP_LAYER_STORAGE_PREFIX = "loam-ledger-map-layers";
 const MOBILE_MEDIA_QUERY = "(max-width: 760px)";
 const PROTOTYPE_WARNING_VERSION = "v2";
 const PROTOTYPE_WARNING_STORAGE_PREFIX = "loam-ledger-prototype-warning";
@@ -751,6 +752,44 @@ function prototypeWarningStorageKey(userId: number) {
 
 function tutorialDismissedStorageKey(userId: number) {
   return `${TUTORIAL_DISMISSED_STORAGE_PREFIX}:user-${userId}`;
+}
+
+type MapLayerSettings = {
+  planned: boolean;
+  actual: boolean;
+  tasks: boolean;
+  otherFarms: boolean;
+};
+
+function mapLayerStorageKey(userId: number) {
+  return `${MAP_LAYER_STORAGE_PREFIX}:user-${userId}`;
+}
+
+function defaultMapLayerSettings(): MapLayerSettings {
+  return { planned: true, actual: true, tasks: true, otherFarms: true };
+}
+
+function readMapLayerSettings(userId: number | null | undefined) {
+  if (typeof window === "undefined" || userId == null) {
+    return defaultMapLayerSettings();
+  }
+
+  const raw = window.localStorage.getItem(mapLayerStorageKey(userId));
+  if (!raw) {
+    return defaultMapLayerSettings();
+  }
+
+  try {
+    const parsed = JSON.parse(raw) as Partial<MapLayerSettings>;
+    return {
+      planned: parsed.planned !== false,
+      actual: parsed.actual !== false,
+      tasks: parsed.tasks !== false,
+      otherFarms: parsed.otherFarms !== false
+    };
+  } catch {
+    return defaultMapLayerSettings();
+  }
 }
 
 // Map geometry helpers. These bridge Leaflet lat/lng data with simple projected
@@ -1767,11 +1806,12 @@ function App() {
   const [isMobileViewport, setIsMobileViewport] = useState(() => (
     typeof window !== "undefined" ? window.matchMedia(MOBILE_MEDIA_QUERY).matches : false
   ));
-  const [showPlannedPlantingsLayer, setShowPlannedPlantingsLayer] = useState(false);
-  const [showActualPlacementsLayer, setShowActualPlacementsLayer] = useState(false);
-  const [showTaskLayer, setShowTaskLayer] = useState(false);
+  const initialMapLayerSettings = readMapLayerSettings(session?.authenticated ? session.user.id : null);
+  const [showPlannedPlantingsLayer, setShowPlannedPlantingsLayer] = useState(initialMapLayerSettings.planned);
+  const [showActualPlacementsLayer, setShowActualPlacementsLayer] = useState(initialMapLayerSettings.actual);
+  const [showTaskLayer, setShowTaskLayer] = useState(initialMapLayerSettings.tasks);
   const [spriteSheetCacheRevision, setSpriteSheetCacheRevision] = useState(0);
-  const [showOtherFarmMaps, setShowOtherFarmMaps] = useState(false);
+  const [showOtherFarmMaps, setShowOtherFarmMaps] = useState(initialMapLayerSettings.otherFarms);
   const [userLocation, setUserLocation] = useState<UserLocation | null>(null);
   const [selectedMapWeekStart, setSelectedMapWeekStart] = useState(() => startOfWeekDate(todayDateInputValue()));
   const [taskListWeekStart, setTaskListWeekStart] = useState(() => startOfWeekDate(todayDateInputValue()));
@@ -1808,6 +1848,22 @@ function App() {
     ].slice(-30);
   }
 
+  function updateMapLayerSettings(patch: Partial<MapLayerSettings>) {
+    const next = {
+      planned: patch.planned ?? showPlannedPlantingsLayer,
+      actual: patch.actual ?? showActualPlacementsLayer,
+      tasks: patch.tasks ?? showTaskLayer,
+      otherFarms: patch.otherFarms ?? showOtherFarmMaps
+    };
+    if (patch.planned != null) setShowPlannedPlantingsLayer(patch.planned);
+    if (patch.actual != null) setShowActualPlacementsLayer(patch.actual);
+    if (patch.tasks != null) setShowTaskLayer(patch.tasks);
+    if (patch.otherFarms != null) setShowOtherFarmMaps(patch.otherFarms);
+    if (typeof window !== "undefined" && session?.authenticated) {
+      window.localStorage.setItem(mapLayerStorageKey(session.user.id), JSON.stringify(next));
+    }
+  }
+
   useEffect(() => {
     if (typeof window === "undefined") {
       return;
@@ -1821,6 +1877,23 @@ function App() {
       })
     );
   }, [distanceUnit, themeMode]);
+
+  useEffect(() => {
+    if (!session?.authenticated) {
+      const defaults = defaultMapLayerSettings();
+      setShowPlannedPlantingsLayer(defaults.planned);
+      setShowActualPlacementsLayer(defaults.actual);
+      setShowTaskLayer(defaults.tasks);
+      setShowOtherFarmMaps(defaults.otherFarms);
+      return;
+    }
+
+    const stored = readMapLayerSettings(session.user.id);
+    setShowPlannedPlantingsLayer(stored.planned);
+    setShowActualPlacementsLayer(stored.actual);
+    setShowTaskLayer(stored.tasks);
+    setShowOtherFarmMaps(stored.otherFarms);
+  }, [session?.authenticated, session?.authenticated ? session.user.id : null]);
 
   useEffect(() => {
     if (typeof window === "undefined") {
@@ -2100,6 +2173,7 @@ function App() {
     }
     return [...dates].sort();
   }, [data.events, data.plantings, data.blockZones]);
+  const currentTaskWeekStart = startOfWeekDate(todayDateInputValue());
   const selectedMapWeekEnd = addDaysToDate(selectedMapWeekStart, 6);
   const selectedTimelineDate = selectedMapWeekEnd;
   const plannedPlantingsByBed = useMemo(() => {
@@ -2450,25 +2524,44 @@ function App() {
     for (const bed of data.beds) {
       blockBedsByBlockId.set(bed.blockId, [...(blockBedsByBlockId.get(bed.blockId) ?? []), bed]);
     }
-    const markers = data.tasks
-      .filter((task) => task.status !== "done" && isDateInWeek(task.scheduledDate, selectedMapWeekStart))
+    const visibleTasks = data.tasks.filter((task) => {
+      if (task.status === "done") {
+        return false;
+      }
+      if (task.scheduledDate == null) {
+        return true;
+      }
+      if (isDateInWeek(task.scheduledDate, selectedMapWeekStart)) {
+        return true;
+      }
+      return selectedMapWeekStart === currentTaskWeekStart && showPastUndoneTasks && task.scheduledDate < currentTaskWeekStart;
+    });
+    const markers = visibleTasks
       .map((task) => {
         const plantingBedId = task.plantingId != null ? plantingsByTaskPlantingId.get(task.plantingId)?.intendedBedId ?? null : null;
-        const plannedPlacements = task.plantingId == null
+        const plantingPlacements = task.plantingId == null
           ? []
           : data.placements
-              .filter((placement) => placement.plantingId === task.plantingId && placement.planSource === "auto_block_plan")
-              .sort((left, right) => (left.placementOrder ?? left.id) - (right.placementOrder ?? right.id));
+              .filter((placement) => placement.plantingId === task.plantingId)
+              .sort((left, right) => (
+                (left.placedOn == null ? 1 : 0) - (right.placedOn == null ? 1 : 0)
+                || (left.placementOrder ?? left.id) - (right.placementOrder ?? right.id)
+              ));
         const markerTarget = (() => {
-          if (plannedPlacements.length === 0) {
-            return { bed: bedsById.get(task.bedId ?? plantingBedId ?? -1) ?? null, placement: null };
+          if (task.bedId != null) {
+            const placementOnTaskBed = plantingPlacements.find((placement) => placement.bedId === task.bedId) ?? null;
+            return { bed: bedsById.get(task.bedId) ?? null, placement: placementOnTaskBed };
           }
 
-          const totalLengthM = plannedPlacements.reduce((sum, placement) => sum + Math.max(0.1, Number(placement.bedLengthUsedM || 0)), 0);
+          if (plantingPlacements.length === 0) {
+            return { bed: bedsById.get(plantingBedId ?? -1) ?? null, placement: null };
+          }
+
+          const totalLengthM = plantingPlacements.reduce((sum, placement) => sum + Math.max(0.1, Number(placement.bedLengthUsedM || 0)), 0);
           const midpointM = totalLengthM / 2;
           let cursorM = 0;
-          let selectedPlacement = plannedPlacements[0];
-          for (const placement of plannedPlacements) {
+          let selectedPlacement = plantingPlacements[0];
+          for (const placement of plantingPlacements) {
             cursorM += Math.max(0.1, Number(placement.bedLengthUsedM || 0));
             if (cursorM >= midpointM) {
               selectedPlacement = placement;
@@ -2482,9 +2575,9 @@ function App() {
         const { bed, placement } = markerTarget;
           const block = bed ? blocksById.get(bed.blockId) ?? null : null;
           const reverseFromEnd = bed ? bedSerpentineReversesFromEnd(bed, block, blockBedsByBlockId.get(bed.blockId) ?? []) : false;
-          const sectionBoundary = bed && placement
+          const sectionBoundary = placement?.boundary ?? (bed && placement?.planSource === "auto_block_plan"
             ? bedSectionBoundary(bed, Number(placement.startLengthM || 0), Number(placement.bedLengthUsedM || 0), reverseFromEnd)
-            : null;
+            : null);
           const center = polygonCenter(geoJsonPolygonToLatLngs(sectionBoundary ?? bed?.boundary ?? null));
           if (!bed || !center) {
             return null;
@@ -2523,7 +2616,7 @@ function App() {
     }
 
     return markers;
-  }, [data.tasks, data.beds, data.plantings, data.placements, blocksById, selectedMapWeekStart, mapZoom]);
+  }, [currentTaskWeekStart, data.tasks, data.beds, data.plantings, data.placements, blocksById, selectedMapWeekStart, showPastUndoneTasks, mapZoom]);
   const mapTaskSpriteSheetRequests = useMemo(() => {
     return mapTasksThisWeek.map(({ task }) => (
       spriteSheetRequestForTask(task.taskType, taskColor(task), task.iconSecondaryColor, task.tractorModel)
@@ -2566,7 +2659,6 @@ function App() {
       return boundary ? [{ ...preview, boundary }] : [];
     });
   }, [bedAllocationPreview, blocksById, data.beds]);
-  const currentTaskWeekStart = startOfWeekDate(todayDateInputValue());
   const taskListWeekEnd = addDaysToDate(taskListWeekStart, 6);
   const isCurrentTaskListWeek = taskListWeekStart === currentTaskWeekStart;
   const currentPlanYear = Number(todayDateInputValue().slice(0, 4));
@@ -4293,6 +4385,25 @@ function App() {
     }
   }
 
+  function renderTaskRecordCard(task: Task | null) {
+    return (
+      <TaskRecordCard
+        task={task}
+        plantings={data.plantings}
+        seedItems={data.seedItems}
+        placements={data.placements}
+        fields={ownFields}
+        blocks={ownBlocks}
+        beds={ownBeds}
+        bedPresets={data.bedPresets}
+        distanceUnit={distanceUnit}
+        canAdjustPlanting={canPlan}
+        highlightSubmit={activeTutorialStep === 5}
+        onSave={handleTaskRecordSave}
+      />
+    );
+  }
+
   function startTutorialFromBeginning() {
     if (isMobileViewport) {
       setTutorialOpen(false);
@@ -5416,7 +5527,7 @@ function App() {
                     <input
                       type="checkbox"
                       checked={showPlannedPlantingsLayer}
-                      onChange={(event) => setShowPlannedPlantingsLayer(event.target.checked)}
+                      onChange={(event) => updateMapLayerSettings({ planned: event.target.checked })}
                     />
                     <span>Planned crops in ground</span>
                   </label>
@@ -5424,7 +5535,7 @@ function App() {
                     <input
                       type="checkbox"
                       checked={showActualPlacementsLayer}
-                      onChange={(event) => setShowActualPlacementsLayer(event.target.checked)}
+                      onChange={(event) => updateMapLayerSettings({ actual: event.target.checked })}
                     />
                     <span>Actual crops in ground</span>
                   </label>
@@ -5432,7 +5543,7 @@ function App() {
                     <input
                       type="checkbox"
                       checked={showTaskLayer}
-                      onChange={(event) => setShowTaskLayer(event.target.checked)}
+                      onChange={(event) => updateMapLayerSettings({ tasks: event.target.checked })}
                     />
                     <span>Tasks due this week</span>
                   </label>
@@ -5441,7 +5552,7 @@ function App() {
                       <input
                         type="checkbox"
                         checked={showOtherFarmMaps}
-                        onChange={(event) => setShowOtherFarmMaps(event.target.checked)}
+                        onChange={(event) => updateMapLayerSettings({ otherFarms: event.target.checked })}
                       />
                       <span>Show other farms</span>
                     </label>
@@ -5452,28 +5563,35 @@ function App() {
 
             <div className="stack">
               {mapWorkTasksOnly ? (
-                <TaskWeekCard
-                  title={formatTaskWeekTitle(selectedMapWeekStart)}
-                  weekStart={selectedMapWeekStart}
-                  contextLabel={mapWorkTaskContextLabel}
-                  tasks={mapSelectedTaskList}
-                  undoTaskId={recentlyCompletedTaskId}
-                  showPastUndoneOption={selectedMapWeekStart === currentTaskWeekStart}
-                  pastUndoneChecked={showPastUndoneTasks}
-                  onPastUndoneChange={setShowPastUndoneTasks}
-                  onSelectTask={(task) => {
-                    selectTask(task, taskNeedsRecordForm(task.taskType) ? "record" : undefined);
-                    setMapNotice(`Selected ${task.title}.`);
-                  }}
-                  onQuickComplete={(task) => {
-                    if (taskNeedsRecordForm(task.taskType)) {
-                      selectTask(task, "record");
-                      return;
-                    }
-                    void quickCompleteTask(task);
-                  }}
-                  onUndoTask={(task) => void undoRecentTaskCompletion(task)}
-                />
+                <>
+                  {selectedTask && renderTaskRecordCard(selectedTask)}
+                  <TaskWeekCard
+                    title={formatTaskWeekTitle(selectedMapWeekStart)}
+                    weekStart={selectedMapWeekStart}
+                    contextLabel={mapWorkTaskContextLabel}
+                    tasks={mapSelectedTaskList}
+                    undoTaskId={recentlyCompletedTaskId}
+                    showPastUndoneOption={selectedMapWeekStart === currentTaskWeekStart}
+                    pastUndoneChecked={showPastUndoneTasks}
+                    onPastUndoneChange={setShowPastUndoneTasks}
+                    onSelectTask={(task) => {
+                      if (taskNeedsRecordForm(task.taskType)) {
+                        openTaskRecordFromMap(task);
+                        return;
+                      }
+                      selectTask(task);
+                      setMapNotice(`Selected ${task.title}.`);
+                    }}
+                    onQuickComplete={(task) => {
+                      if (taskNeedsRecordForm(task.taskType)) {
+                        openTaskRecordFromMap(task);
+                        return;
+                      }
+                      void quickCompleteTask(task);
+                    }}
+                    onUndoTask={(task) => void undoRecentTaskCompletion(task)}
+                  />
+                </>
               ) : (
                 <>
               {mapNotice && (
@@ -5767,20 +5885,7 @@ function App() {
               )}
 
               {mapWorkflowMode === "field_work" && mapRecordTask && (
-                <TaskRecordCard
-                  task={mapRecordTask}
-                  plantings={data.plantings}
-                  seedItems={data.seedItems}
-                  placements={data.placements}
-                fields={ownFields}
-                blocks={ownBlocks}
-                beds={ownBeds}
-                bedPresets={data.bedPresets}
-                distanceUnit={distanceUnit}
-                canAdjustPlanting={canPlan}
-                  highlightSubmit={activeTutorialStep === 5}
-                  onSave={handleTaskRecordSave}
-                />
+                renderTaskRecordCard(mapRecordTask)
               )}
 
               {mapWorkflowMode === "field_work" && selectedBed && mapPlantingBeds.length === 0 && (
@@ -6376,7 +6481,7 @@ function App() {
                           className="secondary-button compact-button"
                           onClick={(event) => {
                             event.stopPropagation();
-                            selectTask(task, "record");
+                            selectTask(task);
                           }}
                         >
                           {taskNeedsRecordForm(task.taskType) ? "Open record" : "Open task"}
@@ -6388,7 +6493,7 @@ function App() {
                             onClick={(event) => {
                               event.stopPropagation();
                               if (taskNeedsRecordForm(task.taskType)) {
-                                selectTask(task, "record");
+                                selectTask(task);
                                 return;
                               }
                               void quickCompleteTask(task);
@@ -6457,20 +6562,7 @@ function App() {
               )}
             </div>
             <div className="stack">
-            <TaskRecordCard
-              task={selectedTask}
-              plantings={data.plantings}
-              seedItems={data.seedItems}
-              placements={data.placements}
-              fields={ownFields}
-              blocks={ownBlocks}
-              beds={ownBeds}
-              bedPresets={data.bedPresets}
-              distanceUnit={distanceUnit}
-              canAdjustPlanting={canPlan}
-              highlightSubmit={activeTutorialStep === 5}
-              onSave={handleTaskRecordSave}
-            />
+              {renderTaskRecordCard(selectedTask)}
               <div className="card">
                 <h2>How shifting works</h2>
                   <p>Future tasks are generated from planned planting dates and task-flow arrows. When connected work is recorded, later connected task dates recalculate from that actual date instead of staying fixed to the original plan.</p>
@@ -6482,20 +6574,7 @@ function App() {
 
         {view === "record" && (
           <section className="content-grid split-grid">
-            <TaskRecordCard
-              task={recordTaskCandidate}
-              plantings={data.plantings}
-              seedItems={data.seedItems}
-              placements={data.placements}
-                  fields={ownFields}
-                  blocks={ownBlocks}
-                  beds={ownBeds}
-                  bedPresets={data.bedPresets}
-                  distanceUnit={distanceUnit}
-              canAdjustPlanting={canPlan}
-              highlightSubmit={activeTutorialStep === 5}
-              onSave={handleTaskRecordSave}
-            />
+            {renderTaskRecordCard(recordTaskCandidate)}
             <HarvestForm data={ownFarmData} onSave={load} />
           </section>
         )}
@@ -8631,7 +8710,7 @@ function TaskRecordCard({
   const [status, setStatus] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const isFieldPlantingTask = task?.taskType === "transplant" || task?.taskType === "direct_seed";
-  const isBedMakingTask = task?.taskType === "bed_prep" && task.plantingId == null;
+  const isBedPrepTask = task?.taskType === "bed_prep";
   const requiresLotNumber = Boolean(planting && ["seed_in_tray", "direct_seed", "transplant"].includes(task?.taskType ?? ""));
   const existingSeedLotNumber = planting?.seedItemId == null
     ? ""
@@ -8641,8 +8720,17 @@ function TaskRecordCard({
     : null;
   const selectedBed = bedId ? bedById.get(Number(bedId)) ?? null : null;
   const selectedBlock = blockId ? blockById.get(Number(blockId)) ?? null : null;
-  const taskBed = task?.bedId != null ? bedById.get(task.bedId) ?? null : null;
-  const taskBlock = taskBed ? blockById.get(taskBed.blockId) ?? null : null;
+  const taskBed = task?.bedId != null
+    ? bedById.get(task.bedId) ?? null
+    : planting?.intendedBedId != null
+      ? bedById.get(planting.intendedBedId) ?? null
+      : null;
+  const taskBlock = taskBed
+    ? blockById.get(taskBed.blockId) ?? null
+    : planting?.intendedBlockId != null
+      ? blockById.get(planting.intendedBlockId) ?? null
+      : null;
+  const isBedMakingTask = isBedPrepTask && taskBlock != null;
   const usableBedPresets = bedPresets.filter((preset) => !preset.isRoad);
   const defaultBedMakingPresetId = taskBed?.bedPresetId != null && usableBedPresets.some((preset) => preset.id === taskBed.bedPresetId)
     ? String(taskBed.bedPresetId)
@@ -8656,6 +8744,17 @@ function TaskRecordCard({
         .sort((left, right) => (left.sequenceNo ?? left.id) - (right.sequenceNo ?? right.id))
     : [];
   const canAdjustBedMaking = canAdjustPlanting && isBedMakingTask && taskBlockPlantableBeds.length > 0 && usableBedPresets.length > 0;
+  const bedMakingRecordHelp = isBedPrepTask && !canAdjustBedMaking
+    ? !canAdjustPlanting
+      ? "Worker accounts record completion here. Bed count changes are limited to planner accounts."
+      : !taskBlock
+          ? "This bed-making task is not tied to a mapped block anymore. Open the current block bed-making task to change bed counts."
+          : taskBlockPlantableBeds.length === 0
+            ? "Make planned beds first, then record how many were actually made."
+            : usableBedPresets.length === 0
+              ? "Save a bed preset first, then record which kind of beds were made."
+              : null
+    : null;
   const spacingInRowM = spacingInputToMeters(spacingInRow, distanceUnit);
   const spacingBetweenRowsM = spacingInputToMeters(spacingBetweenRows, distanceUnit);
   const recordedPlantCount = Number(plantCount);
@@ -8669,6 +8768,7 @@ function TaskRecordCard({
     .map((row) => ({ presetId: Number(row.presetId), count: Number(row.count) }))
     .filter((row) => Number.isInteger(row.presetId) && row.presetId > 0 && Number.isInteger(row.count) && row.count > 0);
   const recordedBedMakingCount = parsedBedMakingRows.reduce((sum, row) => sum + row.count, 0);
+  const bedMakingOverTarget = recordedBedMakingCount > taskBlockPlantableBeds.length;
   const tutorialExpectedRecordDate = highlightSubmit && task?.scheduledDate ? task.scheduledDate : null;
   const tutorialNeedsDate = Boolean(tutorialExpectedRecordDate && actualDate !== tutorialExpectedRecordDate);
   const tutorialNeedsBedPlacement = highlightSubmit && !tutorialNeedsDate && canAdjustPlanting && isFieldPlantingTask && !bedId;
@@ -8702,7 +8802,7 @@ function TaskRecordCard({
     const defaultBed = defaultBedId != null ? bedById.get(defaultBedId) ?? null : null;
     const defaultBlock = defaultBed ? blockById.get(defaultBed.blockId) ?? null : null;
     const spacingPair = parseSpacingPairForUnit(planting?.spacing ?? null, distanceUnit);
-    setActualDate(task ? highlightSubmit && task.scheduledDate ? task.scheduledDate : defaultTaskRecordDate(task) : todayDateInputValue());
+    setActualDate(todayDateInputValue());
     setNotes("");
     setLotNumber(requiresLotNumber ? existingSeedLotNumber : "");
     setFieldId(defaultBlock ? String(defaultBlock.fieldId) : "");
@@ -8779,7 +8879,7 @@ function TaskRecordCard({
                 placementLocationDetail: canAdjustPlanting && isFieldPlantingTask ? "Placed from task record" : null,
                 placementNotes: notes || null,
                 bedMakingBedCount: canAdjustBedMaking ? recordedBedMakingCount : undefined,
-                bedMakingBlockFull: canAdjustBedMaking ? bedMakingBlockFull : undefined,
+                bedMakingBlockFull: canAdjustBedMaking ? bedMakingBlockFull || bedMakingOverTarget : undefined,
                 bedMakingRows: canAdjustBedMaking ? parsedBedMakingRows : undefined
               });
               await onSave();
@@ -8860,27 +8960,39 @@ function TaskRecordCard({
                 </div>
               ))}
             </div>
-            <label className="inline-checkbox">
-              <input type="checkbox" checked={bedMakingBlockFull} onChange={(event) => setBedMakingBlockFull(event.target.checked)} />
-              <span>Block full</span>
-            </label>
+            <div className="bed-making-mode-toggle full-span" role="group" aria-label="Bed-making coverage">
+              <button
+                type="button"
+                className={bedMakingBlockFull ? "secondary-button" : "primary-button"}
+                aria-pressed={!bedMakingBlockFull}
+                onClick={() => setBedMakingBlockFull(false)}
+              >
+                Partial
+              </button>
+              <button
+                type="button"
+                className={bedMakingBlockFull ? "primary-button" : "secondary-button"}
+                aria-pressed={bedMakingBlockFull}
+                onClick={() => setBedMakingBlockFull(true)}
+              >
+                Fill block
+              </button>
+            </div>
             <div className="instruction-box full-span">
               <strong>{taskBlock?.name ?? "Block"}:</strong> {taskBlockPlantableBeds.length} mapped beds now. Recording {recordedBedMakingCount || "—"} beds.
               {bedMakingBlockFull
                 ? " The map will spread the actual count across the whole planned block."
+                : bedMakingOverTarget
+                  ? " The map will squeeze the extra beds across the whole planned block."
                 : task?.title.toLowerCase().includes("more beds")
                   ? " The map will add these beds after the current beds."
                   : " The map will follow the plan spacing and leave the rest for later."}
             </div>
           </>
         )}
-        {isBedMakingTask && !canAdjustBedMaking && (
+        {bedMakingRecordHelp && (
           <div className="instruction-box full-span">
-            {canAdjustPlanting
-              ? usableBedPresets.length === 0
-                ? "Save a bed preset first, then record which kind of beds were made."
-                : "Make planned beds first, then record how many were actually made."
-              : "Worker accounts record completion here. Bed count changes are limited to planner accounts."}
+            {bedMakingRecordHelp}
           </div>
         )}
 

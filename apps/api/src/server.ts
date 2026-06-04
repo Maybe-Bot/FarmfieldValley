@@ -709,6 +709,8 @@ async function insertGeneratedBeds(
     harvestRoadEveryBeds?: number | null;
     harvestRoadWidthBeds: number;
     pathSpacingOverrideM?: number | null;
+    bedWidthOverrideM?: number | null;
+    ignoreBedIds?: number[];
   }
 ) {
   const presetResult = await client.query<{ bed_width_m: string; path_spacing_m: string; name: string; is_road: boolean }>(
@@ -733,7 +735,9 @@ async function insertGeneratedBeds(
 
   const lineWkt = lineStringWkt3857(linePoints);
   const fullLineWkt = lineMode === "straight" ? lineStringWkt3857(extendStraightLine(linePoints)) : null;
-  const bedWidthM = Number(presetResult.rows[0].bed_width_m);
+  const bedWidthM = options.bedWidthOverrideM != null
+    ? Math.max(0.1, options.bedWidthOverrideM)
+    : Number(presetResult.rows[0].bed_width_m);
   const isRoadPreset = presetResult.rows[0].is_road;
   const pathSpacingM = isRoadPreset
     ? 0
@@ -825,6 +829,7 @@ async function insertGeneratedBeds(
             select 1
             from beds existing
             where existing.block_id = $1
+              and not (existing.id = any($15::integer[]))
               and ST_Area(ST_Intersection(existing.geom, bounded.geom)) > greatest(ST_Area(bounded.geom) * 0.01, 0.05)
           ) as overlaps_existing
         from bounded
@@ -932,6 +937,7 @@ async function insertGeneratedBeds(
             select 1
             from beds existing
             where existing.block_id = $1
+              and not (existing.id = any($14::integer[]))
               and ST_Area(ST_Intersection(existing.geom, bounded.geom)) > greatest(ST_Area(bounded.geom) * 0.01, 0.05)
           ) as overlaps_existing
         from bounded
@@ -984,7 +990,8 @@ async function insertGeneratedBeds(
           side,
           options.startNumber + sequenceIndex,
           options.zoneId ?? null,
-          isRoadPreset ? "road" : "generated"
+          isRoadPreset ? "road" : "generated",
+          options.ignoreBedIds ?? []
         ]
       : [
           options.blockId,
@@ -999,7 +1006,8 @@ async function insertGeneratedBeds(
           side,
           options.startNumber + sequenceIndex,
           options.zoneId ?? null,
-          isRoadPreset ? "road" : "generated"
+          isRoadPreset ? "road" : "generated",
+          options.ignoreBedIds ?? []
         ];
     const result = await client.query<{ id: number }>(sql, params);
     return result.rows[0]?.id ?? null;

@@ -43,6 +43,7 @@ export function LoginScreen({
   const [isSavingFeedback, setIsSavingFeedback] = useState(false);
   const passwordHelp = "Password requirements: at least 8 characters, including one letter and one number.";
   const emailHelp = `Real accounts must verify email before login. Use ${EMAIL_VERIFICATION_BYPASS_ADDRESS} for reusable testing accounts.`;
+  const repoUrl = "https://github.com/Maybe-Bot/FarmfieldValley";
 
   async function submitLoginFeedback(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -125,16 +126,9 @@ export function LoginScreen({
           </div>
         </div>
       )}
-      <div className="card auth-card">
-        <p className="eyebrow">Loam Ledger</p>
-        <h2>{mode === "login" ? "Farm login" : "Create farm account"}</h2>
-        <p className="muted">
-          {mode === "login"
-            ? "Sign in to your farm account. Planner accounts can manage plans. Worker accounts can record completed work."
-            : "Create a new farm and its first planner account. After that, create worker or planner logins from Settings."}
-        </p>
-        {(error || status) && <p className="muted"><strong>{status ?? error}</strong></p>}
-        <div className="button-row">
+      <header className="auth-landing-header">
+        <strong>Loam Ledger</strong>
+        <div className="button-row auth-top-actions">
           <button
             type="button"
             className={mode === "login" ? "primary-button compact-button" : "secondary-button compact-button"}
@@ -156,87 +150,118 @@ export function LoginScreen({
             Create account
           </button>
         </div>
-        <form
-          className="form-grid"
-          onSubmit={(event) => {
-            event.preventDefault();
-            void (async () => {
-              if (mode === "register") {
-                const validationError = validateAccountInputs({ farmName, email, username, password });
-                if (validationError) {
-                  setStatus(validationError);
-                  return;
-                }
-              }
-              try {
-                setSaving(true);
-                setStatus(mode === "login" ? "Signing in..." : "Creating account...");
-                if (mode === "login") {
-                  await onLogin(username, password);
-                } else {
-                  const nextSession = await onRegister(farmName, displayName, email, username, password);
-                  if (!nextSession.authenticated && nextSession.verificationRequired) {
-                    setStatus(`Check ${nextSession.email ?? "your email"} for the verification link before logging in.`);
+      </header>
+      <main className="auth-landing-main">
+        <section className="auth-about-panel" aria-labelledby="about-title">
+          <p className="eyebrow">Open source crop planning</p>
+          <h1 id="about-title">Loam Ledger</h1>
+          <div className="auth-about-copy">
+            <p>
+              The project is open source: the code is public, user data is exportable, and anyone can self-host it:{" "}
+              <a href={repoUrl} target="_blank" rel="noreferrer">GitHub repository</a>.
+            </p>
+            <p>
+              Loam Ledger is for making and executing crop plans: knowing what needs doing, where, and when. A tool, steel or code, should increase a farm's independence, not limit it.
+            </p>
+            <p className="auth-privacy-note">
+              Please do not share the app publicly yet. The server has limited capacity and is running from my bedroom closet.
+            </p>
+          </div>
+          <div className="auth-app-preview" aria-hidden="true">
+            <img src="/assets/about-loam-ledger.png" alt="" />
+          </div>
+        </section>
+        <div className="card auth-card">
+          <p className="eyebrow">Account access</p>
+          <h2>{mode === "login" ? "Farm login" : "Create farm account"}</h2>
+          <p className="muted">
+            {mode === "login"
+              ? "Sign in to your farm account. Planner accounts can manage plans. Worker accounts can record completed work."
+              : "Create a new farm and its first planner account. After that, create worker or planner logins from Settings."}
+          </p>
+          {(error || status) && <p className="muted"><strong>{status ?? error}</strong></p>}
+          <form
+            className="form-grid"
+            onSubmit={(event) => {
+              event.preventDefault();
+              void (async () => {
+                if (mode === "register") {
+                  const validationError = validateAccountInputs({ farmName, email, username, password });
+                  if (validationError) {
+                    setStatus(validationError);
                     return;
                   }
                 }
-                setStatus(null);
-              } catch (loginError) {
-                setStatus(loginError instanceof Error ? loginError.message : mode === "login" ? "Login failed." : "Account creation failed.");
-              } finally {
-                setSaving(false);
-              }
-            })();
-          }}
-        >
-          {mode === "register" && (
-            <>
-              <label className="full-span">
-                <span>Farm name</span>
-                <input value={farmName} onChange={(event) => setFarmName(event.target.value)} placeholder="Oak Hollow Farm" required />
-              </label>
-              <label className="full-span">
-                <span>Your name</span>
-                <input value={displayName} onChange={(event) => setDisplayName(event.target.value)} placeholder="Jordan Lee" />
-              </label>
-              <label className="full-span">
-                <span>Email</span>
-                <input value={email} onChange={(event) => setEmail(event.target.value)} type="email" autoComplete="email" placeholder="you@example.com" required />
-              </label>
-              <p className="muted full-span">{emailHelp}</p>
-            </>
-          )}
-          <label className="full-span">
-            <span>Username</span>
-            <input value={username} onChange={(event) => setUsername(event.target.value)} autoComplete="username" required minLength={3} />
-          </label>
-          <label className="full-span">
-            <span>Password</span>
-            <input
-              value={password}
-              onChange={(event) => setPassword(event.target.value)}
-              type="password"
-              autoComplete={mode === "login" ? "current-password" : "new-password"}
-              required
-              minLength={mode === "register" ? 8 : undefined}
-            />
-          </label>
-          {mode === "register" && <p className="muted full-span">{passwordHelp}</p>}
-          <button
-            className="primary-button full-span"
-            disabled={saving}
+                try {
+                  setSaving(true);
+                  setStatus(mode === "login" ? "Signing in..." : "Creating account...");
+                  if (mode === "login") {
+                    await onLogin(username, password);
+                  } else {
+                    const nextSession = await onRegister(farmName, displayName, email, username, password);
+                    if (!nextSession.authenticated && nextSession.verificationRequired) {
+                      setStatus(`Check ${nextSession.email ?? "your email"} for the verification link before logging in.`);
+                      return;
+                    }
+                  }
+                  setStatus(null);
+                } catch (loginError) {
+                  setStatus(loginError instanceof Error ? loginError.message : mode === "login" ? "Login failed." : "Account creation failed.");
+                } finally {
+                  setSaving(false);
+                }
+              })();
+            }}
           >
-            {saving ? (mode === "login" ? "Signing in..." : "Creating...") : (mode === "login" ? "Log in" : "Create farm account")}
-          </button>
-        </form>
-        <div className="auth-demo-list">
-          <strong>Seeded demo accounts</strong>
-          <div className="table-subtle">`river_owner` / `river123`</div>
-          <div className="table-subtle">`river_crew` / `river123`</div>
-          <div className="table-subtle">`cedar_owner` / `cedar123`</div>
-          <div className="table-subtle">`cedar_crew` / `cedar123`</div>
+            {mode === "register" && (
+              <>
+                <label className="full-span">
+                  <span>Farm name</span>
+                  <input value={farmName} onChange={(event) => setFarmName(event.target.value)} placeholder="Oak Hollow Farm" required />
+                </label>
+                <label className="full-span">
+                  <span>Your name</span>
+                  <input value={displayName} onChange={(event) => setDisplayName(event.target.value)} placeholder="Jordan Lee" />
+                </label>
+                <label className="full-span">
+                  <span>Email</span>
+                  <input value={email} onChange={(event) => setEmail(event.target.value)} type="email" autoComplete="email" placeholder="you@example.com" required />
+                </label>
+                <p className="muted full-span">{emailHelp}</p>
+              </>
+            )}
+            <label className="full-span">
+              <span>Username</span>
+              <input value={username} onChange={(event) => setUsername(event.target.value)} autoComplete="username" required minLength={3} />
+            </label>
+            <label className="full-span">
+              <span>Password</span>
+              <input
+                value={password}
+                onChange={(event) => setPassword(event.target.value)}
+                type="password"
+                autoComplete={mode === "login" ? "current-password" : "new-password"}
+                required
+                minLength={mode === "register" ? 8 : undefined}
+              />
+            </label>
+            {mode === "register" && <p className="muted full-span">{passwordHelp}</p>}
+            <button
+              className="primary-button full-span"
+              disabled={saving}
+            >
+              {saving ? (mode === "login" ? "Signing in..." : "Creating...") : (mode === "login" ? "Log in" : "Create farm account")}
+            </button>
+          </form>
+          <div className="auth-demo-list">
+            <strong>Seeded demo accounts</strong>
+            <div className="table-subtle">`river_owner` / `river123`</div>
+            <div className="table-subtle">`river_crew` / `river123`</div>
+            <div className="table-subtle">`cedar_owner` / `cedar123`</div>
+            <div className="table-subtle">`cedar_crew` / `cedar123`</div>
+          </div>
         </div>
-      </div>
+      </main>
       <footer className="page-feedback-bar auth-feedback-bar">
         <button className="secondary-button" type="button" onClick={() => setFeedbackOpen(true)}>
           Suggestion/problem

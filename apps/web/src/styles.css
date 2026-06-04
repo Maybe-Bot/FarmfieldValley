@@ -95,13 +95,19 @@ textarea {
 .auth-shell {
   min-height: 100vh;
   display: grid;
-  grid-template-rows: 1fr auto;
-  place-items: center;
-  gap: 1rem;
+  grid-template-rows: auto 1fr auto;
+  align-items: stretch;
+  justify-items: center;
+  gap: 1.2rem;
   padding: 1.5rem;
   color: var(--app-text);
   background: var(--app-bg);
   position: relative;
+}
+
+.auth-shell > .auth-card:only-child {
+  grid-row: 2;
+  place-self: center;
 }
 
 .theme-dark {
@@ -149,6 +155,138 @@ textarea {
 
 .auth-card {
   width: min(480px, 100%);
+}
+
+.auth-landing-header {
+  width: min(1120px, 100%);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 0.25rem 0;
+}
+
+.auth-landing-header strong {
+  font-size: 1.05rem;
+}
+
+.auth-top-actions {
+  justify-content: flex-end;
+  width: auto;
+}
+
+.auth-landing-main {
+  width: min(1120px, 100%);
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(360px, 480px);
+  gap: 2rem;
+  align-items: center;
+}
+
+.auth-about-panel {
+  min-width: 0;
+  display: grid;
+  gap: 1.15rem;
+  padding: 1rem 0;
+}
+
+.auth-about-panel .eyebrow {
+  color: var(--app-muted);
+}
+
+.auth-about-panel h1 {
+  margin: 0;
+  max-width: 12ch;
+  font-size: 5rem;
+  line-height: 0.95;
+}
+
+.auth-about-copy {
+  max-width: 660px;
+  display: grid;
+  gap: 0.9rem;
+  font-size: 1.08rem;
+}
+
+.auth-about-copy p {
+  margin: 0;
+}
+
+.auth-about-copy a {
+  color: var(--button-primary);
+  font-weight: 800;
+}
+
+.auth-privacy-note {
+  max-width: 580px;
+  padding: 0.8rem 0 0.8rem 1rem;
+  border-left: 4px solid var(--button-danger);
+  color: var(--text-subtle);
+}
+
+.auth-app-preview {
+  width: min(640px, 100%);
+  aspect-ratio: 2311 / 1238;
+  overflow: hidden;
+  border: 1px solid var(--card-border);
+  border-radius: 8px;
+  box-shadow: var(--card-shadow);
+  background: var(--surface-panel);
+}
+
+.auth-app-preview img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+@media (max-width: 860px) {
+  .auth-shell {
+    padding: 1rem;
+  }
+
+  .auth-landing-main {
+    grid-template-columns: 1fr;
+    gap: 1.25rem;
+    align-items: start;
+  }
+
+  .auth-about-panel {
+    padding-top: 0;
+  }
+
+  .auth-about-panel h1 {
+    font-size: 3.4rem;
+  }
+
+  .auth-card {
+    width: 100%;
+  }
+}
+
+@media (max-width: 520px) {
+  .auth-landing-header {
+    align-items: flex-start;
+  }
+
+  .auth-top-actions {
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: 0.45rem;
+  }
+
+  .auth-about-panel h1 {
+    font-size: 3rem;
+  }
+
+  .auth-about-copy {
+    font-size: 1rem;
+  }
+
+  .auth-app-preview {
+    width: 100%;
+  }
 }
 
 .auth-demo-list {
@@ -739,6 +877,26 @@ textarea {
 
 .form-grid label.inline-checkbox {
   display: flex;
+}
+
+.bed-making-mode-toggle {
+  display: inline-flex;
+  width: fit-content;
+  gap: 0;
+  margin-top: 0.35rem;
+  padding: 0.1rem;
+  border: 1px solid var(--card-border);
+  border-radius: 999px;
+  background: var(--surface-soft);
+}
+
+.bed-making-mode-toggle button {
+  border-radius: 999px;
+  padding: 0.55rem 0.85rem;
+}
+
+.bed-making-mode-toggle .secondary-button {
+  background: transparent;
 }
 
 input,
@@ -1571,43 +1729,48 @@ textarea {
   padding-left: 1rem;
 }
 
-.polygon-label {
-  background: rgba(253, 251, 242, 0.86);
+.polygon-label,
+.leaflet-tooltip.polygon-label {
+  background: transparent;
   color: #1f2a1b;
-  border: 1px solid rgba(31, 42, 27, 0.22);
-  box-shadow: 0 2px 8px rgba(31, 42, 27, 0.16);
-  border-radius: 6px;
-  padding: 0.18rem 0.45rem;
-  font-size: 0.74rem;
+  border: 0;
+  box-shadow: none;
+  padding: 0;
+  font-size: 0.82rem;
   font-weight: 700;
   line-height: 1.1;
   opacity: 0.96;
   pointer-events: none;
-  backdrop-filter: blur(2px);
+  text-shadow:
+    -1px -1px 0 rgba(255, 255, 255, 0.94),
+    0 -1px 0 rgba(255, 255, 255, 0.94),
+    1px -1px 0 rgba(255, 255, 255, 0.94),
+    -1px 0 0 rgba(255, 255, 255, 0.94),
+    1px 0 0 rgba(255, 255, 255, 0.94),
+    -1px 1px 0 rgba(255, 255, 255, 0.94),
+    0 1px 0 rgba(255, 255, 255, 0.94),
+    1px 1px 0 rgba(255, 255, 255, 0.94);
 }
 
-.polygon-label::before {
+.polygon-label::before,
+.leaflet-tooltip.polygon-label::before {
   display: none;
 }
 
 .field-map-label {
-  background: rgba(244, 248, 235, 0.76);
   color: #31422a;
-  border-color: rgba(73, 101, 58, 0.34);
-  font-size: 0.68rem;
+  font-size: 0.78rem;
   text-transform: uppercase;
 }
 
 .block-map-label {
-  background: rgba(35, 48, 34, 0.86);
-  color: #fffaf0;
-  border-color: rgba(255, 250, 240, 0.24);
+  color: #22351f;
+  font-size: 0.84rem;
 }
 
 .bed-label {
-  background: rgba(235, 246, 250, 0.9);
   color: #1e4657;
-  border-color: rgba(37, 99, 122, 0.28);
+  font-size: 0.8rem;
 }
 
 .tractor-runway,
@@ -2226,17 +2389,23 @@ textarea {
   align-items: center;
   justify-content: center;
   max-width: 150px;
-  padding: 0.08rem 0.38rem;
-  border-radius: 999px;
-  color: #fbf7ea;
-  font-size: 0.74rem;
+  color: var(--label-color, #1d4e76);
+  font-size: 0.82rem;
   font-weight: 800;
   line-height: 1.1;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-  background: var(--label-color, rgba(29, 78, 118, 0.93));
-  box-shadow: 0 1px 4px rgba(12, 18, 10, 0.24);
+  background: transparent;
+  text-shadow:
+    -1px -1px 0 rgba(255, 255, 255, 0.96),
+    0 -1px 0 rgba(255, 255, 255, 0.96),
+    1px -1px 0 rgba(255, 255, 255, 0.96),
+    -1px 0 0 rgba(255, 255, 255, 0.96),
+    1px 0 0 rgba(255, 255, 255, 0.96),
+    -1px 1px 0 rgba(255, 255, 255, 0.96),
+    0 1px 0 rgba(255, 255, 255, 0.96),
+    1px 1px 0 rgba(255, 255, 255, 0.96);
   transform: translate(-50%, -50%) rotate(var(--label-angle, 0deg));
   transform-origin: center;
 }

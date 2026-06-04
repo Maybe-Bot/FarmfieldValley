@@ -367,6 +367,64 @@ async function loadGeneratedBedBoundary(client: PoolClient, bedId: number) {
   return result.rows[0]?.boundary ?? null;
 }
 
+function inferHarvestRoadPatternFromBeds(
+  beds: Array<{ boundary: GeoJsonPolygonInput }>,
+  guideLine: LatLngInput[]
+) {
+  if (beds.length < 4 || guideLine.length < 2) {
+    return null as { everyBeds: number; widthBeds: number } | null;
+  }
+
+  const start = projectRoutePoint(guideLine[0]);
+  const end = projectRoutePoint(guideLine[guideLine.length - 1]);
+  const lineLength = Math.hypot(end.x - start.x, end.y - start.y);
+  if (!Number.isFinite(lineLength) || lineLength <= 0) {
+    return null as { everyBeds: number; widthBeds: number } | null;
+  }
+
+  const normal = { x: -(end.y - start.y) / lineLength, y: (end.x - start.x) / lineLength };
+  const offsets = beds
+    .map((bed) => {
+      const center = polygonCenterForRoute(geoJsonPolygonToLatLngs(bed.boundary));
+      if (!center) {
+        return null;
+      }
+      const projected = projectRoutePoint(center);
+      const offset = (projected.x - start.x) * normal.x + (projected.y - start.y) * normal.y;
+      return Number.isFinite(offset) ? offset : null;
+    })
+    .filter((offset): offset is number => offset != null);
+
+  if (offsets.length < 4) {
+    return null as { everyBeds: number; widthBeds: number } | null;
+  }
+
+  const orderedOffsets = [...offsets].sort((left, right) => left - right);
+  const gaps = orderedOffsets
+    .slice(1)
+    .map((offset, index) => Math.abs(offset - orderedOffsets[index]))
+    .filter((gap) => Number.isFinite(gap) && gap > 0.05);
+  if (gaps.length < 3) {
+    return null as { everyBeds: number; widthBeds: number } | null;
+  }
+
+  const sortedGaps = [...gaps].sort((left, right) => left - right);
+  const nominalGap = sortedGaps[Math.max(0, Math.floor(sortedGaps.length / 3) - 1)] ?? sortedGaps[0];
+  if (!Number.isFinite(nominalGap) || nominalGap <= 0) {
+    return null as { everyBeds: number; widthBeds: number } | null;
+  }
+
+  const firstRoadGapIndex = gaps.findIndex((gap) => gap > nominalGap * 1.6);
+  if (firstRoadGapIndex < 1) {
+    return null as { everyBeds: number; widthBeds: number } | null;
+  }
+
+  const roadGap = gaps[firstRoadGapIndex];
+  const widthBeds = Math.max(1, Math.min(20, Math.round(roadGap / nominalGap) - 1));
+  const everyBeds = firstRoadGapIndex + 1;
+  return everyBeds >= 2 && widthBeds >= 1 ? { everyBeds, widthBeds } : null;
+}
+
 export function registerFarmRoutes(app: express.Express, deps: FarmRouteDeps) {
   const {
     asyncHandler,
@@ -2339,15 +2397,13 @@ app.post("/api/tasks/:id/record", requireRole("worker"), asyncHandler(async (req
 
     let bedMakingMetadata: Record<string, unknown> | null = null;
     let recordedTaskBedId = task.bed_id;
+    const bedMakingCompletedPlantingIds = new Set<number>();
     if (body.bedMakingBedCount != null || body.bedMakingMode != null || body.bedMakingBlockFull != null || body.bedMakingRows != null) {
       if (auth.role !== "planner") {
         throw new Error("Planner access required for bed-making adjustments");
       }
-      if (task.task_type !== "bed_prep" || task.planting_id != null) {
-        throw new Error("Bed counts can only be recorded on block bed-making tasks.");
-      }
-      if (task.bed_id == null) {
-        throw new Error("This bed-making task is not tied to a block bed.");
+      if (task.task_type !== "bed_prep") {
+        throw new Error("Bed counts can only be recorded on bed-making tasks.");
       }
 
       const requestedRows = body.bedMakingRows?.filter((row) => row.count > 0) ?? [];
@@ -2356,9 +2412,9 @@ app.post("/api/tasks/:id/record", requireRole("worker"), asyncHandler(async (req
       if (bedCount == null || bedCount <= 0) {
         throw new Error("Enter the number of beds made.");
       }
-      const blockFull = body.bedMakingBlockFull === true;
+      const requestedBlockFull = body.bedMakingBlockFull === true;
       const inferredMode = task.title.toLowerCase().includes("more beds") ? "add_after_existing" : "replace_existing";
-      const mode = blockFull ? "replace_existing" : body.bedMakingMode ?? inferredMode;
+      const mode = requestedBlockFull ? "replace_existing" : body.bedMakingMode ?? inferredMode;
 
       const blockResult = await client.query<{
         id: number;
@@ -2367,21 +2423,30 @@ app.post("/api/tasks/:id/record", requireRole("worker"), asyncHandler(async (req
         boundary: GeoJsonPolygonInput;
       }>(
         `
+          with task_location as (
+            select
+              coalesce(task_bed.block_id, planting_bed.block_id, planting.intended_block_id) as block_id
+            from tasks task
+            left join plantings planting on planting.id = task.planting_id and planting.farm_id = task.farm_id
+            left join beds task_bed on task_bed.id = task.bed_id
+            left join beds planting_bed on planting_bed.id = planting.intended_bed_id
+            where task.id = $1 and task.farm_id = $2
+          )
           select
             block.id,
             block.name,
             field.name as field_name,
             ST_AsGeoJSON(block.boundary)::json as boundary
-          from beds bed
-          join blocks block on block.id = bed.block_id
+          from task_location
+          join blocks block on block.id = task_location.block_id
           join fields field on field.id = block.field_id
-          where bed.id = $1 and field.farm_id = $2
+          where field.farm_id = $2
         `,
-        [task.bed_id, auth.farmId]
+        [task.id, auth.farmId]
       );
       const block = blockResult.rows[0];
       if (!block) {
-        throw new Error("Block not found for this bed-making task.");
+        throw new Error("This bed-making task is not tied to a mapped block.");
       }
 
       const existingBeds = await client.query<{
@@ -2425,6 +2490,7 @@ app.post("/api/tasks/:id/record", requireRole("worker"), asyncHandler(async (req
       const plannedReferenceCount = unfinishedPlannedMatch
         ? existingBeds.rows.length + Number(unfinishedPlannedMatch[1])
         : plannedBedCount;
+      const blockFull = requestedBlockFull || (mode === "replace_existing" && bedCount > plannedReferenceCount);
       const targetBed = mode === "replace_existing" ? existingBeds.rows[0] : existingBeds.rows[existingBeds.rows.length - 1];
       const fallbackPreset = await resolveBedMakingPreset(client, auth.farmId, targetBed);
       const rowPresets = new Map<number, Awaited<ReturnType<typeof loadBedMakingPreset>>>();
@@ -2455,6 +2521,10 @@ app.post("/api/tasks/:id/record", requireRole("worker"), asyncHandler(async (req
       if (lineCoordinates.length < 2) {
         throw new Error("Could not read the planned bed edge for actual bed-making.");
       }
+      const harvestRoadPattern = inferHarvestRoadPatternFromBeds(
+        existingBeds.rows,
+        bedMakingGuideLine(existingBeds.rows[0].boundary, block.boundary, "replace_existing")
+      );
 
       if (mode === "replace_existing") {
         await moveBlockBedAssignmentsToOverflowForReplacement(client, auth.farmId, block.id, null);
@@ -2466,51 +2536,118 @@ app.post("/api/tasks/:id/record", requireRole("worker"), asyncHandler(async (req
             existingBeds.rows.length + 1,
             ...existingBeds.rows.map((bed) => Number(bed.sequence_no ?? 0) + 1)
           );
-      const generatedBedCount = rowsToGenerate.reduce((sum, row) => sum + row.count, 0);
+      const bedsToGenerate = rowsToGenerate.flatMap((row) => Array.from({ length: row.count }, () => row.preset));
+      const generatedBedCount = bedsToGenerate.length;
       const referencePreset = rowsToGenerate[0]?.preset ?? fallbackPreset;
-      const plannedSpanM = plannedReferenceCount * referencePreset.bedWidthM + Math.max(0, plannedReferenceCount - 1) * referencePreset.pathSpacingM;
+      const plannedRoadSlotCount = harvestRoadPattern
+        ? Math.floor(Math.max(0, plannedReferenceCount - 1) / harvestRoadPattern.everyBeds) * harvestRoadPattern.widthBeds
+        : 0;
+      const plannedSpanM =
+        plannedReferenceCount * referencePreset.bedWidthM +
+        Math.max(0, plannedReferenceCount - 1) * referencePreset.pathSpacingM +
+        plannedRoadSlotCount * (referencePreset.bedWidthM + referencePreset.pathSpacingM);
       const generatedBedWidthM = rowsToGenerate.reduce((sum, row) => sum + row.count * row.preset.bedWidthM, 0);
-      const stretchedPathSpacingM = blockFull && generatedBedCount > 1
-        ? Math.max(0, (plannedSpanM - generatedBedWidthM) / (generatedBedCount - 1))
+      const generatedRoadSlotCount = harvestRoadPattern
+        ? Math.floor(Math.max(0, generatedBedCount - 1) / harvestRoadPattern.everyBeds) * harvestRoadPattern.widthBeds
+        : 0;
+      const overTargetBlockFull = blockFull && mode === "replace_existing" && generatedBedCount > plannedReferenceCount;
+      const overTargetScale = overTargetBlockFull
+        ? Math.min(
+            1,
+            plannedSpanM / Math.max(
+              0.1,
+              generatedBedWidthM +
+                Math.max(0, generatedBedCount - 1) * referencePreset.pathSpacingM +
+                generatedRoadSlotCount * (referencePreset.bedWidthM + referencePreset.pathSpacingM)
+            )
+          )
         : null;
+      const stretchedPathSpacingM = blockFull && generatedBedCount > 1
+        ? overTargetScale != null
+          ? referencePreset.pathSpacingM * overTargetScale
+          : Math.max(
+              0,
+              (plannedSpanM - generatedBedWidthM - generatedRoadSlotCount * referencePreset.bedWidthM) /
+                Math.max(1, generatedBedCount - 1 + generatedRoadSlotCount)
+            )
+        : null;
+      const bedWidthScale = overTargetScale;
       const insertedIds: number[] = [];
       let nextLineCoordinates = lineCoordinates;
       let nextStartNumber = startNumber;
       let replaceOnThisRun = mode === "replace_existing";
-      for (const row of rowsToGenerate) {
-        const rowEdgeOffsetM = replaceOnThisRun && mode === "replace_existing"
-          ? 0
-          : stretchedPathSpacingM ?? row.preset.pathSpacingM;
+      const canBatchReplaceFromOriginalEdge = mode === "replace_existing"
+        && bedsToGenerate.length > 0
+        && bedsToGenerate.every((preset) => preset.id === bedsToGenerate[0].id);
+      if (canBatchReplaceFromOriginalEdge) {
         const result = await insertGeneratedBeds(client, {
           blockId: block.id,
-          presetId: row.preset.id,
+          presetId: bedsToGenerate[0].id,
           zoneId: targetBed.zone_id ?? null,
           lineMode: "straight",
-          lineCoordinates: nextLineCoordinates,
-          count: row.count,
+          lineCoordinates,
+          count: generatedBedCount,
           layoutStartIndex: 0,
-          edgeOffsetM: rowEdgeOffsetM,
+          edgeOffsetM: 0,
           namePrefix: `${block.name}-`,
-          startNumber: nextStartNumber,
+          startNumber,
           isPermanent: targetBed.is_permanent,
-          replaceExisting: replaceOnThisRun,
+          replaceExisting: true,
           invertSide: false,
           fillWholeBlock: false,
-          harvestRoadEveryBeds: null,
-          harvestRoadWidthBeds: 0,
-          pathSpacingOverrideM: stretchedPathSpacingM
+          harvestRoadEveryBeds: harvestRoadPattern?.everyBeds ?? null,
+          harvestRoadWidthBeds: harvestRoadPattern?.widthBeds ?? 0,
+          pathSpacingOverrideM: stretchedPathSpacingM,
+          bedWidthOverrideM: bedWidthScale == null ? null : bedsToGenerate[0].bedWidthM * bedWidthScale
         });
-        if (result.inserted !== row.count) {
-          throw new Error(`Only ${insertedIds.length + result.inserted} of ${generatedBedCount} beds fit from the planned bed edge.`);
+        if (result.inserted !== generatedBedCount) {
+          throw new Error(`Only ${result.inserted} of ${generatedBedCount} beds fit from the planned bed edge.`);
         }
         insertedIds.push(...(result.insertedIds ?? []));
-        const lastInsertedId = result.insertedIds?.[result.insertedIds.length - 1] ?? null;
-        if (lastInsertedId != null) {
-          const lastBoundary = await loadGeneratedBedBoundary(client, lastInsertedId);
-          nextLineCoordinates = bedMakingGuideLine(lastBoundary, block.boundary, "add_after_existing");
+      } else {
+        let plantableBedsBefore = mode === "replace_existing" ? 0 : existingBeds.rows.length;
+        for (const preset of bedsToGenerate) {
+          const basePathSpacingM = stretchedPathSpacingM ?? preset.pathSpacingM;
+          const roadOffsetM = harvestRoadPattern && plantableBedsBefore > 0 && plantableBedsBefore % harvestRoadPattern.everyBeds === 0
+            ? harvestRoadPattern.widthBeds * (preset.bedWidthM + basePathSpacingM)
+            : 0;
+          const rowEdgeOffsetM = replaceOnThisRun && mode === "replace_existing"
+            ? 0
+            : basePathSpacingM + roadOffsetM;
+          const result = await insertGeneratedBeds(client, {
+            blockId: block.id,
+            presetId: preset.id,
+            zoneId: targetBed.zone_id ?? null,
+            lineMode: "straight",
+            lineCoordinates: nextLineCoordinates,
+            count: 1,
+            layoutStartIndex: 0,
+            edgeOffsetM: rowEdgeOffsetM,
+            namePrefix: `${block.name}-`,
+            startNumber: nextStartNumber,
+            isPermanent: targetBed.is_permanent,
+            replaceExisting: replaceOnThisRun,
+            invertSide: false,
+            fillWholeBlock: false,
+            harvestRoadEveryBeds: null,
+            harvestRoadWidthBeds: 0,
+            pathSpacingOverrideM: basePathSpacingM,
+            bedWidthOverrideM: bedWidthScale == null ? null : preset.bedWidthM * bedWidthScale,
+            ignoreBedIds: insertedIds
+          });
+          if (result.inserted !== 1) {
+            throw new Error(`Only ${insertedIds.length + result.inserted} of ${generatedBedCount} beds fit from the planned bed edge.`);
+          }
+          insertedIds.push(...(result.insertedIds ?? []));
+          const lastInsertedId = result.insertedIds?.[result.insertedIds.length - 1] ?? null;
+          if (lastInsertedId != null) {
+            const lastBoundary = await loadGeneratedBedBoundary(client, lastInsertedId);
+            nextLineCoordinates = bedMakingGuideLine(lastBoundary, block.boundary, "add_after_existing");
+          }
+          nextStartNumber += 1;
+          plantableBedsBefore += 1;
+          replaceOnThisRun = false;
         }
-        nextStartNumber += row.count;
-        replaceOnThisRun = false;
       }
       if (insertedIds.length !== generatedBedCount) {
         throw new Error(`Only ${insertedIds.length} of ${generatedBedCount} beds fit from the planned bed edge.`);
@@ -2528,6 +2665,7 @@ app.post("/api/tasks/:id/record", requireRole("worker"), asyncHandler(async (req
         );
         await learnSeedItemSpacingFromPlanting(client, auth.farmId, task.planting_id);
       }
+      await reflowExistingBlockPlacementPlan(client, auth.farmId, block.id);
 
       if (!blockFull && mode === "replace_existing" && bedCount < plannedBedCount && insertedIds.length) {
         await client.query(
@@ -2565,8 +2703,47 @@ app.post("/api/tasks/:id/record", requireRole("worker"), asyncHandler(async (req
         generatedBedCount,
         insertedBedCount: insertedIds.length,
         rows: recordedRows.map((row) => ({ count: row.count, presetId: row.preset.id })),
+        harvestRoadPattern,
         blockId: block.id
       };
+
+      if (blockFull && task.planting_id != null) {
+        const completedRelatedTasks = await client.query<{ planting_id: number }>(
+          `
+            update tasks related_task
+            set
+              status = 'done',
+              completed_date = $3,
+              notes = concat_ws(E'\n', related_task.notes, $4::text),
+              bed_id = coalesce(related_task.bed_id, $5::integer),
+              updated_at = now()
+            from plantings planting
+            left join beds intended_bed on intended_bed.id = planting.intended_bed_id
+            where related_task.farm_id = $1
+              and related_task.id <> $2
+              and related_task.task_type = 'bed_prep'
+              and related_task.status <> 'done'
+              and related_task.planting_id = planting.id
+              and (
+                planting.intended_block_id = $6
+                or intended_bed.block_id = $6
+                or related_task.bed_id in (select id from beds where block_id = $6)
+              )
+            returning related_task.planting_id
+          `,
+          [
+            auth.farmId,
+            id,
+            body.actualDate,
+            `Block beds made from ${task.title}; marked complete because Block full was recorded.`,
+            recordedTaskBedId,
+            block.id
+          ]
+        );
+        for (const row of completedRelatedTasks.rows) {
+          bedMakingCompletedPlantingIds.add(row.planting_id);
+        }
+      }
     }
 
     if (task.planting_id != null) {
@@ -2803,6 +2980,7 @@ app.post("/api/tasks/:id/record", requireRole("worker"), asyncHandler(async (req
     });
 
     if (task.planting_id != null) {
+      bedMakingCompletedPlantingIds.add(task.planting_id);
       await recalculatePlantingTasks(client, task.planting_id);
       const plantingBlock = await client.query<{ intended_block_id: number | null }>(
         `select intended_block_id from plantings where id = $1 and farm_id = $2`,
@@ -2811,6 +2989,11 @@ app.post("/api/tasks/:id/record", requireRole("worker"), asyncHandler(async (req
       const blockId = plantingBlock.rows[0]?.intended_block_id ?? null;
       if (blockId != null) {
         await reflowExistingBlockPlacementPlan(client, auth.farmId, blockId);
+      }
+    }
+    for (const plantingId of bedMakingCompletedPlantingIds) {
+      if (plantingId !== task.planting_id) {
+        await recalculatePlantingTasks(client, plantingId);
       }
     }
 
