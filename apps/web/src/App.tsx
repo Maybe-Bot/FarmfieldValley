@@ -25,7 +25,7 @@ import { formatDate } from "./display-utils";
 import { basemaps } from "./map-config";
 import { geoJsonPolygonToLatLngs, midpoint, polygonAreaSqM, taskMapIcon, vertexIcon } from "./map-utils";
 import { getCachedSpriteSheetUrl, preloadSpriteSheets, spriteSheetRequestForTask, subscribeSpriteSheetCache } from "./sprite-sheet-cache";
-import { Bed, Block, BlockZone, DashboardData, FarmAccount, FeedbackReport, Field, Placement, PlannedUse, Planting, SeedItem, SessionInfo, Task, TaskFlowEdge, TaskFlowNode, TaskFlowTemplate, TractorProfile, UndoSnapshotSummary, ZoneActualState } from "./types";
+import { Bed, Block, BlockZone, DashboardData, FarmAccount, FarmEvent, FeedbackReport, Field, Placement, PlannedUse, Planting, SeedItem, SessionInfo, Task, TaskFlowEdge, TaskFlowNode, TaskFlowTemplate, TractorProfile, UndoSnapshotSummary, ZoneActualState } from "./types";
 
 type View = "map" | "plan" | "planting" | "tasks" | "flows" | "seed-bank" | "record" | "harvests" | "settings" | "admin";
 
@@ -1926,6 +1926,7 @@ function App() {
   const [bedInvertSide, setBedInvertSide] = useState(false);
   const [bedEntranceSideDrafts, setBedEntranceSideDrafts] = useState<Record<number, "start" | "end">>({});
   const [bedLineSource, setBedLineSource] = useState<BedLineSource>("manual");
+  const [bedEdgePickBlockId, setBedEdgePickBlockId] = useState<number | null>(null);
   const [editCoordinates, setEditCoordinates] = useState<CoordinateDraft[]>([]);
   const [editName, setEditName] = useState("");
   const [editNotes, setEditNotes] = useState("");
@@ -2963,6 +2964,9 @@ function App() {
   const selectedBlockContext = selectedBlock
     ?? (selectedZone ? data.blocks.find((block) => block.id === selectedZone.blockId) ?? null : null)
     ?? (selectedBed ? data.blocks.find((block) => block.id === selectedBed.blockId) ?? null : null);
+  const bedEdgePickBlockContext = bedEdgePickBlockId == null
+    ? selectedBlockContext
+    : data.blocks.find((block) => block.id === bedEdgePickBlockId) ?? selectedBlockContext;
   const selectedBlockEntranceSide = selectedBlockContext
     ? bedEntranceSideDrafts[selectedBlockContext.id] ?? selectedBlockContext.bedStartEntranceSide ?? "start"
     : "start";
@@ -3787,6 +3791,9 @@ function App() {
       setBedLineMode("straight");
       setBedLineSource("manual");
     }
+    if (nextMode !== "pick_bed_edge") {
+      setBedEdgePickBlockId(null);
+    }
     setEditCoordinates([]);
     setEditName("");
     setEditNotes("");
@@ -4021,6 +4028,10 @@ function App() {
   }
 
   function startBedEdgePick() {
+    if (mapMode === "pick_bed_edge") {
+      cancelBedLinePick();
+      return;
+    }
     if (!canPlan) {
       setMapNotice("Planner access required.");
       return;
@@ -4034,6 +4045,7 @@ function App() {
       return;
     }
     resetMapDrafts("pick_bed_edge", { preserveBedLine: true });
+    setBedEdgePickBlockId(selectedBlockContext.id);
     setBedLineSource("manual");
     setMapNotice("Click the block edge you want beds to build from.");
   }
@@ -4066,16 +4078,19 @@ function App() {
       return;
     }
 
-    const boundary = geoJsonPolygonToLatLngs(selectedBlockContext?.boundary ?? null);
+    const edgePickBlock = bedEdgePickBlockId == null ? selectedBlockContext : data.blocks.find((block) => block.id === bedEdgePickBlockId) ?? selectedBlockContext;
+    const boundary = geoJsonPolygonToLatLngs(edgePickBlock?.boundary ?? null);
     setBedLineCoordinates(orientLineLeftTowardPoint(edgeLine, polygonCenter(boundary)));
     setBedLineMode("straight");
     setBedLineSource("manual");
     setMapMode("bed_tools");
+    setBedEdgePickBlockId(null);
     setMapNotice("Edge selected. Choose a preset and generate beds.");
   }
 
   function cancelBedLinePick() {
     setMapMode("bed_tools");
+    setBedEdgePickBlockId(null);
     setBedLineCoordinates([]);
     setBedPreviewCoordinates([]);
     setBedLineMode("straight");
@@ -5468,12 +5483,12 @@ function App() {
                     <Polygon
                       key={`planned-overlay-${bed.id}`}
                       positions={positions}
-                      interactive={mapWorkflowMode === "field_work"}
+                      interactive={mapWorkflowMode === "field_work" && mapMode !== "pick_bed_edge"}
                       bubblingMouseEvents={false}
                       pathOptions={plantingOverlayStyleForColor(plantingColor, mapWorkflowMode === "field_work" ? "map-work-select-path" : undefined)}
                       eventHandlers={{
                         click: () => {
-                          if (mapWorkflowMode !== "field_work") {
+                          if (mapWorkflowMode !== "field_work" || mapMode === "pick_bed_edge") {
                             return;
                           }
                           const planting = planned[0] ?? null;
@@ -5501,7 +5516,7 @@ function App() {
                     <Polygon
                       key={overlay.key}
                       positions={positions}
-                      interactive={mapWorkflowMode === "field_work"}
+                      interactive={mapWorkflowMode === "field_work" && mapMode !== "pick_bed_edge"}
                       bubblingMouseEvents={false}
                       pathOptions={overlay.isGap ? {
                         color: "#84776b",
@@ -5513,7 +5528,7 @@ function App() {
                       } : plantingOverlayStyleForColor(overlay.color, mapWorkflowMode === "field_work" ? "map-work-select-path" : undefined)}
                       eventHandlers={{
                         click: () => {
-                          if (mapWorkflowMode !== "field_work") {
+                          if (mapWorkflowMode !== "field_work" || mapMode === "pick_bed_edge") {
                             return;
                           }
                           const bed = bedsById.get(overlay.bedId) ?? null;
@@ -5539,7 +5554,7 @@ function App() {
                     <Polygon
                       key={overlay.key}
                       positions={positions}
-                      interactive={mapWorkflowMode === "field_work"}
+                      interactive={mapWorkflowMode === "field_work" && mapMode !== "pick_bed_edge"}
                       bubblingMouseEvents={false}
                       pathOptions={overlay.isGap ? {
                         color: "#84776b",
@@ -5551,7 +5566,7 @@ function App() {
                       } : plantingOverlayStyleForColor(overlay.color, mapWorkflowMode === "field_work" ? "map-work-select-path" : undefined)}
                       eventHandlers={{
                         click: () => {
-                          if (mapWorkflowMode !== "field_work") {
+                          if (mapWorkflowMode !== "field_work" || mapMode === "pick_bed_edge") {
                             return;
                           }
                           const bed = bedsById.get(overlay.bedId) ?? null;
@@ -5577,12 +5592,12 @@ function App() {
                     <Polygon
                       key={`placement-overlay-${overlay.key}`}
                       positions={positions}
-                      interactive={mapWorkflowMode === "field_work"}
+                      interactive={mapWorkflowMode === "field_work" && mapMode !== "pick_bed_edge"}
                       bubblingMouseEvents={false}
                       pathOptions={plantingOverlayStyleForColor(overlay.color, mapWorkflowMode === "field_work" ? "map-work-select-path" : undefined)}
                       eventHandlers={{
                         click: () => {
-                          if (mapWorkflowMode !== "field_work") {
+                          if (mapWorkflowMode !== "field_work" || mapMode === "pick_bed_edge") {
                             return;
                           }
                           const bed = bedsById.get(overlay.bedId) ?? null;
@@ -5659,8 +5674,14 @@ function App() {
                     key={key}
                     position={[center.lat, center.lng]}
                     icon={taskMapIcon(task.taskType, taskColor(task), task.iconSecondaryColor, bearing, runDistancePx, task.tractorModel, mapTaskSpriteSheetUrls.get(task.id), runDurationSec, animationDelaySec)}
+                    interactive={mapMode !== "pick_bed_edge"}
                     eventHandlers={{
-                      click: () => openTaskRecordFromMap(task)
+                      click: () => {
+                        if (mapMode === "pick_bed_edge") {
+                          return;
+                        }
+                        openTaskRecordFromMap(task);
+                      }
                     }}
                   >
                     <Tooltip direction="top" className="polygon-label">
@@ -5774,8 +5795,8 @@ function App() {
                   </Polygon>
                 )}
 
-                {mapMode === "pick_bed_edge" && selectedBlockContext && boundaryEdgeLines(geoJsonPolygonToLatLngs(selectedBlockContext.boundary)).map((edge, index) => (
-                  <Fragment key={`bed-edge-picker-${selectedBlockContext.id}-${index}`}>
+                {mapMode === "pick_bed_edge" && bedEdgePickBlockContext && boundaryEdgeLines(geoJsonPolygonToLatLngs(bedEdgePickBlockContext.boundary)).map((edge, index) => (
+                  <Fragment key={`bed-edge-picker-${bedEdgePickBlockContext.id}-${index}`}>
                     <Polyline
                       positions={polygonPositions(edge)}
                       interactive={false}
@@ -5783,8 +5804,9 @@ function App() {
                     />
                     <Polyline
                       positions={polygonPositions(edge)}
+                      interactive
                       bubblingMouseEvents={false}
-                      pathOptions={{ color: "#cfe7ff", weight: 22, opacity: 0.01 }}
+                      pathOptions={{ color: "#cfe7ff", weight: 28, opacity: 0.18 }}
                       eventHandlers={{
                         click: () => {
                           selectBedEdgeLine(edge);
@@ -5952,6 +5974,7 @@ function App() {
                       blockZones={ownBlockZones.filter((zone) => selectedBlockContext != null && zone.blockId === selectedBlockContext.id)}
                       plantings={ownFarmData.plantings}
                       placements={ownFarmData.placements}
+                      events={ownFarmData.events}
                       distanceUnit={distanceUnit}
                       bedLineCoordinates={bedLineCoordinates}
                       bedLineSource={bedLineSource}
@@ -6428,6 +6451,7 @@ function App() {
                   blockZones={ownBlockZones.filter((zone) => selectedBlockContext != null && zone.blockId === selectedBlockContext.id)}
                   plantings={ownFarmData.plantings}
                   placements={ownFarmData.placements}
+                  events={ownFarmData.events}
                   distanceUnit={distanceUnit}
                   bedLineCoordinates={bedLineCoordinates}
                   bedLineSource={bedLineSource}
@@ -9787,6 +9811,78 @@ function uniqueWorkOptions(options: string[]) {
     });
 }
 
+function eventMetadataText(event: FarmEvent, key: string) {
+  const value = event.metadata?.[key];
+  return typeof value === "string" ? value : "";
+}
+
+function locationEventAppliesToSelection(event: FarmEvent, block: Block | null, zone: BlockZone | null, bed: Bed | null) {
+  if (bed) {
+    return event.bedId === bed.id || event.blockId === bed.blockId;
+  }
+  if (zone) {
+    return event.zoneId === zone.id || event.blockId === zone.blockId;
+  }
+  if (block) {
+    return event.blockId === block.id;
+  }
+  return false;
+}
+
+function hasLocationWorkEvent(events: FarmEvent[], workTypes: string[], taskTypes: string[], eventTypes: string[]) {
+  const workTypeSet = new Set(workTypes.map((item) => item.toLowerCase()));
+  const taskTypeSet = new Set(taskTypes.map((item) => item.toLowerCase()));
+  const eventTypeSet = new Set(eventTypes.map((item) => item.toLowerCase()));
+  return events.some((event) => {
+    const workType = eventMetadataText(event, "workType").toLowerCase();
+    const taskType = eventMetadataText(event, "taskType").toLowerCase();
+    return workTypeSet.has(workType) || taskTypeSet.has(taskType) || eventTypeSet.has(event.eventType.toLowerCase());
+  });
+}
+
+function orderedUnplannedWorkOptions({
+  block,
+  zone,
+  bed,
+  blockBeds,
+  placements,
+  events
+}: {
+  block: Block | null;
+  zone: BlockZone | null;
+  bed: Bed | null;
+  blockBeds: Bed[];
+  placements: Placement[];
+  events: FarmEvent[];
+}) {
+  if (!block && !zone && !bed) {
+    return unplannedWorkOptions;
+  }
+
+  const locationEvents = events.filter((event) => locationEventAppliesToSelection(event, block, zone, bed));
+  const hasTill = hasLocationWorkEvent(locationEvents, ["Till", "Tilling"], ["till"], []);
+  const hasFertility = hasLocationWorkEvent(locationEvents, ["Fertilizing / spraying"], ["fertilizing_spraying"], []);
+  const hasBedMaking = blockBeds.length > 0 || hasLocationWorkEvent(locationEvents, ["Bed making"], ["bed_making", "bed_prep"], []);
+  const blockBedIds = new Set(blockBeds.map((item) => item.id));
+  const hasPlantingInBlock = placements.some((placement) => blockBedIds.has(placement.bedId))
+    || hasLocationWorkEvent(locationEvents, ["Transplanting", "Direct seed"], ["transplant", "direct_seed"], ["transplant", "direct_seeding"]);
+
+  let preferredOrder: string[];
+  if (!hasTill && !hasBedMaking) {
+    preferredOrder = ["Till", "Fertilizing / spraying", "Bed making", "Direct seed", "Transplanting", "Cultivation", "Cleanup", "Covercrop", "Seed in tray"];
+  } else if (hasTill && !hasFertility && !hasBedMaking) {
+    preferredOrder = ["Fertilizing / spraying", "Bed making", "Direct seed", "Transplanting", "Cultivation", "Cleanup", "Covercrop", "Till", "Seed in tray"];
+  } else if (!hasBedMaking) {
+    preferredOrder = ["Bed making", "Direct seed", "Transplanting", "Cultivation", "Fertilizing / spraying", "Cleanup", "Covercrop", "Till", "Seed in tray"];
+  } else if (!hasPlantingInBlock) {
+    preferredOrder = ["Transplanting", "Direct seed", "Cultivation", "Fertilizing / spraying", "Cleanup", "Covercrop", "Bed making", "Till", "Seed in tray"];
+  } else {
+    preferredOrder = ["Cultivation", "Fertilizing / spraying", "Cleanup", "Covercrop", "Transplanting", "Direct seed", "Bed making", "Till", "Seed in tray"];
+  }
+
+  return uniqueWorkOptions([...preferredOrder, ...unplannedWorkOptions]);
+}
+
 function UnplannedWorkCard({
   field,
   block,
@@ -9799,6 +9895,7 @@ function UnplannedWorkCard({
   blockZones,
   plantings,
   placements,
+  events,
   distanceUnit,
   bedLineCoordinates,
   bedLineSource,
@@ -9834,6 +9931,7 @@ function UnplannedWorkCard({
   blockZones: BlockZone[];
   plantings: Planting[];
   placements: Placement[];
+  events: FarmEvent[];
   distanceUnit: DistanceUnit;
   bedLineCoordinates: CoordinateDraft[];
   bedLineSource: BedLineSource;
@@ -9896,6 +9994,15 @@ function UnplannedWorkCard({
       : block
         ? block.name
         : field?.name ?? "selected area";
+  const workLocationKey = `${field?.id ?? "field-none"}:${block?.id ?? "block-none"}:${zone?.id ?? "zone-none"}:${bed?.id ?? "bed-none"}`;
+  const orderedWorkOptions = useMemo(() => orderedUnplannedWorkOptions({
+    block,
+    zone,
+    bed,
+    blockBeds,
+    placements,
+    events
+  }), [bed, block, blockBeds, events, placements, zone]);
   const cardTitle = "Record Work (unplanned)";
   const showSubcategoryFields = workType !== "Transplanting" && workType !== "Covercrop";
   const subcategoryOptions = uniqueWorkOptions([
@@ -9960,6 +10067,10 @@ function UnplannedWorkCard({
   const selectedTransplantAvailableCount = selectedTransplantPlanting?.plantCount == null
     ? null
     : Math.max(0, selectedTransplantPlanting.plantCount - plantingPlacementCount(placements, selectedTransplantPlanting.id));
+
+  useEffect(() => {
+    setWorkType(orderedWorkOptions[0] ?? unplannedWorkOptions[0]);
+  }, [workLocationKey]);
 
   useEffect(() => {
     if (!bedMakingPresetId && bedMakingPresets[0]) {
@@ -10319,7 +10430,7 @@ function UnplannedWorkCard({
         <label>
           <span>Work category</span>
           <select value={workType} onChange={(event) => setWorkType(event.target.value)}>
-            {unplannedWorkOptions.map((option) => <option key={option} value={option}>{option}</option>)}
+            {orderedWorkOptions.map((option) => <option key={option} value={option}>{option}</option>)}
           </select>
         </label>
         {showSubcategoryFields && (
@@ -10448,12 +10559,12 @@ function UnplannedWorkCard({
                 </label>
                 <div className="full-span button-row">
                   <button type="button" className="primary-button" onClick={onPickBedEdge}>
-                    {isPickingEdge ? "Click an edge..." : "Pick block edge"}
+                    {isPickingEdge ? "Stop picking edge" : "Pick block edge"}
                   </button>
                   <button type="button" className="secondary-button" onClick={() => onStartBedLine("straight")}>
                     {isPickingLine ? "Picking line..." : "Draw straight line"}
                   </button>
-                  {(isPickingLine || isPickingEdge) && (
+                  {isPickingLine && (
                     <button type="button" className="secondary-button" onClick={onCancelBedLine}>
                       Cancel line
                     </button>
@@ -11318,9 +11429,9 @@ function BedGeneratorCard({
                     className={`primary-button${tutorialActive && bedLineCoordinates.length < minPoints ? " tutorial-target" : ""}`}
                     onClick={onPickEdge}
                   >
-                    {isPickingEdge ? "Click an edge..." : "Pick block edge"}
+                    {isPickingEdge ? "Stop picking edge" : "Pick block edge"}
                   </button>
-                  {(isPickingLine || isPickingEdge) && (
+                  {isPickingLine && (
                     <button type="button" className="secondary-button" onClick={onCancelLine}>
                       Cancel line
                     </button>
