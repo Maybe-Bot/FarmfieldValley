@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { api } from "../api";
 import { roleLabel } from "../account-utils";
 import { formatDate } from "../display-utils";
-import { AdminUser, FeedbackReport } from "../types";
+import { AdminUser, FeedbackReport, UsageEvent } from "../types";
 
 type AdminPanelProps = {
   reports: FeedbackReport[];
@@ -14,8 +14,10 @@ type AdminPanelProps = {
 // normal farm users do not need to understand global admin controls.
 export function AdminPanel({ reports, onRefresh, onOpenFeedback }: AdminPanelProps) {
   const [users, setUsers] = useState<AdminUser[]>([]);
+  const [usageEvents, setUsageEvents] = useState<UsageEvent[]>([]);
   const [status, setStatus] = useState<string | null>(null);
   const [loadingUsers, setLoadingUsers] = useState(false);
+  const [loadingUsage, setLoadingUsage] = useState(false);
 
   async function loadUsers() {
     try {
@@ -29,9 +31,35 @@ export function AdminPanel({ reports, onRefresh, onOpenFeedback }: AdminPanelPro
     }
   }
 
+  async function loadUsageEvents() {
+    try {
+      setLoadingUsage(true);
+      setUsageEvents(await api.getUsageEvents(200));
+    } catch (error) {
+      setStatus(error instanceof Error ? error.message : "Could not load usage activity.");
+    } finally {
+      setLoadingUsage(false);
+    }
+  }
+
   useEffect(() => {
     void loadUsers();
+    void loadUsageEvents();
   }, []);
+
+  async function refreshAdminData() {
+    try {
+      setStatus(null);
+      await Promise.all([
+        loadUsers(),
+        loadUsageEvents(),
+        onRefresh()
+      ]);
+      setStatus("Admin data refreshed.");
+    } catch (error) {
+      setStatus(error instanceof Error ? error.message : "Could not refresh admin data.");
+    }
+  }
 
   async function deleteUser(user: AdminUser) {
     const confirmed = window.confirm(`Delete user "${user.username}"? This disables their login and signs them out.`);
@@ -43,7 +71,7 @@ export function AdminPanel({ reports, onRefresh, onOpenFeedback }: AdminPanelPro
       setStatus(`Deleting ${user.username}...`);
       await api.deleteAdminUser(user.id);
       await loadUsers();
-      await onRefresh();
+      await refreshAdminData();
       setStatus("User deleted.");
     } catch (error) {
       setStatus(error instanceof Error ? error.message : "Could not delete user.");
@@ -61,6 +89,9 @@ export function AdminPanel({ reports, onRefresh, onOpenFeedback }: AdminPanelPro
             </div>
             <button type="button" className="primary-button" onClick={onOpenFeedback}>
               Suggestion/problem
+            </button>
+            <button type="button" className="secondary-button" onClick={() => void refreshAdminData()}>
+              Refresh
             </button>
           </div>
           {status && <p className="muted"><strong>{status}</strong></p>}
@@ -113,9 +144,85 @@ export function AdminPanel({ reports, onRefresh, onOpenFeedback }: AdminPanelPro
         </div>
       </div>
       <div className="stack">
+        <UsageEventsCard events={usageEvents} loading={loadingUsage} />
         <FeedbackReportsCard reports={reports} />
       </div>
     </section>
+  );
+}
+
+function formatDuration(ms: number | null) {
+  if (ms == null) {
+    return "—";
+  }
+  if (ms < 1000) {
+    return "<1 sec";
+  }
+  const totalSeconds = Math.round(ms / 1000);
+  const minutes = Math.floor(totalSeconds / 60);
+  const seconds = totalSeconds % 60;
+  if (minutes === 0) {
+    return `${seconds} sec`;
+  }
+  return `${minutes} min ${seconds.toString().padStart(2, "0")} sec`;
+}
+
+function usageEventSummary(event: UsageEvent) {
+  if (event.eventType === "click") {
+    const label = typeof event.details.label === "string" ? event.details.label : null;
+    return label ? `Clicked ${label}` : "Clicked";
+  }
+  if (event.eventType === "frontend_error" || event.eventType === "frontend_unhandled_rejection") {
+    const message = typeof event.details.message === "string"
+      ? event.details.message
+      : typeof event.details.reason === "string"
+        ? event.details.reason
+        : null;
+    return message ?? event.eventType;
+  }
+  return event.eventType.replace(/_/g, " ");
+}
+
+function UsageEventsCard({ events, loading }: { events: UsageEvent[]; loading: boolean }) {
+  return (
+    <div className="card">
+      <h2>Recent usage</h2>
+      <p className="muted">Recent page views, time-on-page records, clicks, and frontend errors.</p>
+      {events.length === 0 ? (
+        <p className="muted">{loading ? "Loading usage activity..." : "No usage activity yet."}</p>
+      ) : (
+        <div className="table-wrap">
+          <table className="data-table">
+            <thead>
+              <tr>
+                <th>When</th>
+                <th>User</th>
+                <th>Page</th>
+                <th>Activity</th>
+                <th>Time</th>
+              </tr>
+            </thead>
+            <tbody>
+              {events.slice(0, 25).map((event) => (
+                <tr key={event.id}>
+                  <td>{formatDate(event.occurredAt)}</td>
+                  <td>
+                    {event.displayName ?? event.username ?? "Unknown"}
+                    <div className="table-subtle">{event.farmName ?? "No farm"}</div>
+                  </td>
+                  <td>
+                    {event.page}
+                    <div className="table-subtle">{event.path}</div>
+                  </td>
+                  <td>{usageEventSummary(event)}</td>
+                  <td>{formatDuration(event.durationMs)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
   );
 }
 

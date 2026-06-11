@@ -26,6 +26,7 @@ import { basemaps } from "./map-config";
 import { geoJsonPolygonToLatLngs, midpoint, polygonAreaSqM, taskMapIcon, vertexIcon } from "./map-utils";
 import { getCachedSpriteSheetUrl, preloadSpriteSheets, spriteSheetRequestForTask, subscribeSpriteSheetCache } from "./sprite-sheet-cache";
 import { Bed, Block, BlockZone, DashboardData, FarmAccount, FarmEvent, FeedbackReport, Field, Placement, PlannedUse, Planting, SeedItem, SessionInfo, Task, TaskFlowEdge, TaskFlowNode, TaskFlowTemplate, TractorProfile, UndoSnapshotSummary, ZoneActualState } from "./types";
+import { useUsageTracking } from "./usage-tracking";
 
 type View = "map" | "plan" | "planting" | "tasks" | "flows" | "seed-bank" | "record" | "harvests" | "settings" | "admin";
 
@@ -2132,6 +2133,12 @@ function App() {
   const isAuthenticated = session?.authenticated === true;
   const canViewOtherFarmMaps = isAdmin;
   const effectiveShowOtherFarmMaps = canViewOtherFarmMaps && showOtherFarmMaps;
+  useUsageTracking({
+    enabled: isAuthenticated,
+    page: view,
+    userId: isAuthenticated ? session.user.id : null,
+    farmId: isAuthenticated ? session.user.farmId : null
+  });
 
   function recordActivity(action: string, details?: Record<string, unknown>) {
     recentActivityRef.current = [

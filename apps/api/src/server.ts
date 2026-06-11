@@ -42,6 +42,7 @@ import {
 } from "./offline-imagery";
 import { roleMeetsRequirement } from "./permissions";
 import { registerFarmRoutes } from "./routes/farm-routes";
+import { registerUsageEventRoutes } from "./routes/usage-events";
 import { recalculatePlantingTasks } from "./scheduler";
 import {
   accountCreateSchema,
@@ -359,6 +360,11 @@ app.use("/api", asyncHandler(async (req, _res, next) => {
 
 app.use("/api", (req, res, next) => {
   if (["GET", "HEAD", "OPTIONS"].includes(req.method)) {
+    next();
+    return;
+  }
+
+  if (req.path === "/usage/events") {
     next();
     return;
   }
@@ -3688,6 +3694,12 @@ app.get("/api/offline-imagery/tiles/:z/:x/:y", asyncHandler(async (req, res) => 
 
 // Main dashboard payload. Most frontend screens are hydrated from this one route
 // instead of making many smaller requests after every save/reload.
+registerUsageEventRoutes(app, {
+  asyncHandler,
+  currentAuth,
+  requireAdmin
+});
+
 registerFarmRoutes(app, {
   asyncHandler,
   currentAuth,
@@ -3762,7 +3774,8 @@ app.use((error: unknown, _req: express.Request, res: express.Response, _next: ex
     error instanceof Error &&
     (
       error.message === "Feedback context is too large" ||
-      error.message === "Feedback activity details are too large"
+      error.message === "Feedback activity details are too large" ||
+      error.message === "Usage event details are too large"
     )
   ) {
     res.status(400).json({ error: error.message });

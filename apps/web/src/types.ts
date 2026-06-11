@@ -273,6 +273,26 @@ export type FeedbackReport = {
   createdAt: string;
 };
 
+export type UsageEvent = {
+  id: number;
+  farmId: number | null;
+  farmName: string | null;
+  userId: number | null;
+  username: string | null;
+  displayName: string | null;
+  anonymousId: string | null;
+  browserSessionId: string | null;
+  eventType: string;
+  page: string;
+  path: string;
+  title: string | null;
+  occurredAt: string;
+  durationMs: number | null;
+  details: Record<string, unknown>;
+  userAgent: string | null;
+  createdAt: string;
+};
+
 export type UndoSnapshotSummary = {
   id: number;
   label: string;
