@@ -8,7 +8,18 @@ export function isTractorModel(model: string | null | undefined): model is Tract
 }
 
 export function isTractorTask(taskType: string) {
-  return taskType === "cultivate" || taskType === "weed" || taskType === "mow" || taskType === "bed_prep";
+  return [
+    "till",
+    "fertilizing_spraying",
+    "bed_making",
+    "cultivation",
+    "cleanup",
+    "cover_crop",
+    "cultivate",
+    "weed",
+    "mow",
+    "bed_prep"
+  ].includes(taskType);
 }
 
 export function defaultTractorAccentColor() {
@@ -16,10 +27,10 @@ export function defaultTractorAccentColor() {
 }
 
 export function tractorModelForTask(taskType: string): TractorModel {
-  if (taskType === "bed_prep") {
+  if (taskType === "bed_prep" || taskType === "bed_making" || taskType === "till" || taskType === "fertilizing_spraying") {
     return "cab";
   }
-  if (taskType === "cultivate") {
+  if (taskType === "cultivate" || taskType === "cultivation") {
     return "canopy";
   }
   return "open";

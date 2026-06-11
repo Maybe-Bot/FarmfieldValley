@@ -545,6 +545,14 @@ function formatDisplayArea(valueSqM: number | string | null | undefined, unit: D
   return `${Math.round(numericValue).toLocaleString()} sq m`;
 }
 
+function formatDecimalInputValue(value: number) {
+  if (!Number.isFinite(value)) {
+    return "";
+  }
+  const fixed = value >= 100 ? value.toFixed(0) : value >= 10 ? value.toFixed(1) : value.toFixed(2);
+  return fixed.replace(/\.0+$/, "").replace(/(\.\d*[1-9])0+$/, "$1");
+}
+
 function formatSpacing(value: string | null, unit: DistanceUnit) {
   if (!value) {
     return "—";
@@ -692,7 +700,7 @@ function isPlantingActionTask(taskType: string) {
 }
 
 function taskNeedsRecordForm(taskType: string) {
-  return ["seed_in_tray", "direct_seed", "bed_prep", "transplant", "harvest", "finish_crop"].includes(taskType);
+  return ["seed_in_tray", "direct_seed", "bed_prep", "bed_making", "transplant", "harvest", "finish_crop"].includes(taskType);
 }
 
 function dateDiffDays(startDate: string | null | undefined, endDate: string | null | undefined) {
@@ -1222,6 +1230,116 @@ function selectedBedGuideLine(bed: Bed | null, block: Block | null) {
   return guideEdge ? orientLineLeftAwayFromPoint([guideEdge.start, guideEdge.end], bedCenter) : [];
 }
 
+function sortedPlantableBlockBeds(beds: Bed[]) {
+  return beds
+    .filter((bed) => bed.source !== "road")
+    .sort((left, right) => (left.sequenceNo ?? left.id) - (right.sequenceNo ?? right.id));
+}
+
+function longestBoundaryEdgeLine(boundary: CoordinateDraft[]) {
+  if (boundary.length < 2) {
+    return [] as CoordinateDraft[];
+  }
+
+  return boundary
+    .map((start, index) => {
+      const end = boundary[(index + 1) % boundary.length];
+      const projectedStart = projectForEdgePicking(start);
+      const projectedEnd = projectForEdgePicking(end);
+      return {
+        line: [start, end] as CoordinateDraft[],
+        length: Math.hypot(projectedEnd.x - projectedStart.x, projectedEnd.y - projectedStart.y)
+      };
+    })
+    .sort((left, right) => right.length - left.length)[0]?.line ?? [];
+}
+
+function splitGuideLineForBlock(block: Block | null, beds: Bed[]) {
+  const firstBed = sortedPlantableBlockBeds(beds)[0] ?? null;
+  const bedGuide = selectedBedGuideLine(firstBed, block);
+  if (bedGuide.length >= 2) {
+    return bedGuide;
+  }
+
+  return longestBoundaryEdgeLine(geoJsonPolygonToLatLngs(block?.boundary ?? null));
+}
+
+function firstBedSideReferencePoint(block: Block | null, beds: Bed[]) {
+  const firstBed = sortedPlantableBlockBeds(beds)[0] ?? null;
+  const firstBedCenter = polygonCenter(geoJsonPolygonToLatLngs(firstBed?.boundary ?? null));
+  if (firstBedCenter) {
+    return firstBedCenter;
+  }
+
+  const boundary = geoJsonPolygonToLatLngs(block?.boundary ?? null);
+  const guideLine = splitGuideLineForBlock(block, beds);
+  if (boundary.length < 3 || guideLine.length < 2) {
+    return polygonCenter(boundary);
+  }
+
+  const start = projectForEdgePicking(guideLine[0]);
+  const end = projectForEdgePicking(guideLine[guideLine.length - 1]);
+  const dx = end.x - start.x;
+  const dy = end.y - start.y;
+  const length = Math.hypot(dx, dy);
+  if (length === 0) {
+    return polygonCenter(boundary);
+  }
+
+  const along = { x: dx / length, y: dy / length };
+  const across = { x: -along.y, y: along.x };
+  const projected = boundary.map(projectForEdgePicking);
+  const alongValues = projected.map((point) => point.x * along.x + point.y * along.y);
+  const acrossValues = projected.map((point) => point.x * across.x + point.y * across.y);
+  return unprojectFromWebMercator({
+    x: along.x * ((Math.min(...alongValues) + Math.max(...alongValues)) / 2) + across.x * Math.min(...acrossValues),
+    y: along.y * ((Math.min(...alongValues) + Math.max(...alongValues)) / 2) + across.y * Math.min(...acrossValues)
+  });
+}
+
+function bedParallelSplitLineThroughPoint(anchor: CoordinateDraft, block: Block | null, beds: Bed[]) {
+  const boundary = geoJsonPolygonToLatLngs(block?.boundary ?? null);
+  const guideLine = splitGuideLineForBlock(block, beds);
+  if (boundary.length < 3 || guideLine.length < 2) {
+    return [] as CoordinateDraft[];
+  }
+
+  const start = projectForEdgePicking(guideLine[0]);
+  const end = projectForEdgePicking(guideLine[guideLine.length - 1]);
+  const dx = end.x - start.x;
+  const dy = end.y - start.y;
+  const length = Math.hypot(dx, dy);
+  if (length === 0) {
+    return [];
+  }
+
+  const unit = { x: dx / length, y: dy / length };
+  const projectedBoundary = boundary.map(projectForEdgePicking);
+  const anchorPoint = projectForEdgePicking(anchor);
+  const boundaryAlongValues = projectedBoundary.map((point) => point.x * unit.x + point.y * unit.y);
+  const anchorAlong = anchorPoint.x * unit.x + anchorPoint.y * unit.y;
+  const minAlong = Math.min(...boundaryAlongValues);
+  const maxAlong = Math.max(...boundaryAlongValues);
+  const padding = Math.max(25, (maxAlong - minAlong) * 0.2);
+
+  return [
+    unprojectFromWebMercator({
+      x: anchorPoint.x + unit.x * (minAlong - anchorAlong - padding),
+      y: anchorPoint.y + unit.y * (minAlong - anchorAlong - padding)
+    }),
+    unprojectFromWebMercator({
+      x: anchorPoint.x + unit.x * (maxAlong - anchorAlong + padding),
+      y: anchorPoint.y + unit.y * (maxAlong - anchorAlong + padding)
+    })
+  ];
+}
+
+function bedParallelSplitLinesForBlock(block: Block | null, beds: Bed[], anchors: CoordinateDraft[]) {
+  return anchors
+    .map((anchor) => bedParallelSplitLineThroughPoint(anchor, block, beds))
+    .filter((line) => line.length === 2);
+}
+
 function summarizeTitles(titles: string[]) {
   const uniqueTitles = [...new Set(titles.filter(Boolean))];
   if (uniqueTitles.length === 0) {
@@ -1341,7 +1459,22 @@ function sentenceCase(input: string) {
 }
 
 function formatTaskTypeLabel(taskType: string) {
-  return sentenceCase(taskType);
+  const labels: Record<string, string> = {
+    seed_in_tray: "seed in tray",
+    direct_seed: "direct seed",
+    till: "till",
+    fertilizing_spraying: "fertilizing / spraying",
+    bed_making: "bed making",
+    transplant: "transplanting",
+    cultivation: "cultivation",
+    cleanup: "cleanup",
+    cover_crop: "covercrop",
+    bed_prep: "bed making",
+    cultivate: "cultivation",
+    finish_crop: "finish crop",
+    irrigation_check: "irrigation check"
+  };
+  return labels[taskType] ?? sentenceCase(taskType);
 }
 
 function formatTaskAnchorLabel(anchor: string) {
@@ -1372,11 +1505,13 @@ function mapSaveErrorMessage(error: unknown, itemLabel: string) {
 }
 
 function taskIconColor(taskType: string) {
-  if (taskType === "cultivate" || taskType === "weed" || taskType === "mow") return "#d98c2b";
+  if (taskType === "cultivation" || taskType === "cultivate" || taskType === "weed" || taskType === "mow") return "#d98c2b";
   if (taskType === "transplant") return "#4f9b58";
   if (taskType === "direct_seed" || taskType === "seed_in_tray") return "#7c9f35";
   if (taskType === "harvest") return "#c6503f";
-  if (taskType === "bed_prep") return "#8b6f43";
+  if (taskType === "bed_making" || taskType === "bed_prep" || taskType === "till") return "#8b6f43";
+  if (taskType === "fertilizing_spraying") return "#5f8f4f";
+  if (taskType === "cleanup" || taskType === "cover_crop") return "#6d7f45";
   return "#4f84aa";
 }
 
@@ -1768,6 +1903,8 @@ function App() {
   const [mapMode, setMapMode] = useState<MapMode>("select");
   const [selection, setSelection] = useState<MapSelection>(null);
   const [mapPlantingBedIds, setMapPlantingBedIds] = useState<number[]>([]);
+  const [workBedPickActive, setWorkBedPickActive] = useState(false);
+  const [workSelectedBedIds, setWorkSelectedBedIds] = useState<number[]>([]);
   const [draftCoordinates, setDraftCoordinates] = useState<CoordinateDraft[]>([]);
   const [draftName, setDraftName] = useState("");
   const [draftNotes, setDraftNotes] = useState("");
@@ -1780,6 +1917,7 @@ function App() {
   const [zoneDraftActive, setZoneDraftActive] = useState(false);
   const [zoneDraftMethod, setZoneDraftMethod] = useState<ZoneDraftMethod>(null);
   const [zoneSplitCoordinates, setZoneSplitCoordinates] = useState<CoordinateDraft[]>([]);
+  const [zoneSplitDraggingLineIndex, setZoneSplitDraggingLineIndex] = useState<number | null>(null);
   const [zoneSplitUseLargerSide, setZoneSplitUseLargerSide] = useState(false);
   const [bedLineCoordinates, setBedLineCoordinates] = useState<CoordinateDraft[]>([]);
   const [bedPreviewCoordinates, setBedPreviewCoordinates] = useState<CoordinateDraft[]>([]);
@@ -1822,6 +1960,27 @@ function App() {
   const [feedbackComment, setFeedbackComment] = useState("");
   const [feedbackStatus, setFeedbackStatus] = useState<string | null>(null);
   const [isSavingFeedback, setIsSavingFeedback] = useState(false);
+
+  useEffect(() => {
+    if (typeof document === "undefined") {
+      return;
+    }
+    const counts = new Map<string, number>();
+    document.querySelectorAll<HTMLElement>(".card").forEach((card) => {
+      const explicit = card.dataset.cardId?.trim();
+      const heading = card.querySelector("h1,h2,h3")?.textContent?.trim();
+      const classHint = Array.from(card.classList).filter((name) => name !== "card").join(".");
+      const base = explicit || heading || classHint || "card";
+      const slug = base
+        .replace(/\s+/g, "-")
+        .replace(/[^a-zA-Z0-9_.-]/g, "")
+        .replace(/-+/g, "-")
+        .toLowerCase() || "card";
+      const nextCount = (counts.get(slug) ?? 0) + 1;
+      counts.set(slug, nextCount);
+      card.dataset.cardMarker = explicit || (nextCount === 1 ? slug : `${slug}-${nextCount}`);
+    });
+  });
   const [prototypeWarningOpen, setPrototypeWarningOpen] = useState(false);
   const [tutorialOpen, setTutorialOpen] = useState(false);
   const [tutorialStatus, setTutorialStatus] = useState<string | null>(null);
@@ -2850,8 +3009,10 @@ function App() {
         return task.scheduledDate == null || isDateInWeek(task.scheduledDate, selectedMapWeekStart);
       })
       .sort((left, right) => {
-        if (left.taskType === "bed_prep" && right.taskType !== "bed_prep") return -1;
-        if (right.taskType === "bed_prep" && left.taskType !== "bed_prep") return 1;
+        const leftIsBedMaking = left.taskType === "bed_prep" || left.taskType === "bed_making";
+        const rightIsBedMaking = right.taskType === "bed_prep" || right.taskType === "bed_making";
+        if (leftIsBedMaking && !rightIsBedMaking) return -1;
+        if (rightIsBedMaking && !leftIsBedMaking) return 1;
         return (left.scheduledDate ?? "9999-12-31").localeCompare(right.scheduledDate ?? "9999-12-31");
       })[0] ?? null;
   }
@@ -2943,6 +3104,18 @@ function App() {
       ? ownBeds.filter((bed) => bed.blockId === selectedBlockContext.id && bed.source !== "road")
       : []
   ), [ownBeds, selectedBlockContext]);
+  const zoneSplitLines = useMemo(
+    () => bedParallelSplitLinesForBlock(selectedBlockContext, selectedBlockPlantableBeds, zoneSplitCoordinates),
+    [selectedBlockContext, selectedBlockPlantableBeds, zoneSplitCoordinates]
+  );
+  const zoneSplitFirstBedSidePoint = useMemo(
+    () => firstBedSideReferencePoint(selectedBlockContext, selectedBlockPlantableBeds),
+    [selectedBlockContext, selectedBlockPlantableBeds]
+  );
+  useEffect(() => {
+    const selectedBlockBedIds = new Set(selectedBlockPlantableBeds.map((bed) => bed.id));
+    setWorkSelectedBedIds((current) => current.filter((bedId) => selectedBlockBedIds.has(bedId)));
+  }, [selectedBlockPlantableBeds]);
   const selectedBlockPlacementColorsActive = Boolean(
     selectedBlockContext
     && selectedBlockPlantableBeds.length > 0
@@ -3279,6 +3452,28 @@ function App() {
       return;
     }
 
+    if (mapWorkflowMode === "field_work" && workBedPickActive) {
+      if (bed.source === "road" || bed.farmId !== data.farm?.id) {
+        setMapNotice("Only plantable beds on your farm can be added to a work record.");
+        return;
+      }
+      setWorkSelectedBedIds((current) => {
+        const sameBlockIds = current
+          .map((bedId) => ownBeds.find((item) => item.id === bedId && item.source !== "road") ?? null)
+          .filter((item): item is Bed => item != null)
+          .every((item) => item.blockId === bed.blockId) ? current : [];
+        if (sameBlockIds.includes(bed.id)) {
+          return sameBlockIds.filter((bedId) => bedId !== bed.id);
+        }
+        return [...sameBlockIds, bed.id];
+      });
+      setSelection({ type: "block", id: bed.blockId });
+      setSelectedTaskId(null);
+      setSelectedPlantingId(null);
+      setMapNotice(`Cultivation bed selection updated in ${bed.blockName}.`);
+      return;
+    }
+
     setMapPlantingBedIds([]);
     if (mapWorkflowMode === "field_work") {
       setSelection({ type: "bed", id: bed.id });
@@ -3583,6 +3778,7 @@ function App() {
     setZoneDraftActive(false);
     setZoneDraftMethod(null);
     setZoneSplitCoordinates([]);
+    setZoneSplitDraggingLineIndex(null);
     setZoneSplitUseLargerSide(false);
     if (!options?.preserveBedLine) {
       setBedLineCoordinates([]);
@@ -3703,6 +3899,44 @@ function App() {
     setMapNotice(`Choose how to create the area inside ${selectedBlockContext.name}. Future use is optional.`);
   }
 
+  function startBlockSectionDraft(method: Exclude<ZoneDraftMethod, null>) {
+    if (!canPlan) {
+      setMapNotice("Planner access required.");
+      return;
+    }
+    if (!selectedBlockContext) {
+      setMapNotice("Select a block first. Sections belong inside a block.");
+      return;
+    }
+    if (!selectedBlockContextIsOwnFarm) {
+      setMapNotice("That block belongs to another farm. You can view it, but not edit it.");
+      return;
+    }
+
+    const block = selectedBlockContext;
+    resetMapDrafts(method === "split_line" ? "draw_zone_split" : method === "polygon" ? "draw_zone" : "select");
+    if (selection?.type === "bed") {
+      setSelection({ type: "block", id: block.id });
+    }
+    setZoneDraftActive(true);
+    setZoneDraftMethod(method);
+    setDraftPlannedUse(null);
+    setDraftActualState("needs_cleanup");
+
+    if (method === "whole_block") {
+      setDraftCoordinates(geoJsonPolygonToLatLngs(block.boundary));
+      setMapNotice("Whole block selected. Review the section details, then save.");
+      return;
+    }
+
+    if (method === "split_line") {
+      setMapNotice("Click once to place a bed-parallel section line. Click a second time to use the area between the two lines.");
+      return;
+    }
+
+    setMapNotice("Click to draw the section polygon inside the selected block, then save.");
+  }
+
   function startBedTools() {
     if (!canPlan) {
       setMapNotice("Planner access required.");
@@ -3776,7 +4010,7 @@ function App() {
 
     if (method === "split_line") {
       setMapMode("draw_zone_split");
-      setMapNotice("Click 2 points on the selected block edge to split it. The smaller side will get the chosen use unless you check Use larger side.");
+      setMapNotice("Click once to place a bed-parallel section line. Click a second time to use the area between the two lines.");
       return;
     }
 
@@ -3802,6 +4036,28 @@ function App() {
     resetMapDrafts("pick_bed_edge", { preserveBedLine: true });
     setBedLineSource("manual");
     setMapNotice("Click the block edge you want beds to build from.");
+  }
+
+  function openSelectedBlockBedMaker() {
+    if (!canPlan) {
+      setMapNotice("Planner access required.");
+      return;
+    }
+    if (!selectedBlockContext) {
+      setMapNotice("Select a block first.");
+      return;
+    }
+    if (!selectedBlockContextIsOwnFarm) {
+      setMapNotice("That block belongs to another farm. You can view it, but not edit it.");
+      return;
+    }
+
+    const blockId = selectedBlockContext.id;
+    changeMapWorkflowMode("planning");
+    setSelection({ type: "block", id: blockId });
+    resetMapDrafts("bed_tools");
+    setBedLineSource("manual");
+    setMapNotice("Pick the first bed edge, then choose the entrance side before generating beds.");
   }
 
   function selectBedEdgeLine(edgeLine: CoordinateDraft[]) {
@@ -3904,8 +4160,12 @@ function App() {
         setMapNotice("Select or add a cover crop name.");
         return;
       }
-      if (mapMode === "draw_zone_split" && zoneSplitCoordinates.length !== 2) {
-        setMapNotice("Pick exactly 2 split points first.");
+      if (mapMode === "draw_zone_split" && zoneSplitLines.length !== zoneSplitCoordinates.length) {
+        setMapNotice("Could not calculate a bed-parallel split line for this block.");
+        return;
+      }
+      if (mapMode === "draw_zone_split" && zoneSplitCoordinates.length < 1) {
+        setMapNotice("Place at least one section line first.");
         return;
       }
 
@@ -4000,7 +4260,8 @@ function App() {
           plannedCoverCropSeedDate: draftPlannedUse === "cover_crop" ? draftCoverCropSeedDate || null : null,
           plannedCoverCropTerminateDate: draftPlannedUse === "cover_crop" ? draftCoverCropTerminateDate || null : null,
           notes: draftNotes.trim(),
-          lineCoordinates: zoneSplitCoordinates,
+          splitLines: zoneSplitLines,
+          firstBedSidePoint: zoneSplitFirstBedSidePoint,
           useLargerSide: zoneSplitUseLargerSide
         }) as SaveResponse;
       }
@@ -4029,6 +4290,68 @@ function App() {
           ? "block"
           : "map area";
       setMapNotice(mapSaveErrorMessage(err, itemLabel));
+    } finally {
+      setIsSavingMapObject(false);
+    }
+  }
+
+  async function savePendingWorkSection(notes: string) {
+    if (!zoneDraftActive) {
+      return null;
+    }
+    if (!canPlan) {
+      throw new Error("Planner access required.");
+    }
+    if (!selectedBlockContext || !selectedBlockContextIsOwnFarm) {
+      throw new Error("Select a block on your farm first.");
+    }
+    if (!zoneDraftMethod) {
+      throw new Error("Choose how to mark the work area.");
+    }
+    if (zoneDraftMethod === "polygon" && draftCoordinates.length < 3) {
+      throw new Error("Draw the work area on the map first.");
+    }
+    if (zoneDraftMethod === "split_line" && zoneSplitCoordinates.length < 1) {
+      throw new Error("Place at least one split line on the map first.");
+    }
+    if (zoneDraftMethod === "split_line" && zoneSplitLines.length !== zoneSplitCoordinates.length) {
+      throw new Error("Could not calculate a bed-parallel split line for this block.");
+    }
+
+    const blockZoneCount = data.blockZones.filter((zone) => zone.blockId === selectedBlockContext.id).length;
+    const payload = {
+      name: defaultZoneName({
+        plannedUse: null,
+        explicitName: "",
+        existingCount: blockZoneCount
+      }),
+      plannedUse: null,
+      actualState: draftActualState,
+      coverCropNameId: null,
+      coverCropName: null,
+      plannedCoverCropSeedDate: null,
+      plannedCoverCropTerminateDate: null,
+      notes: notes.trim() || null
+    };
+
+    setIsSavingMapObject(true);
+    try {
+      const response = zoneDraftMethod === "split_line"
+        ? await api.splitBlockZone(selectedBlockContext.id, {
+            ...payload,
+            splitLines: zoneSplitLines,
+            firstBedSidePoint: zoneSplitFirstBedSidePoint,
+            useLargerSide: zoneSplitUseLargerSide
+          }) as SaveResponse
+        : await api.createBlockZone({
+            blockId: selectedBlockContext.id,
+            ...payload,
+            coordinates: zoneDraftMethod === "whole_block"
+              ? geoJsonPolygonToLatLngs(selectedBlockContext.boundary)
+              : draftCoordinates
+          }) as SaveResponse;
+      resetMapDrafts("select");
+      return response.id ?? null;
     } finally {
       setIsSavingMapObject(false);
     }
@@ -4737,6 +5060,13 @@ function App() {
                   <button className={`${mapMode === "draw_field" ? "primary-button" : "secondary-button"} compact-button${tutorialTargetClass(tutorialHighlightDrawField)}`} onClick={startDrawField} disabled={!canPlan}>Draw field</button>
                   <button className={`${mapMode === "draw_block" ? "primary-button" : "secondary-button"} compact-button${tutorialTargetClass(tutorialHighlightDrawBlock)}`} onClick={startDrawBlock} disabled={!canPlan || !selectedField || !selectedFieldIsOwnFarm}>Draw block</button>
                   <button className={`${mapMode === "edit" ? "primary-button" : "secondary-button"} compact-button`} onClick={startEditSelection} disabled={!canEditSelectedMapItem}>Edit field/block</button>
+                  <button
+                    className={`${mapMode === "bed_tools" || mapMode === "pick_bed_edge" || mapMode === "draw_bed_line" ? "primary-button" : "secondary-button"} compact-button`}
+                    onClick={openSelectedBlockBedMaker}
+                    disabled={!selectedBlockContext || !canEditSelectedBlockContext}
+                  >
+                    Make beds
+                  </button>
                 </>
               )}
             </div>
@@ -4878,7 +5208,7 @@ function App() {
                       if (mapMode === "draw_zone_split") {
                         setZoneSplitCoordinates((current) => {
                           if (current.length >= 2) {
-                            setMapNotice("Split line already has 2 points. Save or Cancel.");
+                            setMapNotice("Two section lines are already placed. Drag a line to move it, Save, or Cancel.");
                             return current;
                           }
                           return [...current, point];
@@ -4901,6 +5231,13 @@ function App() {
                         setSelection(null);
                       }
                     }}
+                  />
+                  <MapLineDragEvents
+                    activeLineIndex={zoneSplitDraggingLineIndex}
+                    onMoveLine={(lineIndex, point) => {
+                      setZoneSplitCoordinates((current) => current.map((item, index) => index === lineIndex ? point : item));
+                    }}
+                    onStopDrag={() => setZoneSplitDraggingLineIndex(null)}
                   />
 
                 {visibleFields.map((field) => {
@@ -4986,7 +5323,7 @@ function App() {
                           if (mapMode === "draw_zone_split" && selectedBlockContext?.id === block.id) {
                             setZoneSplitCoordinates((current) => {
                               if (current.length >= 2) {
-                                setMapNotice("Split line already has 2 points. Save or Cancel.");
+                                setMapNotice("Two section lines are already placed. Drag a line to move it, Save, or Cancel.");
                                 return current;
                               }
                               return [...current, { lat: event.latlng.lat, lng: event.latlng.lng }];
@@ -5018,6 +5355,10 @@ function App() {
                 {visibleBlockZones.map((zone) => {
                   const positions = polygonPositions(geoJsonPolygonToLatLngs(zone.boundary));
                   if (positions.length < 3) return null;
+                  const parentBlock = data.blocks.find((block) => block.id === zone.blockId) ?? null;
+                  const zoneLabel = mapObjectLabel(zone.name);
+                  const parentBlockLabel = parentBlock ? mapObjectLabel(parentBlock.name) : null;
+                  const showZoneLabel = zoneLabel && zoneLabel !== parentBlockLabel;
                   return (
                     <Polygon
                       key={`zone-${zone.id}`}
@@ -5044,7 +5385,7 @@ function App() {
                           if (mapMode === "draw_zone_split" && selectedBlockContext?.id === zone.blockId) {
                             setZoneSplitCoordinates((current) => {
                               if (current.length >= 2) {
-                                setMapNotice("Split line already has 2 points. Save or Cancel.");
+                                setMapNotice("Two section lines are already placed. Drag a line to move it, Save, or Cancel.");
                                 return current;
                               }
                               return [...current, { lat: event.latlng.lat, lng: event.latlng.lng }];
@@ -5062,9 +5403,11 @@ function App() {
                         }
                       }}
                     >
-                      <Tooltip permanent direction="center" className="polygon-label">
-                        {mapObjectLabel(zone.name)}
-                      </Tooltip>
+                      {showZoneLabel && (
+                        <Tooltip permanent direction="center" className="polygon-label">
+                          {zoneLabel}
+                        </Tooltip>
+                      )}
                     </Polygon>
                   );
                 })}
@@ -5079,7 +5422,7 @@ function App() {
                       positions={positions}
                       interactive={bedIsSelectable}
                       bubblingMouseEvents={false}
-                      pathOptions={bedStyle((selection?.type === "bed" && selection.id === bed.id) || mapPlantingBedIds.includes(bed.id), bed.source === "road")}
+                      pathOptions={bedStyle((selection?.type === "bed" && selection.id === bed.id) || mapPlantingBedIds.includes(bed.id) || workSelectedBedIds.includes(bed.id), bed.source === "road")}
                       eventHandlers={{
                         click: (event) => {
                           if (mapMode === "pick_bed_edge") {
@@ -5376,14 +5719,40 @@ function App() {
                   </>
                 )}
 
-                {mapMode === "draw_zone_split" && zoneSplitCoordinates.length > 0 && (
+                {mapMode === "draw_zone_split" && zoneSplitLines.length > 0 && (
                   <>
-                    <Polyline positions={polygonPositions(zoneSplitCoordinates)} pathOptions={{ color: "#f5f0d8", weight: 3 }} />
+                    {zoneSplitLines.map((line, index) => (
+                      <Fragment key={`zone-split-line-${index}`}>
+                        <Polyline
+                          positions={polygonPositions(line)}
+                          interactive={false}
+                          pathOptions={{ color: "#f5f0d8", weight: 3 }}
+                        />
+                        <Polyline
+                          positions={polygonPositions(line)}
+                          bubblingMouseEvents={false}
+                          pathOptions={{ color: "#f5f0d8", weight: 24, opacity: 0.01 }}
+                          eventHandlers={{
+                            mousedown: (event) => {
+                              setZoneSplitDraggingLineIndex(index);
+                              setZoneSplitCoordinates((current) => current.map((item, itemIndex) => itemIndex === index ? { lat: event.latlng.lat, lng: event.latlng.lng } : item));
+                            }
+                          }}
+                        />
+                      </Fragment>
+                    ))}
                     {zoneSplitCoordinates.map((point, index) => (
                       <Marker
                         key={`zone-split-point-${index}`}
                         position={[point.lat, point.lng]}
+                        draggable
                         icon={vertexIcon(index === 0 ? "start" : "vertex")}
+                        eventHandlers={{
+                          dragend: (event) => {
+                            const latLng = (event.target as { getLatLng: () => { lat: number; lng: number } }).getLatLng();
+                            setZoneSplitCoordinates((current) => current.map((item, itemIndex) => itemIndex === index ? { lat: latLng.lat, lng: latLng.lng } : item));
+                          }
+                        }}
                       />
                     ))}
                   </>
@@ -5564,7 +5933,71 @@ function App() {
             <div className="stack">
               {mapWorkTasksOnly ? (
                 <>
+                  {mapNotice && (
+                    <div className="instruction-box map-notice" role="status" aria-live="polite">
+                      <strong>Map status:</strong> {mapNotice}
+                    </div>
+                  )}
                   {selectedTask && renderTaskRecordCard(selectedTask)}
+                  {selectedMapItem && selectedMapItem.farmId === data.farm?.id && (
+                    <UnplannedWorkCard
+                      field={selectedFieldContext}
+                      block={selectedBlockContext}
+                      zone={selectedZone}
+                      bed={selectedBed}
+                      farmId={data.farm?.id ?? null}
+                      bedPresets={data.bedPresets}
+                      existingBeds={selectedBlockContext ? ownBeds.filter((bed) => bed.blockId === selectedBlockContext.id) : []}
+                      blockBeds={selectedBlockPlantableBeds}
+                      blockZones={ownBlockZones.filter((zone) => selectedBlockContext != null && zone.blockId === selectedBlockContext.id)}
+                      plantings={ownFarmData.plantings}
+                      placements={ownFarmData.placements}
+                      distanceUnit={distanceUnit}
+                      bedLineCoordinates={bedLineCoordinates}
+                      bedLineSource={bedLineSource}
+                      bedLineMode={bedLineMode}
+                      invertSide={bedInvertSide}
+                      isPickingLine={mapMode === "draw_bed_line"}
+                      isPickingEdge={mapMode === "pick_bed_edge"}
+                      selectedCultivationBedIds={workSelectedBedIds}
+                      bedPickActive={workBedPickActive}
+                      onBedPickActiveChange={setWorkBedPickActive}
+                      onSelectedCultivationBedIdsChange={setWorkSelectedBedIds}
+                      canCreateSection={canPlan && selectedBlockContext != null}
+                      onSplitSection={() => startBlockSectionDraft("split_line")}
+                      onPickBedEdge={startBedEdgePick}
+                      onStartBedLine={startBedLineDraw}
+                      onCancelBedLine={cancelBedLinePick}
+                      onInvertSideChange={setBedInvertSide}
+                      onEntranceSideChange={(blockId, entranceSide) => {
+                        setBedEntranceSideDrafts((current) => ({ ...current, [blockId]: entranceSide }));
+                      }}
+                      onPreviewChange={setBedPreviewCoordinates}
+                      onStatusChange={setMapNotice}
+                      onSelectSection={(zoneId) => {
+                        setSelection({ type: "zone", id: zoneId });
+                        setMapNotice(null);
+                      }}
+                      onCreatePendingSection={(notes) => savePendingWorkSection(notes)}
+                      onSave={async () => {
+                        await load();
+                        setMapNotice("Unplanned work recorded.");
+                      }}
+                    />
+                  )}
+                  {selectedBlockContext && ownBeds.filter((bed) => bed.blockId === selectedBlockContext.id && bed.source !== "road").length === 0 && canPlan && selectedBlockContext.farmId === data.farm?.id && (
+                    <div className="card">
+                      <h2>Bed Maker</h2>
+                      <p className="muted">{selectedBlockContext.name} has no plantable beds yet.</p>
+                      <button
+                        type="button"
+                        className="primary-button"
+                        onClick={openSelectedBlockBedMaker}
+                      >
+                        Make beds
+                      </button>
+                    </div>
+                  )}
                   <TaskWeekCard
                     title={formatTaskWeekTitle(selectedMapWeekStart)}
                     weekStart={selectedMapWeekStart}
@@ -5651,12 +6084,10 @@ function App() {
                             <button type="button" className={zoneDraftMethod === "polygon" ? "primary-button" : "secondary-button"} onClick={() => setZoneCreationMethod("polygon")}>Draw polygon</button>
                           </div>
                           {zoneDraftMethod === "split_line" && (
-                            <label className="inline-checkbox">
-                              <input type="checkbox" checked={zoneSplitUseLargerSide} onChange={(event) => setZoneSplitUseLargerSide(event.target.checked)} />
-                              <span>Use larger side for the chosen area</span>
-                            </label>
+                            <p className="muted">
+                              Lines placed: {zoneSplitCoordinates.length} / 2. One line saves the area from the first-bed side to that line; two lines save the area between them. Drag a line or its handle to move it.
+                            </p>
                           )}
-                          {zoneDraftMethod === "split_line" && <p className="muted">Split points: {zoneSplitCoordinates.length} / 2</p>}
                         </div>
                         <label>
                           <span>Area type</span>
@@ -5710,7 +6141,8 @@ function App() {
                               ? (
                                   !zoneDraftMethod
                                   || (zoneDraftMethod === "polygon" && draftCoordinates.length < 3)
-                                  || (zoneDraftMethod === "split_line" && zoneSplitCoordinates.length !== 2)
+                                  || (zoneDraftMethod === "split_line" && zoneSplitCoordinates.length < 1)
+                                  || (zoneDraftMethod === "split_line" && zoneSplitLines.length !== zoneSplitCoordinates.length)
                                   || (draftPlannedUse === "cover_crop" && !draftCoverCropChoice && !draftCoverCropName.trim())
                                 )
                               : (
@@ -5809,6 +6241,19 @@ function App() {
                     </div>
                   </div>
                 </div>
+              )}
+
+              {mapWorkflowMode === "planning" && mapMode === "select" && selectedBlockContext && canEditSelectedBlockContext && !zoneDraftActive && (
+                <BlockSectionsCard
+                  block={selectedBlockContext}
+                  zones={ownBlockZones.filter((zone) => zone.blockId === selectedBlockContext.id)}
+                  distanceUnit={distanceUnit}
+                  onCreateSection={() => startDrawZone(null)}
+                  onSelectSection={(zoneId) => {
+                    setSelection({ type: "zone", id: zoneId });
+                    setMapNotice(null);
+                  }}
+                />
               )}
 
               {mapWorkflowMode === "planning" && selectedBlockContext && canEditSelectedBlockContext && (mapMode === "bed_tools" || mapMode === "pick_bed_edge" || mapMode === "draw_bed_line") && (
@@ -5915,14 +6360,9 @@ function App() {
                   <button
                     type="button"
                     className="primary-button"
-                    onClick={() => {
-                      changeMapWorkflowMode("planning");
-                      setMapMode("bed_tools");
-                      setBedLineSource("manual");
-                      setMapNotice("Pick the first bed edge, then choose the entrance side before generating beds.");
-                    }}
+                    onClick={openSelectedBlockBedMaker}
                   >
-                    Open Bed Maker
+                    Make beds
                   </button>
                 </div>
               )}
@@ -5972,6 +6412,53 @@ function App() {
                 <CoverCropWorkCard
                   zone={selectedZone}
                   onSave={load}
+                />
+              )}
+
+              {mapWorkflowMode === "field_work" && selectedMapItem && selectedMapItem.farmId === data.farm?.id && (
+                <UnplannedWorkCard
+                  field={selectedFieldContext}
+                  block={selectedBlockContext}
+                  zone={selectedZone}
+                  bed={selectedBed}
+                  farmId={data.farm?.id ?? null}
+                  bedPresets={data.bedPresets}
+                  existingBeds={selectedBlockContext ? ownBeds.filter((bed) => bed.blockId === selectedBlockContext.id) : []}
+                  blockBeds={selectedBlockPlantableBeds}
+                  blockZones={ownBlockZones.filter((zone) => selectedBlockContext != null && zone.blockId === selectedBlockContext.id)}
+                  plantings={ownFarmData.plantings}
+                  placements={ownFarmData.placements}
+                  distanceUnit={distanceUnit}
+                  bedLineCoordinates={bedLineCoordinates}
+                  bedLineSource={bedLineSource}
+                  bedLineMode={bedLineMode}
+                  invertSide={bedInvertSide}
+                  isPickingLine={mapMode === "draw_bed_line"}
+                  isPickingEdge={mapMode === "pick_bed_edge"}
+                  selectedCultivationBedIds={workSelectedBedIds}
+                  bedPickActive={workBedPickActive}
+                  onBedPickActiveChange={setWorkBedPickActive}
+                  onSelectedCultivationBedIdsChange={setWorkSelectedBedIds}
+                  canCreateSection={canPlan && selectedBlockContext != null}
+                  onSplitSection={() => startBlockSectionDraft("split_line")}
+                  onPickBedEdge={startBedEdgePick}
+                  onStartBedLine={startBedLineDraw}
+                  onCancelBedLine={cancelBedLinePick}
+                  onInvertSideChange={setBedInvertSide}
+                  onEntranceSideChange={(blockId, entranceSide) => {
+                    setBedEntranceSideDrafts((current) => ({ ...current, [blockId]: entranceSide }));
+                  }}
+                  onPreviewChange={setBedPreviewCoordinates}
+                  onStatusChange={setMapNotice}
+                  onSelectSection={(zoneId) => {
+                    setSelection({ type: "zone", id: zoneId });
+                    setMapNotice(null);
+                  }}
+                  onCreatePendingSection={(notes) => savePendingWorkSection(notes)}
+                  onSave={async () => {
+                    await load();
+                    setMapNotice("Unplanned work recorded.");
+                  }}
                 />
               )}
 
@@ -7544,6 +8031,45 @@ function MapDrawingEvents({
   return null;
 }
 
+function MapLineDragEvents({
+  activeLineIndex,
+  onMoveLine,
+  onStopDrag
+}: {
+  activeLineIndex: number | null;
+  onMoveLine: (index: number, point: CoordinateDraft) => void;
+  onStopDrag: () => void;
+}) {
+  const map = useMap();
+
+  useEffect(() => {
+    if (activeLineIndex == null) {
+      return;
+    }
+
+    map.dragging.disable();
+    return () => {
+      map.dragging.enable();
+    };
+  }, [activeLineIndex, map]);
+
+  useMapEvents({
+    mousemove(event) {
+      if (activeLineIndex == null) {
+        return;
+      }
+      onMoveLine(activeLineIndex, { lat: event.latlng.lat, lng: event.latlng.lng });
+    },
+    mouseup() {
+      if (activeLineIndex != null) {
+        onStopDrag();
+      }
+    }
+  });
+
+  return null;
+}
+
 // On first load, zoom to saved farm geometry unless the user already has a
 // manually stored map position.
 function FitToFarm({ fields, blocks }: { fields: Field[]; blocks: Block[] }) {
@@ -8710,7 +9236,7 @@ function TaskRecordCard({
   const [status, setStatus] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const isFieldPlantingTask = task?.taskType === "transplant" || task?.taskType === "direct_seed";
-  const isBedPrepTask = task?.taskType === "bed_prep";
+  const isBedPrepTask = task?.taskType === "bed_prep" || task?.taskType === "bed_making";
   const requiresLotNumber = Boolean(planting && ["seed_in_tray", "direct_seed", "transplant"].includes(task?.taskType ?? ""));
   const existingSeedLotNumber = planting?.seedItemId == null
     ? ""
@@ -9133,6 +9659,1082 @@ function PlantingActualsCard({ planting, onSave }: { planting: Planting | null; 
         <label className="full-span"><span>Notes</span><textarea name="notes" rows={3} defaultValue="Recorded from field work" /></label>
         <button className="primary-button full-span">Record actual and recalculate tasks</button>
       </form>
+    </div>
+  );
+}
+
+function BlockSectionsCard({
+  block,
+  zones,
+  distanceUnit,
+  onCreateSection,
+  onSelectSection
+}: {
+  block: Block;
+  zones: BlockZone[];
+  distanceUnit: DistanceUnit;
+  onCreateSection: () => void;
+  onSelectSection: (zoneId: number) => void;
+}) {
+  return (
+    <div className="card">
+      <h2>Block sections</h2>
+      <p className="muted">{block.name}</p>
+      {zones.length > 0 && (
+        <div className="stack">
+          {zones.map((zone) => (
+            <div className="task-row" key={zone.id}>
+              <div>
+                <strong>{zone.name}</strong>
+                <p className="muted">{formatDisplayArea(zone.areaSqM, distanceUnit)} • {formatZoneActualStateLabel(zone.actualState)}</p>
+              </div>
+              <button type="button" className="secondary-button" onClick={() => onSelectSection(zone.id)}>
+                Select
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
+      <button type="button" className="primary-button full-span" onClick={onCreateSection}>
+        Make section
+      </button>
+    </div>
+  );
+}
+
+const unplannedWorkOptions = [
+  "Seed in tray",
+  "Direct seed",
+  "Till",
+  "Fertilizing / spraying",
+  "Bed making",
+  "Transplanting",
+  "Cultivation",
+  "Cleanup",
+  "Covercrop"
+];
+
+const ADD_NEW_WORK_OPTION = "__add_new__";
+const WORK_OPTION_STORAGE_KEY = "loam-ledger-work-options-v1";
+type WorkOptionStore = {
+  subcategories?: Record<string, string[]>;
+  products?: Record<string, string[]>;
+};
+
+const workTypeTaskTypes: Record<string, string> = {
+  "Seed in tray": "seed_in_tray",
+  "Direct seed": "direct_seed",
+  Till: "till",
+  "Fertilizing / spraying": "fertilizing_spraying",
+  "Bed making": "bed_making",
+  Transplanting: "transplant",
+  Cultivation: "cultivation",
+  Cleanup: "cleanup",
+  Covercrop: "cover_crop"
+};
+
+const defaultWorkSubcategories: Record<string, string[]> = {
+  "Seed in tray": ["Hand seed"],
+  "Direct seed": ["Hand seed", "Jang seeder", "Earthway"],
+  Till: ["Disk", "Perfecta"],
+  "Fertilizing / spraying": ["Fertilizer", "Pesticide"],
+  "Bed making": ["Shape beds"],
+  Cultivation: ["Cultivate"],
+  Cleanup: ["Mow", "Remove crop"]
+};
+
+const defaultApplicationProducts: Record<string, string[]> = {
+  Fertilizer: ["Compost", "Lime"],
+  Pesticide: []
+};
+
+function readWorkOptionStore(): WorkOptionStore {
+  if (typeof window === "undefined") {
+    return {};
+  }
+  try {
+    const raw = window.localStorage.getItem(WORK_OPTION_STORAGE_KEY);
+    if (!raw) {
+      return {};
+    }
+    const parsed = JSON.parse(raw) as WorkOptionStore;
+    return {
+      subcategories: parsed.subcategories && typeof parsed.subcategories === "object" ? parsed.subcategories : {},
+      products: parsed.products && typeof parsed.products === "object" ? parsed.products : {}
+    };
+  } catch {
+    return {};
+  }
+}
+
+function writeWorkOptionStore(store: WorkOptionStore) {
+  if (typeof window === "undefined") {
+    return;
+  }
+  window.localStorage.setItem(WORK_OPTION_STORAGE_KEY, JSON.stringify(store));
+}
+
+function uniqueWorkOptions(options: string[]) {
+  const seen = new Set<string>();
+  return options
+    .map((option) => option.trim())
+    .filter((option) => {
+      if (!option || seen.has(option.toLowerCase())) {
+        return false;
+      }
+      seen.add(option.toLowerCase());
+      return true;
+    });
+}
+
+function UnplannedWorkCard({
+  field,
+  block,
+  zone,
+  bed,
+  farmId,
+  bedPresets,
+  existingBeds,
+  blockBeds,
+  blockZones,
+  plantings,
+  placements,
+  distanceUnit,
+  bedLineCoordinates,
+  bedLineSource,
+  bedLineMode,
+  invertSide,
+  isPickingLine,
+  isPickingEdge,
+  selectedCultivationBedIds,
+  bedPickActive,
+  onBedPickActiveChange,
+  onSelectedCultivationBedIdsChange,
+  canCreateSection,
+  onSplitSection,
+  onPickBedEdge,
+  onStartBedLine,
+  onCancelBedLine,
+  onInvertSideChange,
+  onEntranceSideChange,
+  onPreviewChange,
+  onStatusChange,
+  onSelectSection,
+  onCreatePendingSection,
+  onSave
+}: {
+  field: Field | null;
+  block: Block | null;
+  zone: BlockZone | null;
+  bed: Bed | null;
+  farmId: number | null;
+  bedPresets: DashboardData["bedPresets"];
+  existingBeds: Bed[];
+  blockBeds: Bed[];
+  blockZones: BlockZone[];
+  plantings: Planting[];
+  placements: Placement[];
+  distanceUnit: DistanceUnit;
+  bedLineCoordinates: CoordinateDraft[];
+  bedLineSource: BedLineSource;
+  bedLineMode: "straight" | "curved";
+  invertSide: boolean;
+  isPickingLine: boolean;
+  isPickingEdge: boolean;
+  selectedCultivationBedIds: number[];
+  bedPickActive: boolean;
+  onBedPickActiveChange: (active: boolean) => void;
+  onSelectedCultivationBedIdsChange: (bedIds: number[]) => void;
+  canCreateSection: boolean;
+  onSplitSection: () => void;
+  onPickBedEdge: () => void;
+  onStartBedLine: (mode: "straight" | "curved") => void;
+  onCancelBedLine: () => void;
+  onInvertSideChange: (value: boolean) => void;
+  onEntranceSideChange: (blockId: number, entranceSide: "start" | "end") => void;
+  onPreviewChange: (points: CoordinateDraft[]) => void;
+  onStatusChange: (message: string | null) => void;
+  onSelectSection: (zoneId: number) => void;
+  onCreatePendingSection: (notes: string) => Promise<number | null>;
+  onSave: () => Promise<void>;
+}) {
+  const [eventDate, setEventDate] = useState(todayDateInputValue());
+  const [workType, setWorkType] = useState(unplannedWorkOptions[0]);
+  const [workOptionStore, setWorkOptionStore] = useState<WorkOptionStore>(() => readWorkOptionStore());
+  const [workSubcategory, setWorkSubcategory] = useState(defaultWorkSubcategories[unplannedWorkOptions[0]]?.[0] ?? "");
+  const [customWorkSubcategory, setCustomWorkSubcategory] = useState("");
+  const [applicationProduct, setApplicationProduct] = useState("");
+  const [customApplicationProduct, setCustomApplicationProduct] = useState("");
+  const [bedMakingCount, setBedMakingCount] = useState("");
+  const [bedMakingBlockFull, setBedMakingBlockFull] = useState(false);
+  const [bedMakingBedCover, setBedMakingBedCover] = useState<"bare" | "plastic">("bare");
+  const bedMakingPresets = bedPresets.filter((preset) => !preset.isRoad);
+  const [bedMakingPresetId, setBedMakingPresetId] = useState(String(bedMakingPresets[0]?.id ?? ""));
+  const [bedMakingNamePrefix, setBedMakingNamePrefix] = useState(`${block?.name ?? "Bed"}-`);
+  const [bedMakingStartNumber, setBedMakingStartNumber] = useState(existingBeds.length + 1);
+  const [bedMakingReplaceExisting, setBedMakingReplaceExisting] = useState(false);
+  const [bedMakingEntranceSide, setBedMakingEntranceSide] = useState<"start" | "end">(block?.bedStartEntranceSide ?? "start");
+  const [bedMakingHarvestRoadsEnabled, setBedMakingHarvestRoadsEnabled] = useState(false);
+  const [bedMakingHarvestRoadEveryBeds, setBedMakingHarvestRoadEveryBeds] = useState("12");
+  const [bedMakingHarvestRoadWidthBeds, setBedMakingHarvestRoadWidthBeds] = useState("2");
+  const [transplantPlantingId, setTransplantPlantingId] = useState("");
+  const [transplantPlantCount, setTransplantPlantCount] = useState("");
+  const [transplantTrayCount, setTransplantTrayCount] = useState("");
+  const [transplantInRowSpacing, setTransplantInRowSpacing] = useState("");
+  const [transplantRowsPerBed, setTransplantRowsPerBed] = useState("");
+  const [applicationRateUsed, setApplicationRateUsed] = useState("");
+  const [applicationAmountUsed, setApplicationAmountUsed] = useState("");
+  const [applicationUnit, setApplicationUnit] = useState("lb");
+  const [applicationLastEdited, setApplicationLastEdited] = useState<"rate" | "amount">("rate");
+  const [notes, setNotes] = useState("");
+  const [status, setStatus] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
+  const locationName = bed
+    ? `${bed.name} in ${bed.blockName}`
+    : zone
+      ? `${zone.name} in ${zone.blockName}`
+      : block
+        ? block.name
+        : field?.name ?? "selected area";
+  const cardTitle = "Record Work (unplanned)";
+  const showSubcategoryFields = workType !== "Transplanting" && workType !== "Covercrop";
+  const subcategoryOptions = uniqueWorkOptions([
+    ...(defaultWorkSubcategories[workType] ?? []),
+    ...(workOptionStore.subcategories?.[workType] ?? [])
+  ]);
+  const resolvedWorkSubcategory = showSubcategoryFields
+    ? workSubcategory === ADD_NEW_WORK_OPTION
+      ? customWorkSubcategory.trim()
+      : workSubcategory.trim()
+    : "";
+  const applicationProductOptions = uniqueWorkOptions([
+    ...(defaultApplicationProducts[resolvedWorkSubcategory] ?? []),
+    ...(workOptionStore.products?.[resolvedWorkSubcategory] ?? [])
+  ]);
+  const resolvedApplicationProduct = applicationProduct === ADD_NEW_WORK_OPTION
+    ? customApplicationProduct.trim()
+    : applicationProduct.trim();
+  const finalWorkType = workType;
+  const finalTaskType = workTypeTaskTypes[workType] ?? null;
+  const showSectionTools = ["Till", "Fertilizing / spraying", "Cleanup", "Covercrop"].includes(workType) && block != null;
+  const showApplicationFields = workType === "Fertilizing / spraying";
+  const showBedMakingFields = workType === "Bed making";
+  const showTransplantFields = workType === "Transplanting";
+  const showCultivationFields = workType === "Cultivation";
+  const selectedBedMakingPreset = bedMakingPresets.find((preset) => String(preset.id) === bedMakingPresetId) ?? bedMakingPresets[0] ?? null;
+  const bedMakingMinLinePoints = bedLineMode === "straight" ? 2 : 3;
+  const bedMakingMaxLinePoints = bedLineMode === "straight" ? 2 : 12;
+  const bedMakingCountNumber = Number(bedMakingCount);
+  const bedMakingStartNumberValue = Number(bedMakingStartNumber);
+  const bedMakingHarvestRoadEveryValue = Number(bedMakingHarvestRoadEveryBeds);
+  const bedMakingHarvestRoadWidthValue = Number(bedMakingHarvestRoadWidthBeds);
+  const transplantPlantCountNumber = Number(transplantPlantCount);
+  const transplantTrayCountNumber = Number(transplantTrayCount);
+  const transplantInRowSpacingNumber = Number(transplantInRowSpacing);
+  const transplantRowsPerBedNumber = Number(transplantRowsPerBed);
+  const applicationRateUsedNumber = Number(applicationRateUsed);
+  const applicationAmountUsedNumber = Number(applicationAmountUsed);
+  const selectedAreaSqM = toNumericValue(bed?.areaSqM ?? zone?.areaSqM ?? block?.areaSqM ?? field?.areaSqM ?? null);
+  const selectedAreaAcres = selectedAreaSqM == null ? null : selectedAreaSqM / 4046.8564224;
+  const applicationUnitLabel = applicationUnit.trim() || "units";
+  const selectedTransplantPlanting = transplantPlantingId
+    ? plantings.find((planting) => String(planting.id) === transplantPlantingId) ?? null
+    : null;
+  const transplantOptions = plantings
+    .map((planting) => {
+      const placedCount = plantingPlacementCount(placements, planting.id);
+      const availableCount = planting.plantCount == null ? null : Math.max(0, planting.plantCount - placedCount);
+      return { planting, availableCount };
+    })
+    .filter(({ planting, availableCount }) => (
+      planting.status !== "finished"
+      && planting.status !== "harvested"
+      && (availableCount == null || availableCount > 0)
+    ))
+    .sort((left, right) => {
+      const leftBlockMatch = block != null && left.planting.intendedBlockId === block.id ? 0 : 1;
+      const rightBlockMatch = block != null && right.planting.intendedBlockId === block.id ? 0 : 1;
+      if (leftBlockMatch !== rightBlockMatch) return leftBlockMatch - rightBlockMatch;
+      return left.planting.title.localeCompare(right.planting.title);
+    });
+  const selectedTransplantAvailableCount = selectedTransplantPlanting?.plantCount == null
+    ? null
+    : Math.max(0, selectedTransplantPlanting.plantCount - plantingPlacementCount(placements, selectedTransplantPlanting.id));
+
+  useEffect(() => {
+    if (!bedMakingPresetId && bedMakingPresets[0]) {
+      setBedMakingPresetId(String(bedMakingPresets[0].id));
+    }
+  }, [bedMakingPresetId, bedMakingPresets]);
+
+  useEffect(() => {
+    setBedMakingNamePrefix(`${block?.name ?? "Bed"}-`);
+    setBedMakingEntranceSide(block?.bedStartEntranceSide ?? "start");
+  }, [block?.bedStartEntranceSide, block?.id, block?.name]);
+
+  useEffect(() => {
+    if (!bedMakingReplaceExisting) {
+      setBedMakingStartNumber(existingBeds.length + 1);
+    }
+  }, [bedMakingReplaceExisting, existingBeds.length]);
+
+  useEffect(() => {
+    if (!showBedMakingFields || !block || !selectedBedMakingPreset || bedLineCoordinates.length < bedMakingMinLinePoints || bedLineCoordinates.length > bedMakingMaxLinePoints) {
+      onPreviewChange([]);
+      return;
+    }
+
+    const blockBoundary = geoJsonPolygonToLatLngs(block.boundary);
+    const roadEvery = bedMakingHarvestRoadsEnabled ? bedMakingHarvestRoadEveryValue : null;
+    const roadWidth = bedMakingHarvestRoadsEnabled ? bedMakingHarvestRoadWidthValue : 0;
+    const presetPathSpacing = Number(selectedBedMakingPreset.pathSpacingM);
+    const selectedBedEdgeOffsetM = bedLineSource === "selected_bed" ? presetPathSpacing : 0;
+    const preview = buildNextBedPreview(
+      bedLineCoordinates,
+      Number(selectedBedMakingPreset.bedWidthM),
+      presetPathSpacing,
+      bedLineSource === "selected_bed" ? 0 : bedMakingReplaceExisting ? 0 : existingBeds.length,
+      selectedBedEdgeOffsetM,
+      invertSide,
+      roadEvery && Number.isFinite(roadEvery) ? roadEvery : null,
+      Number.isFinite(roadWidth) ? roadWidth : 0
+    );
+    onPreviewChange(polygonIsInsideOrOnPolygon(preview, blockBoundary) ? preview : []);
+
+    return () => onPreviewChange([]);
+  }, [
+    bedLineCoordinates,
+    bedLineCoordinates.length,
+    bedLineSource,
+    bedMakingHarvestRoadEveryValue,
+    bedMakingHarvestRoadWidthValue,
+    bedMakingHarvestRoadsEnabled,
+    bedMakingMaxLinePoints,
+    bedMakingMinLinePoints,
+    bedMakingReplaceExisting,
+    block,
+    existingBeds.length,
+    invertSide,
+    onPreviewChange,
+    selectedBedMakingPreset,
+    showBedMakingFields
+  ]);
+
+  useEffect(() => {
+    const nextOptions = uniqueWorkOptions([
+      ...(defaultWorkSubcategories[workType] ?? []),
+      ...(workOptionStore.subcategories?.[workType] ?? [])
+    ]);
+    setWorkSubcategory(nextOptions[0] ?? "");
+    setCustomWorkSubcategory("");
+    setApplicationProduct("");
+    setCustomApplicationProduct("");
+  }, [workOptionStore.subcategories, workType]);
+
+  useEffect(() => {
+    if (!showApplicationFields) {
+      return;
+    }
+    const nextOptions = uniqueWorkOptions([
+      ...(defaultApplicationProducts[resolvedWorkSubcategory] ?? []),
+      ...(workOptionStore.products?.[resolvedWorkSubcategory] ?? [])
+    ]);
+    setApplicationProduct(nextOptions[0] ?? "");
+    setCustomApplicationProduct("");
+  }, [resolvedWorkSubcategory, showApplicationFields, workOptionStore.products]);
+
+  useEffect(() => {
+    if (workType !== "Cultivation" && workType !== "Transplanting" && bedPickActive) {
+      onBedPickActiveChange(false);
+    }
+  }, [bedPickActive, onBedPickActiveChange, workType]);
+
+  useEffect(() => {
+    if (!showApplicationFields || selectedAreaAcres == null || selectedAreaAcres <= 0) {
+      return;
+    }
+
+    if (applicationLastEdited === "rate") {
+      if (!applicationRateUsed.trim() || !Number.isFinite(applicationRateUsedNumber) || applicationRateUsedNumber < 0) {
+        if (applicationAmountUsed) {
+          setApplicationAmountUsed("");
+        }
+        return;
+      }
+      const nextAmount = formatDecimalInputValue(applicationRateUsedNumber * selectedAreaAcres);
+      if (nextAmount !== applicationAmountUsed) {
+        setApplicationAmountUsed(nextAmount);
+      }
+      return;
+    }
+
+    if (!applicationAmountUsed.trim() || !Number.isFinite(applicationAmountUsedNumber) || applicationAmountUsedNumber < 0) {
+      if (applicationRateUsed) {
+        setApplicationRateUsed("");
+      }
+      return;
+    }
+    const nextRate = formatDecimalInputValue(applicationAmountUsedNumber / selectedAreaAcres);
+    if (nextRate !== applicationRateUsed) {
+      setApplicationRateUsed(nextRate);
+    }
+  }, [
+    applicationAmountUsed,
+    applicationAmountUsedNumber,
+    applicationLastEdited,
+    applicationRateUsed,
+    applicationRateUsedNumber,
+    selectedAreaAcres,
+    showApplicationFields
+  ]);
+
+  useEffect(() => {
+    if (workType !== "Transplanting") {
+      return;
+    }
+    if (transplantPlantingId || transplantOptions.length === 0) {
+      return;
+    }
+    const firstPlanting = transplantOptions[0].planting;
+    setTransplantPlantingId(String(firstPlanting.id));
+    if (firstPlanting.plantCount != null) {
+      const availableCount = Math.max(0, firstPlanting.plantCount - plantingPlacementCount(placements, firstPlanting.id));
+      setTransplantPlantCount(String(availableCount || firstPlanting.plantCount));
+    }
+    setTransplantTrayCount(firstPlanting.trayCount == null ? "" : String(firstPlanting.trayCount));
+    setTransplantInRowSpacing(firstPlanting.fieldSpacingInRow == null ? "" : String(firstPlanting.fieldSpacingInRow));
+    setTransplantRowsPerBed(firstPlanting.rowsPerBed == null ? "" : String(firstPlanting.rowsPerBed));
+  }, [placements, transplantOptions, transplantPlantingId, workType]);
+
+  async function saveUnplannedWork(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (eventDate > todayDateInputValue()) {
+      setStatus("Work date cannot be in the future.");
+      return;
+    }
+    if (!finalWorkType) {
+      setStatus("Enter what work was done.");
+      return;
+    }
+    if (showSubcategoryFields && !resolvedWorkSubcategory) {
+      setStatus("Choose or add the subcategory.");
+      return;
+    }
+    if (showApplicationFields && !resolvedApplicationProduct) {
+      setStatus("Choose or add the product used.");
+      return;
+    }
+    if (showBedMakingFields && !block) {
+      setStatus("Select a block before making real beds.");
+      return;
+    }
+    if (showBedMakingFields && !selectedBedMakingPreset) {
+      setStatus("Choose a bed spacing preset first.");
+      return;
+    }
+    if (showBedMakingFields && bedLineCoordinates.length < bedMakingMinLinePoints) {
+      setStatus(bedLineMode === "straight" ? "Pick a block edge or two line points first." : "Pick the bed line points first.");
+      return;
+    }
+    if (showBedMakingFields && bedLineCoordinates.length > bedMakingMaxLinePoints) {
+      setStatus("Too many bed line points selected.");
+      return;
+    }
+    if (showBedMakingFields && (!Number.isInteger(bedMakingStartNumberValue) || bedMakingStartNumberValue < 1)) {
+      setStatus("Start number must be a whole number above zero.");
+      return;
+    }
+    if (showBedMakingFields && !bedMakingBlockFull && (!Number.isInteger(bedMakingCountNumber) || bedMakingCountNumber <= 0)) {
+      setStatus("Enter how many beds were made.");
+      return;
+    }
+    if (showBedMakingFields && bedMakingHarvestRoadsEnabled && (
+      !Number.isInteger(bedMakingHarvestRoadEveryValue)
+      || bedMakingHarvestRoadEveryValue < 1
+      || !Number.isInteger(bedMakingHarvestRoadWidthValue)
+      || bedMakingHarvestRoadWidthValue < 1
+    )) {
+      setStatus("Harvest roads need a positive bed interval and road width.");
+      return;
+    }
+    if (showApplicationFields && selectedAreaAcres != null && selectedAreaAcres > 0) {
+      if (applicationRateUsed.trim() && (!Number.isFinite(applicationRateUsedNumber) || applicationRateUsedNumber < 0)) {
+        setStatus("Rate used must be zero or above.");
+        return;
+      }
+      if (applicationAmountUsed.trim() && (!Number.isFinite(applicationAmountUsedNumber) || applicationAmountUsedNumber < 0)) {
+        setStatus("Amount used must be zero or above.");
+        return;
+      }
+    }
+    if (showTransplantFields && !selectedTransplantPlanting) {
+      setStatus("Choose the planting transplanted.");
+      return;
+    }
+    if (showTransplantFields && (!Number.isInteger(transplantPlantCountNumber) || transplantPlantCountNumber <= 0)) {
+      setStatus("Enter how many plants were transplanted.");
+      return;
+    }
+    if (showTransplantFields && transplantInRowSpacing.trim() && (!Number.isFinite(transplantInRowSpacingNumber) || transplantInRowSpacingNumber <= 0)) {
+      setStatus("In-row spacing must be above zero.");
+      return;
+    }
+    if (showTransplantFields && transplantRowsPerBed.trim() && (!Number.isInteger(transplantRowsPerBedNumber) || transplantRowsPerBedNumber <= 0)) {
+      setStatus("Rows per bed must be a whole number above zero.");
+      return;
+    }
+    if (showTransplantFields && blockBeds.length > 0 && selectedCultivationBedIds.length === 0) {
+      setStatus("Choose the beds transplanted.");
+      return;
+    }
+    if (showCultivationFields && blockBeds.length > 0 && selectedCultivationBedIds.length === 0) {
+      setStatus("Choose the beds cultivated.");
+      return;
+    }
+
+    try {
+      setSaving(true);
+      setStatus("Recording work...");
+      const pendingSectionId = await onCreatePendingSection(notes);
+      let recordedBedMakingCount = bedMakingBlockFull ? null : bedMakingCountNumber;
+      if (showBedMakingFields && block && selectedBedMakingPreset) {
+        setStatus("Making beds...");
+        const bedGenerationZoneId = zone?.plannedUse === "beds" ? zone.id : null;
+        const result = await api.generateBeds(block.id, {
+          presetId: selectedBedMakingPreset.id,
+          zoneId: bedGenerationZoneId,
+          lineMode: bedLineMode,
+          lineCoordinates: bedLineCoordinates,
+          count: bedMakingBlockFull ? 1 : bedMakingCountNumber,
+          layoutStartIndex: bedLineSource === "selected_bed" ? 0 : bedMakingReplaceExisting ? 0 : existingBeds.length,
+          edgeOffsetM: bedLineSource === "selected_bed" ? Number(selectedBedMakingPreset.pathSpacingM) : 0,
+          namePrefix: bedMakingNamePrefix,
+          startNumber: bedMakingStartNumberValue,
+          isPermanent: true,
+          replaceExisting: bedMakingReplaceExisting,
+          invertSide,
+          entranceSide: bedMakingEntranceSide,
+          fillWholeBlock: bedMakingBlockFull,
+          harvestRoadEveryBeds: bedMakingHarvestRoadsEnabled ? bedMakingHarvestRoadEveryValue : null,
+          harvestRoadWidthBeds: bedMakingHarvestRoadsEnabled ? bedMakingHarvestRoadWidthValue : 0
+        }) as { inserted?: number; insertedIds?: number[]; isRoad?: boolean };
+        recordedBedMakingCount = result.inserted ?? recordedBedMakingCount;
+        onStatusChange(result.inserted != null ? `Generated ${result.inserted} beds.` : "Beds generated.");
+      }
+      const nextWorkOptionStore: WorkOptionStore = {
+        subcategories: { ...(workOptionStore.subcategories ?? {}) },
+        products: { ...(workOptionStore.products ?? {}) }
+      };
+      if (showSubcategoryFields && workSubcategory === ADD_NEW_WORK_OPTION && resolvedWorkSubcategory) {
+        nextWorkOptionStore.subcategories = {
+          ...nextWorkOptionStore.subcategories,
+          [workType]: uniqueWorkOptions([...(nextWorkOptionStore.subcategories?.[workType] ?? []), resolvedWorkSubcategory])
+        };
+      }
+      if (showApplicationFields && applicationProduct === ADD_NEW_WORK_OPTION && resolvedApplicationProduct) {
+        nextWorkOptionStore.products = {
+          ...nextWorkOptionStore.products,
+          [resolvedWorkSubcategory]: uniqueWorkOptions([...(nextWorkOptionStore.products?.[resolvedWorkSubcategory] ?? []), resolvedApplicationProduct])
+        };
+      }
+      setWorkOptionStore(nextWorkOptionStore);
+      writeWorkOptionStore(nextWorkOptionStore);
+      const eventTitle = showBedMakingFields
+        ? recordedBedMakingCount != null
+          ? `${recordedBedMakingCount} ${bedMakingBedCover} bed${recordedBedMakingCount === 1 ? "" : "s"} made`
+          : `Filled block with ${bedMakingBedCover} beds`
+        : showTransplantFields && selectedTransplantPlanting
+          ? `Transplanted ${selectedTransplantPlanting.title} in ${selectedCultivationBedIds.length} bed${selectedCultivationBedIds.length === 1 ? "" : "s"}`
+          : showCultivationFields
+            ? `Cultivated ${selectedCultivationBedIds.length} bed${selectedCultivationBedIds.length === 1 ? "" : "s"}`
+            : resolvedWorkSubcategory || finalWorkType;
+      await api.recordUnplannedWork({
+        eventDate,
+        workType: finalWorkType,
+        taskType: finalTaskType,
+        workSubcategory: resolvedWorkSubcategory || null,
+        applicationProduct: showApplicationFields ? resolvedApplicationProduct : null,
+        title: eventTitle,
+        notes: notes.trim() || null,
+        fieldId: field?.id ?? null,
+        blockId: block?.id ?? null,
+        zoneId: pendingSectionId ?? zone?.id ?? null,
+        bedId: bed?.id ?? null,
+        bedMakingBedCount: showBedMakingFields ? recordedBedMakingCount : null,
+        bedMakingBlockFull: showBedMakingFields ? bedMakingBlockFull : null,
+        bedMakingBedCover: showBedMakingFields ? bedMakingBedCover : null,
+        applicationRateUsed: showApplicationFields && applicationRateUsed.trim() ? applicationRateUsedNumber : null,
+        applicationAmountUsed: showApplicationFields && applicationAmountUsed.trim() ? applicationAmountUsedNumber : null,
+        applicationUnit: showApplicationFields ? applicationUnitLabel : null,
+        applicationAreaSqM: showApplicationFields ? selectedAreaSqM : null,
+        transplantPlantingId: showTransplantFields && selectedTransplantPlanting ? selectedTransplantPlanting.id : null,
+        transplantCrop: showTransplantFields && selectedTransplantPlanting ? selectedTransplantPlanting.cropName : null,
+        transplantVariety: showTransplantFields && selectedTransplantPlanting ? selectedTransplantPlanting.varietyName : null,
+        transplantPlantCount: showTransplantFields ? transplantPlantCountNumber : null,
+        transplantTrayCount: showTransplantFields && Number.isInteger(transplantTrayCountNumber) && transplantTrayCountNumber > 0 ? transplantTrayCountNumber : null,
+        transplantInRowSpacing: showTransplantFields && transplantInRowSpacing.trim() ? transplantInRowSpacingNumber : null,
+        transplantRowsPerBed: showTransplantFields && transplantRowsPerBed.trim() ? transplantRowsPerBedNumber : null,
+        transplantBedIds: showTransplantFields ? selectedCultivationBedIds : [],
+        cultivationBedIds: showCultivationFields ? selectedCultivationBedIds : []
+      });
+      setBedMakingCount("");
+      setBedMakingBlockFull(false);
+      setBedMakingBedCover("bare");
+      setApplicationRateUsed("");
+      setApplicationAmountUsed("");
+      setApplicationUnit("lb");
+      setApplicationLastEdited("rate");
+      setCustomWorkSubcategory("");
+      setApplicationProduct("");
+      setCustomApplicationProduct("");
+      setTransplantPlantingId("");
+      setTransplantPlantCount("");
+      setTransplantTrayCount("");
+      setTransplantInRowSpacing("");
+      setTransplantRowsPerBed("");
+      setNotes("");
+      if (showCultivationFields || showTransplantFields) {
+        onSelectedCultivationBedIdsChange([]);
+        onBedPickActiveChange(false);
+      }
+      await onSave();
+      setStatus("Work recorded.");
+    } catch (error) {
+      setStatus(error instanceof Error ? error.message : "Work record failed.");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <div className="card" data-card-id="UnplannedWorkCard">
+      <h2>{cardTitle}</h2>
+      <p className="muted">{locationName}</p>
+      {status && <p className="muted"><strong>{status}</strong></p>}
+      <form className="form-grid" onSubmit={(event) => void saveUnplannedWork(event)}>
+        <label>
+          <span>Date</span>
+          <input type="date" value={eventDate} onChange={(event) => setEventDate(event.target.value)} required />
+        </label>
+        <label>
+          <span>Work category</span>
+          <select value={workType} onChange={(event) => setWorkType(event.target.value)}>
+            {unplannedWorkOptions.map((option) => <option key={option} value={option}>{option}</option>)}
+          </select>
+        </label>
+        {showSubcategoryFields && (
+          <label>
+            <span>Subcategory</span>
+            <select value={workSubcategory} onChange={(event) => setWorkSubcategory(event.target.value)}>
+              {subcategoryOptions.map((option) => <option key={option} value={option}>{option}</option>)}
+              <option value={ADD_NEW_WORK_OPTION}>Add new...</option>
+            </select>
+          </label>
+        )}
+        {showSubcategoryFields && workSubcategory === ADD_NEW_WORK_OPTION && (
+          <label className="full-span">
+            <span>New subcategory</span>
+            <input value={customWorkSubcategory} onChange={(event) => setCustomWorkSubcategory(event.target.value)} maxLength={80} required />
+          </label>
+        )}
+        {showApplicationFields && (
+          <label className="full-span">
+            <span>Product used</span>
+            <select value={applicationProduct} onChange={(event) => setApplicationProduct(event.target.value)}>
+              {applicationProductOptions.length === 0 && <option value="">Choose product</option>}
+              {applicationProductOptions.map((option) => <option key={option} value={option}>{option}</option>)}
+              <option value={ADD_NEW_WORK_OPTION}>Add new...</option>
+            </select>
+          </label>
+        )}
+        {showApplicationFields && applicationProduct === ADD_NEW_WORK_OPTION && (
+          <label className="full-span">
+            <span>New product</span>
+            <input value={customApplicationProduct} onChange={(event) => setCustomApplicationProduct(event.target.value)} maxLength={120} required />
+          </label>
+        )}
+        {showSectionTools && (
+          <div className="full-span stack">
+            <span className="field-label">Block section</span>
+            {zone ? (
+              <div className="instruction-box">
+                This record will attach to {zone.name}. You can still make a new section from the parent block.
+              </div>
+            ) : (
+              <div className="instruction-box">
+                If the work only happened in part of the block, select an existing section or make one first.
+              </div>
+            )}
+            {blockZones.length > 0 && (
+              <div className="button-row">
+                {blockZones.map((item) => (
+                  <button type="button" className="secondary-button" key={item.id} onClick={() => onSelectSection(item.id)}>
+                    Use {item.name}
+                  </button>
+                ))}
+              </div>
+            )}
+            {canCreateSection ? (
+              <div className="button-row">
+                <button type="button" className="primary-button" onClick={onSplitSection}>
+                  Split with line
+                </button>
+              </div>
+            ) : (
+              <div className="instruction-box">
+                Planner access is required to make block sections.
+              </div>
+            )}
+          </div>
+        )}
+        {showApplicationFields && (
+          <>
+            <div className="instruction-box full-span">
+              Area selected: {formatDisplayArea(selectedAreaSqM, distanceUnit)}.
+            </div>
+            <label>
+              <span>Rate used ({applicationUnitLabel}/ac)</span>
+              <input
+                type="number"
+                min="0"
+                step="any"
+                value={applicationRateUsed}
+                onChange={(event) => {
+                  setApplicationLastEdited("rate");
+                  setApplicationRateUsed(event.target.value);
+                }}
+              />
+            </label>
+            <label>
+              <span>Amount used ({applicationUnitLabel})</span>
+              <input
+                type="number"
+                min="0"
+                step="any"
+                value={applicationAmountUsed}
+                onChange={(event) => {
+                  setApplicationLastEdited("amount");
+                  setApplicationAmountUsed(event.target.value);
+                }}
+              />
+            </label>
+            <label className="full-span">
+              <span>Unit</span>
+              <input value={applicationUnit} onChange={(event) => setApplicationUnit(event.target.value)} maxLength={24} />
+            </label>
+          </>
+        )}
+        {showBedMakingFields && (
+          <>
+            {!block && (
+              <div className="instruction-box full-span">Select a block to make real mapped beds.</div>
+            )}
+            {block && bedMakingPresets.length === 0 && (
+              <div className="instruction-box full-span">
+                No bed spacing presets are saved yet. Create one in the bed generator first, then this card will use the same spacing here.
+              </div>
+            )}
+            {block && bedMakingPresets.length > 0 && (
+              <>
+                <label className="full-span">
+                  <span>Bed spacing preset</span>
+                  <select value={bedMakingPresetId} onChange={(event) => setBedMakingPresetId(event.target.value)}>
+                    {bedMakingPresets.map((preset) => (
+                      <option key={preset.id} value={preset.id}>
+                        {preset.name} ({formatLength(preset.bedWidthM, distanceUnit)} bed / {formatLength(preset.pathSpacingM, distanceUnit)} path)
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <div className="full-span button-row">
+                  <button type="button" className="primary-button" onClick={onPickBedEdge}>
+                    {isPickingEdge ? "Click an edge..." : "Pick block edge"}
+                  </button>
+                  <button type="button" className="secondary-button" onClick={() => onStartBedLine("straight")}>
+                    {isPickingLine ? "Picking line..." : "Draw straight line"}
+                  </button>
+                  {(isPickingLine || isPickingEdge) && (
+                    <button type="button" className="secondary-button" onClick={onCancelBedLine}>
+                      Cancel line
+                    </button>
+                  )}
+                </div>
+                <div className="full-span generated-bed-list">
+                  {bedLineCoordinates.map((_, index) => (
+                    <span key={index} className="small-chip">Line point {index + 1}</span>
+                  ))}
+                </div>
+                <p className="muted full-span">Current line points: {bedLineCoordinates.length} / {bedMakingMaxLinePoints}</p>
+                <label>
+                  <span>Beds made</span>
+                  <input
+                    type="number"
+                    min="1"
+                    max="500"
+                    value={bedMakingCount}
+                    onChange={(event) => setBedMakingCount(event.target.value)}
+                    required={!bedMakingBlockFull}
+                    disabled={bedMakingBlockFull}
+                  />
+                </label>
+                <label>
+                  <span>Bed type</span>
+                  <select value={bedMakingBedCover} onChange={(event) => setBedMakingBedCover(event.target.value as "bare" | "plastic")}>
+                    <option value="bare">Bare</option>
+                    <option value="plastic">Plastic mulch</option>
+                  </select>
+                </label>
+                <div className="bed-making-mode-toggle full-span" role="group" aria-label="Bed-making coverage">
+                  <button
+                    type="button"
+                    className={bedMakingBlockFull ? "secondary-button" : "primary-button"}
+                    aria-pressed={!bedMakingBlockFull}
+                    onClick={() => setBedMakingBlockFull(false)}
+                  >
+                    Partial
+                  </button>
+                  <button
+                    type="button"
+                    className={bedMakingBlockFull ? "primary-button" : "secondary-button"}
+                    aria-pressed={bedMakingBlockFull}
+                    onClick={() => setBedMakingBlockFull(true)}
+                  >
+                    Fill block
+                  </button>
+                </div>
+                <label>
+                  <span>Name prefix</span>
+                  <input value={bedMakingNamePrefix} onChange={(event) => setBedMakingNamePrefix(event.target.value)} />
+                </label>
+                <label>
+                  <span>Start number</span>
+                  <input value={bedMakingStartNumber} onChange={(event) => setBedMakingStartNumber(Number(event.target.value))} type="number" min="1" />
+                </label>
+                <label>
+                  <span>Existing beds</span>
+                  <select
+                    value={String(bedMakingReplaceExisting)}
+                    onChange={(event) => {
+                      const nextValue = event.target.value === "true";
+                      setBedMakingReplaceExisting(nextValue);
+                      setBedMakingStartNumber(nextValue ? 1 : existingBeds.length + 1);
+                    }}
+                  >
+                    <option value="false">Keep existing beds</option>
+                    <option value="true">Replace beds in block</option>
+                  </select>
+                </label>
+                <label>
+                  <span>First-bed entrance side</span>
+                  <select
+                    value={bedMakingEntranceSide}
+                    onChange={(event) => {
+                      const nextEntranceSide = event.target.value as "start" | "end";
+                      setBedMakingEntranceSide(nextEntranceSide);
+                      if (block) {
+                        onEntranceSideChange(block.id, nextEntranceSide);
+                      }
+                    }}
+                  >
+                    <option value="start">Start side of first bed</option>
+                    <option value="end">Far side of first bed</option>
+                  </select>
+                </label>
+                <label className="inline-checkbox full-span">
+                  <input type="checkbox" checked={invertSide} onChange={(event) => onInvertSideChange(event.target.checked)} />
+                  <span>Build off the other side of the line</span>
+                </label>
+                <details className="full-span foldout-panel">
+                  <summary>Harvest roads</summary>
+                  <label className="inline-checkbox">
+                    <input type="checkbox" checked={bedMakingHarvestRoadsEnabled} onChange={(event) => setBedMakingHarvestRoadsEnabled(event.target.checked)} />
+                    <span>Leave gaps while generating beds</span>
+                  </label>
+                  <div className="form-grid">
+                    <label>
+                      <span>Road after every</span>
+                      <input value={bedMakingHarvestRoadEveryBeds} onChange={(event) => setBedMakingHarvestRoadEveryBeds(event.target.value)} type="number" min="1" disabled={!bedMakingHarvestRoadsEnabled} />
+                    </label>
+                    <label>
+                      <span>Road width in bed slots</span>
+                      <input value={bedMakingHarvestRoadWidthBeds} onChange={(event) => setBedMakingHarvestRoadWidthBeds(event.target.value)} type="number" min="1" max="20" disabled={!bedMakingHarvestRoadsEnabled} />
+                    </label>
+                  </div>
+                </details>
+              </>
+            )}
+          </>
+        )}
+        {showTransplantFields && (
+          <>
+            <label className="full-span">
+              <span>Planting</span>
+              <select
+                value={transplantPlantingId}
+                onChange={(event) => {
+                  const nextPlanting = plantings.find((planting) => String(planting.id) === event.target.value) ?? null;
+                  setTransplantPlantingId(event.target.value);
+                  if (nextPlanting) {
+                    const availableCount = nextPlanting.plantCount == null
+                      ? null
+                      : Math.max(0, nextPlanting.plantCount - plantingPlacementCount(placements, nextPlanting.id));
+                    setTransplantPlantCount(availableCount == null ? "" : String(availableCount));
+                    setTransplantTrayCount(nextPlanting.trayCount == null ? "" : String(nextPlanting.trayCount));
+                    setTransplantInRowSpacing(nextPlanting.fieldSpacingInRow == null ? "" : String(nextPlanting.fieldSpacingInRow));
+                    setTransplantRowsPerBed(nextPlanting.rowsPerBed == null ? "" : String(nextPlanting.rowsPerBed));
+                  }
+                }}
+                required
+              >
+                <option value="">Choose planting</option>
+                {transplantOptions.map(({ planting, availableCount }) => (
+                  <option key={planting.id} value={planting.id}>
+                    {planting.title}{availableCount == null ? "" : ` (${availableCount} available)`}{block && planting.intendedBlockId !== block.id ? " - other block" : ""}
+                  </option>
+                ))}
+              </select>
+            </label>
+            {selectedTransplantPlanting && (
+              <div className="instruction-box full-span">
+                <strong>{selectedTransplantPlanting.cropName}{selectedTransplantPlanting.varietyName ? ` / ${selectedTransplantPlanting.varietyName}` : ""}</strong>
+                <span> Planned for {selectedTransplantPlanting.intendedBlockName ?? selectedTransplantPlanting.intendedFieldName ?? "no mapped location"}.</span>
+                {selectedTransplantAvailableCount != null && <span> Available plants: {selectedTransplantAvailableCount.toLocaleString()}.</span>}
+              </div>
+            )}
+            <label>
+              <span>Plants transplanted</span>
+              <input
+                type="number"
+                min="1"
+                value={transplantPlantCount}
+                onChange={(event) => setTransplantPlantCount(event.target.value)}
+                required
+              />
+            </label>
+            <label>
+              <span>Trays</span>
+              <input type="number" min="1" value={transplantTrayCount} onChange={(event) => setTransplantTrayCount(event.target.value)} />
+            </label>
+            <label>
+              <span>In-row spacing ({spacingUnitLabel(distanceUnit)})</span>
+              <input
+                type="number"
+                min="0"
+                step={distanceUnit === "ft" ? "0.5" : "1"}
+                value={transplantInRowSpacing}
+                onChange={(event) => setTransplantInRowSpacing(event.target.value)}
+              />
+            </label>
+            <label>
+              <span>Rows per bed</span>
+              <input
+                type="number"
+                min="1"
+                step="1"
+                value={transplantRowsPerBed}
+                onChange={(event) => setTransplantRowsPerBed(event.target.value)}
+              />
+            </label>
+            <WorkBedPicker
+              beds={blockBeds}
+              selectedBedIds={selectedCultivationBedIds}
+              bedPickActive={bedPickActive}
+              pickLabel="Pick transplant beds on map"
+              pickingLabel="Picking transplant beds"
+              onBedPickActiveChange={onBedPickActiveChange}
+              onSelectedBedIdsChange={onSelectedCultivationBedIdsChange}
+            />
+          </>
+        )}
+        {showCultivationFields && (
+          <WorkBedPicker
+            beds={blockBeds}
+            selectedBedIds={selectedCultivationBedIds}
+            bedPickActive={bedPickActive}
+            pickLabel="Pick beds on map"
+            pickingLabel="Picking beds"
+            onBedPickActiveChange={onBedPickActiveChange}
+            onSelectedBedIdsChange={onSelectedCultivationBedIdsChange}
+          />
+        )}
+        <label className="full-span">
+          <span>Extra notes</span>
+          <textarea rows={3} value={notes} onChange={(event) => setNotes(event.target.value)} />
+        </label>
+        <button type="submit" className="primary-button full-span" disabled={saving}>
+          {saving ? "Recording..." : "Record work"}
+        </button>
+      </form>
+    </div>
+  );
+}
+
+function WorkBedPicker({
+  beds,
+  selectedBedIds,
+  bedPickActive,
+  pickLabel,
+  pickingLabel,
+  onBedPickActiveChange,
+  onSelectedBedIdsChange
+}: {
+  beds: Bed[];
+  selectedBedIds: number[];
+  bedPickActive: boolean;
+  pickLabel: string;
+  pickingLabel: string;
+  onBedPickActiveChange: (active: boolean) => void;
+  onSelectedBedIdsChange: (bedIds: number[]) => void;
+}) {
+  const plasticBedIds = beds
+    .filter((item) => (item.bedPresetName ?? item.name).toLowerCase().includes("plastic"))
+    .map((item) => item.id);
+  const bareBedIds = beds
+    .filter((item) => !plasticBedIds.includes(item.id))
+    .map((item) => item.id);
+  const selectedBedIdSet = new Set(selectedBedIds);
+
+  return (
+    <div className="full-span stack">
+      <div className="button-row">
+        <button
+          type="button"
+          className={bedPickActive ? "primary-button" : "secondary-button"}
+          onClick={() => onBedPickActiveChange(!bedPickActive)}
+        >
+          {bedPickActive ? pickingLabel : pickLabel}
+        </button>
+        <button type="button" className="secondary-button" onClick={() => onSelectedBedIdsChange(bareBedIds)}>
+          All bare beds
+        </button>
+        <button type="button" className="secondary-button" onClick={() => onSelectedBedIdsChange(plasticBedIds)}>
+          All plastic beds
+        </button>
+        <button type="button" className="secondary-button" onClick={() => onSelectedBedIdsChange([])}>
+          Clear beds
+        </button>
+      </div>
+      <p className="muted">{selectedBedIds.length} bed{selectedBedIds.length === 1 ? "" : "s"} selected.</p>
+      {beds.length > 0 && (
+        <div className="checkbox-grid">
+          {beds.map((item) => (
+            <label className="inline-checkbox" key={item.id}>
+              <input
+                type="checkbox"
+                checked={selectedBedIdSet.has(item.id)}
+                onChange={(event) => {
+                  if (event.target.checked) {
+                    onSelectedBedIdsChange([...selectedBedIds, item.id]);
+                  } else {
+                    onSelectedBedIdsChange(selectedBedIds.filter((bedId) => bedId !== item.id));
+                  }
+                }}
+              />
+              <span>{item.name}{item.bedPresetName ? ` (${item.bedPresetName})` : ""}</span>
+            </label>
+          ))}
+        </div>
+      )}
     </div>
   );
 }

@@ -64,13 +64,13 @@ export function newTaskFlowNode(index: number) {
 
   return {
     nodeKey: `node_${Date.now()}_${index}`,
-    taskType: "bed_prep",
+    taskType: "bed_making",
     label: `Task ${index + 1}`,
     anchor: "planned_transplant",
     offsetDays: 0,
-    iconColor: taskIconColor("bed_prep"),
+    iconColor: taskIconColor("bed_making"),
     iconSecondaryColor: "#f4c430",
-    tractorModel: tractorModelForTask("bed_prep"),
+    tractorModel: tractorModelForTask("bed_making"),
     tractorProfileId: null,
     x: Math.min(0.14 + column * 0.28, 0.9),
     y: Math.min(0.2 + row * 0.28, 0.86),

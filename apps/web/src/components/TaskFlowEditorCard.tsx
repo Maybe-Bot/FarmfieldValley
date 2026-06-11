@@ -68,6 +68,10 @@ function removeAfterAnchor(anchor: string, nodeKey: string) {
   return remaining.length > 0 ? afterAnchor(remaining) : "planned_sow";
 }
 
+function uniqueTaskTypeOptions(options: string[]) {
+  return Array.from(new Set(options.filter(Boolean)));
+}
+
 // Visual editor for one task-flow template. It stays separated from App.tsx because
 // it has its own graph state, drag handling, dependency validation, and save payload.
 export function TaskFlowEditorCard({
@@ -114,9 +118,9 @@ export function TaskFlowEditorCard({
         notes: node.notes ?? ""
       }))
     : [
-        { ...newTaskFlowNode(0), label: "Bed prep", taskType: "bed_prep", iconColor: defaultProfileForTask("bed_prep")?.iconColor ?? taskIconColor("bed_prep"), iconSecondaryColor: defaultProfileForTask("bed_prep")?.iconSecondaryColor ?? "#f4c430", tractorModel: defaultProfileForTask("bed_prep")?.tractorModel ?? defaultModelForTask("bed_prep"), tractorProfileId: defaultProfileForTask("bed_prep")?.id ?? null, anchor: "planned_transplant", offsetDays: -5 },
+        { ...newTaskFlowNode(0), label: "Shape beds", taskType: "bed_making", iconColor: defaultProfileForTask("bed_making")?.iconColor ?? taskIconColor("bed_making"), iconSecondaryColor: defaultProfileForTask("bed_making")?.iconSecondaryColor ?? "#f4c430", tractorModel: defaultProfileForTask("bed_making")?.tractorModel ?? defaultModelForTask("bed_making"), tractorProfileId: defaultProfileForTask("bed_making")?.id ?? null, anchor: "planned_transplant", offsetDays: -5 },
         { ...newTaskFlowNode(1), label: "Transplant", taskType: "transplant", iconColor: defaultProfileForTask("transplant")?.iconColor ?? taskIconColor("transplant"), iconSecondaryColor: defaultProfileForTask("transplant")?.iconSecondaryColor ?? "#f4c430", tractorModel: defaultProfileForTask("transplant")?.tractorModel ?? defaultModelForTask("transplant"), tractorProfileId: defaultProfileForTask("transplant")?.id ?? null, anchor: "actual_transplant", offsetDays: 0 },
-        { ...newTaskFlowNode(2), label: "Harvest start", taskType: "harvest", iconColor: defaultProfileForTask("harvest")?.iconColor ?? taskIconColor("harvest"), iconSecondaryColor: defaultProfileForTask("harvest")?.iconSecondaryColor ?? "#f4c430", tractorModel: defaultProfileForTask("harvest")?.tractorModel ?? defaultModelForTask("harvest"), tractorProfileId: defaultProfileForTask("harvest")?.id ?? null, anchor: "actual_transplant", offsetDays: 35 }
+        { ...newTaskFlowNode(2), label: "Cultivate", taskType: "cultivation", iconColor: defaultProfileForTask("cultivation")?.iconColor ?? taskIconColor("cultivation"), iconSecondaryColor: defaultProfileForTask("cultivation")?.iconSecondaryColor ?? "#f4c430", tractorModel: defaultProfileForTask("cultivation")?.tractorModel ?? defaultModelForTask("cultivation"), tractorProfileId: defaultProfileForTask("cultivation")?.id ?? null, anchor: "actual_transplant", offsetDays: 7 }
       ];
   const initialEdges = edges.length > 0
     ? edges.map((edge) => ({
@@ -724,7 +728,7 @@ export function TaskFlowEditorCard({
                   >
                     <span>Task type</span>
                     <select value={node.taskType} onChange={(event) => updateNodeTaskType(node, event.target.value)}>
-                      {taskTypeOptions.map((taskType) => <option key={taskType} value={taskType}>{formatTaskTypeLabel(taskType)}</option>)}
+                      {uniqueTaskTypeOptions([...taskTypeOptions, node.taskType]).map((taskType) => <option key={taskType} value={taskType}>{formatTaskTypeLabel(taskType)}</option>)}
                     </select>
                   </label>
                   <label>

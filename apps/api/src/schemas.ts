@@ -303,8 +303,12 @@ export const blockZoneSplitSchema = z.object({
   plannedCoverCropSeedDate: z.string().nullable().optional(),
   plannedCoverCropTerminateDate: z.string().nullable().optional(),
   notes: z.string().nullable().optional(),
-  lineCoordinates: z.array(latLngSchema).length(2),
+  lineCoordinates: z.array(latLngSchema).length(2).optional(),
+  splitLines: z.array(z.array(latLngSchema).length(2)).min(1).max(2).optional(),
+  firstBedSidePoint: latLngSchema.nullable().optional(),
   useLargerSide: z.boolean().default(false)
+}).refine((value) => value.lineCoordinates != null || value.splitLines != null, {
+  message: "Add at least one split line"
 });
 
 export const coverCropWorkSchema = z.object({
@@ -312,6 +316,38 @@ export const coverCropWorkSchema = z.object({
   actualCoverCropSeedDate: z.string().nullable().optional(),
   actualCoverCropTerminateDate: z.string().nullable().optional(),
   notes: z.string().nullable().optional()
+});
+
+export const unplannedWorkSchema = z.object({
+  eventDate: z.string().min(1),
+  workType: z.string().trim().min(1).max(80),
+  taskType: z.string().trim().max(80).nullable().optional(),
+  workSubcategory: z.string().trim().max(120).nullable().optional(),
+  title: z.string().trim().max(160).optional(),
+  notes: z.string().trim().max(2000).nullable().optional(),
+  fieldId: z.number().nullable().optional(),
+  blockId: z.number().nullable().optional(),
+  zoneId: z.number().nullable().optional(),
+  bedId: z.number().nullable().optional(),
+  bedMakingBedCount: z.number().int().positive().max(500).nullable().optional(),
+  bedMakingBlockFull: z.boolean().optional(),
+  bedMakingBedCover: z.enum(["bare", "plastic"]).nullable().optional(),
+  applicationRateUsed: z.number().nonnegative().max(100000000).nullable().optional(),
+  applicationAmountUsed: z.number().nonnegative().max(100000000).nullable().optional(),
+  applicationProduct: z.string().trim().max(120).nullable().optional(),
+  applicationUnit: z.string().trim().max(24).nullable().optional(),
+  applicationAreaSqM: z.number().nonnegative().max(100000000).nullable().optional(),
+  transplantPlantingId: z.number().int().positive().nullable().optional(),
+  transplantCrop: z.string().trim().max(160).nullable().optional(),
+  transplantVariety: z.string().trim().max(160).nullable().optional(),
+  transplantPlantCount: z.number().int().positive().max(1000000).nullable().optional(),
+  transplantTrayCount: z.number().int().positive().max(100000).nullable().optional(),
+  transplantInRowSpacing: z.number().positive().max(10000).nullable().optional(),
+  transplantRowsPerBed: z.number().int().positive().max(50).nullable().optional(),
+  transplantBedIds: z.array(z.number().int().positive()).max(500).optional(),
+  cultivationBedIds: z.array(z.number().int().positive()).max(500).optional()
+}).refine((value) => value.fieldId != null || value.blockId != null || value.zoneId != null || value.bedId != null, {
+  message: "Select a field, block, area, or bed before recording unplanned work"
 });
 
 export const bedLineModeSchema = z.enum(["straight", "curved"]);

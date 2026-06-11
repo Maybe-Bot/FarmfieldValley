@@ -263,6 +263,7 @@ function actualUpdateForTaskType(taskType: string): { eventType: ActualEventType
     case "transplant":
       return { eventType: "transplant", field: "actual_transplant_date", status: "transplanted" };
     case "cultivate":
+    case "cultivation":
       return { eventType: "cultivation", field: "actual_cultivation_date", status: "growing" };
     case "harvest":
       return { eventType: "harvest", field: "actual_harvest_date", status: "harvested" };
@@ -1237,7 +1238,7 @@ async function upsertBlockBedMakingTask(client: PoolClient, farmId: number, bloc
       from tasks
       where farm_id = $1
         and planting_id is null
-        and task_type = 'bed_prep'
+        and task_type in ('bed_prep', 'bed_making')
         and title = $2
         and notes like 'Auto-created block bed-making task.%'
       limit 1
@@ -1266,7 +1267,7 @@ async function upsertBlockBedMakingTask(client: PoolClient, farmId: number, bloc
         farm_id, bed_id, task_type, title, status, anchor, offset_days,
         scheduled_date, notes, is_auto_generated, icon_color, icon_secondary_color
       )
-      values ($1, $2, 'bed_prep', $3, 'pending', null, null, $4, $5, true, '#8b6f43', '#f4c430')
+      values ($1, $2, 'bed_making', $3, 'pending', null, null, $4, $5, true, '#8b6f43', '#f4c430')
     `,
     [farmId, row.first_bed_id, title, row.scheduled_date, notes]
   );
@@ -2535,52 +2536,31 @@ async function upsertBlockZoneGeometry(
   return { id: options.id, warning };
 }
 
-// Splits one block polygon into two zone polygons using a user-drawn edge-to-edge line.
+// Splits one block polygon into a target zone and one or more remainder zones.
 async function splitBlockBoundaryIntoZoneCoordinates(
   client: PoolClient,
   options: {
     blockId: number;
-    lineCoordinates: Array<{ lat: number; lng: number }>;
+    lineCoordinates?: Array<{ lat: number; lng: number }>;
+    splitLines?: Array<Array<{ lat: number; lng: number }>>;
+    firstBedSidePoint?: { lat: number; lng: number } | null;
     useLargerSide: boolean;
   }
 ) {
-  const endpointToleranceM = 3;
-  const linePoints = options.lineCoordinates.map((point) => projectWgs84To3857(point.lat, point.lng));
-  const startPoint = linePoints[0];
-  const endPoint = linePoints[1];
-  const endpointCheck = await client.query<{ start_distance_m: string; end_distance_m: string }>(
-    `
-      with
-      block_geom as (
-        select ST_Transform(boundary, 3857) as geom
-        from blocks
-        where id = $1
-      ),
-      endpoints as (
-        select
-          ST_GeomFromText($2, 3857) as start_geom,
-          ST_GeomFromText($3, 3857) as end_geom
-      )
-      select
-        ST_Distance(ST_Boundary(block_geom.geom), endpoints.start_geom)::text as start_distance_m,
-        ST_Distance(ST_Boundary(block_geom.geom), endpoints.end_geom)::text as end_distance_m
-      from block_geom, endpoints
-    `,
-    [
-      options.blockId,
-      `POINT(${startPoint.x} ${startPoint.y})`,
-      `POINT(${endPoint.x} ${endPoint.y})`
-    ]
-  );
-
-  const startDistance = Number(endpointCheck.rows[0]?.start_distance_m ?? Number.POSITIVE_INFINITY);
-  const endDistance = Number(endpointCheck.rows[0]?.end_distance_m ?? Number.POSITIVE_INFINITY);
-  if (startDistance > endpointToleranceM || endDistance > endpointToleranceM) {
-    throw new Error("Split points must be placed on the selected block edge.");
+  const splitLines = options.splitLines ?? (options.lineCoordinates ? [options.lineCoordinates] : []);
+  if (splitLines.length < 1 || splitLines.length > 2 || splitLines.some((line) => line.length !== 2)) {
+    throw new Error("Add one or two split lines first.");
   }
 
-  const extendedLineWkt = lineStringWkt3857(extendStraightLine(linePoints));
-  const result = await client.query<{ piece_count: string; target_geojson: string | null; remainder_geojson: string | null }>(
+  const lineWkts = splitLines.map((line) => lineStringWkt3857(extendStraightLine(line.map((point) => projectWgs84To3857(point.lat, point.lng)))));
+  const anchorPoint = options.firstBedSidePoint ? projectWgs84To3857(options.firstBedSidePoint.lat, options.firstBedSidePoint.lng) : null;
+  const targetOrder = splitLines.length === 2
+    ? "where side_a * side_b <= 0 order by area_sqm desc, piece_no limit 1"
+    : anchorPoint
+      ? "order by ST_Covers(geom, anchor_geom) desc, area_sqm desc, piece_no limit 1"
+      : `order by area_sqm ${options.useLargerSide ? "desc" : "asc"}, piece_no limit 1`;
+
+  const result = await client.query<{ role: "target" | "remainder"; piece_no: string; geojson: string | null }>(
     `
       with
       block_geom as (
@@ -2588,47 +2568,87 @@ async function splitBlockBoundaryIntoZoneCoordinates(
         from blocks
         where id = $1
       ),
-      split_line as (
+      split_line_a as (
         select ST_GeomFromText($2, 3857) as geom
+      ),
+      split_line_b as (
+        select case when $3::text is null then null else ST_GeomFromText($3, 3857) end as geom
+      ),
+      split_line as (
+        select case
+          when split_line_b.geom is null then split_line_a.geom
+          else ST_UnaryUnion(ST_Collect(split_line_a.geom, split_line_b.geom))
+        end as geom
+        from split_line_a, split_line_b
+      ),
+      anchor_point as (
+        select case when $4::text is null then null else ST_GeomFromText($4, 3857) end as geom
       ),
       pieces as (
         select
           row_number() over (order by ST_Area(piece.geom) asc, ST_YMin(piece.geom), ST_XMin(piece.geom)) as piece_no,
           piece.geom,
-          ST_Area(piece.geom) as area_sqm
+          ST_Area(piece.geom) as area_sqm,
+          anchor_point.geom as anchor_geom,
+          (
+            (ST_X(ST_EndPoint(split_line_a.geom)) - ST_X(ST_StartPoint(split_line_a.geom)))
+            * (ST_Y(ST_PointOnSurface(piece.geom)) - ST_Y(ST_StartPoint(split_line_a.geom)))
+            - (ST_Y(ST_EndPoint(split_line_a.geom)) - ST_Y(ST_StartPoint(split_line_a.geom)))
+            * (ST_X(ST_PointOnSurface(piece.geom)) - ST_X(ST_StartPoint(split_line_a.geom)))
+          ) as side_a,
+          case when split_line_b.geom is null then null else (
+            (ST_X(ST_EndPoint(split_line_b.geom)) - ST_X(ST_StartPoint(split_line_b.geom)))
+            * (ST_Y(ST_PointOnSurface(piece.geom)) - ST_Y(ST_StartPoint(split_line_b.geom)))
+            - (ST_Y(ST_EndPoint(split_line_b.geom)) - ST_Y(ST_StartPoint(split_line_b.geom)))
+            * (ST_X(ST_PointOnSurface(piece.geom)) - ST_X(ST_StartPoint(split_line_b.geom)))
+          ) end as side_b
         from (
           select (ST_Dump(ST_CollectionExtract(ST_Split(block_geom.geom, split_line.geom), 3))).geom
           from block_geom, split_line
-        ) as piece
+        ) as piece,
+        split_line_a,
+        split_line_b,
+        anchor_point
       ),
       target_piece as (
         select piece_no, geom
         from pieces
-        order by area_sqm ${options.useLargerSide ? "desc" : "asc"}, piece_no
-        limit 1
-      ),
-      remainder_piece as (
-        select geom
-        from pieces
-        where piece_no <> (select piece_no from target_piece)
+        ${targetOrder}
       )
       select
-        (select count(*)::text from pieces) as piece_count,
-        ST_AsGeoJSON(ST_Transform((select geom from target_piece), 4326)) as target_geojson,
-        ST_AsGeoJSON(ST_Transform((select geom from remainder_piece), 4326)) as remainder_geojson
+        'target' as role,
+        piece_no::text,
+        ST_AsGeoJSON(ST_Transform(geom, 4326)) as geojson
+      from target_piece
+      union all
+      select
+        'remainder' as role,
+        piece_no::text,
+        ST_AsGeoJSON(ST_Transform(geom, 4326)) as geojson
+      from pieces
+      where piece_no <> (select piece_no from target_piece)
+      order by role desc, piece_no
     `,
-    [options.blockId, extendedLineWkt]
+    [
+      options.blockId,
+      lineWkts[0],
+      lineWkts[1] ?? null,
+      anchorPoint ? `POINT(${anchorPoint.x} ${anchorPoint.y})` : null
+    ]
   );
 
-  const row = result.rows[0];
-  if (!row || Number(row.piece_count) !== 2 || !row.target_geojson || !row.remainder_geojson) {
-    throw new Error("The split line must cut the selected block into 2 parts.");
+  const targetRow = result.rows.find((row) => row.role === "target");
+  const remainderRows = result.rows.filter((row) => row.role === "remainder");
+  if (!targetRow?.geojson || remainderRows.length === 0 || remainderRows.some((row) => !row.geojson)) {
+    throw new Error(splitLines.length === 2
+      ? "The split lines must both cut across the selected block."
+      : "The split line must cut across the selected block.");
   }
 
-  const targetFeature = JSON.parse(row.target_geojson) as { type?: string; coordinates?: number[][][] };
-  const remainderFeature = JSON.parse(row.remainder_geojson) as { type?: string; coordinates?: number[][][] };
+  const targetFeature = JSON.parse(targetRow.geojson) as { type?: string; coordinates?: number[][][] };
+  const remainderFeatures = remainderRows.map((row) => JSON.parse(row.geojson ?? "") as { type?: string; coordinates?: number[][][] });
 
-  if (targetFeature.type !== "Polygon" || remainderFeature.type !== "Polygon") {
+  if (targetFeature.type !== "Polygon" || remainderFeatures.some((feature) => feature.type !== "Polygon")) {
     throw new Error("The split produced an unsupported shape. Try a simpler 2-point line.");
   }
 
@@ -2636,7 +2656,7 @@ async function splitBlockBoundaryIntoZoneCoordinates(
 
   return {
     targetCoordinates: toCoordinates(targetFeature.coordinates ?? []),
-    remainderCoordinates: toCoordinates(remainderFeature.coordinates ?? [])
+    remainderCoordinates: remainderFeatures.map((feature) => toCoordinates(feature.coordinates ?? []))
   };
 }
 

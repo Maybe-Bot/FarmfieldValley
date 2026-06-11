@@ -423,6 +423,18 @@ textarea {
   box-shadow: var(--card-shadow);
 }
 
+.card::after {
+  content: attr(data-card-marker);
+  display: block;
+  margin-top: 0.7rem;
+  font-size: 0.66rem;
+  line-height: 1;
+  color: var(--app-muted);
+  opacity: 0.42;
+  text-align: right;
+  letter-spacing: 0;
+}
+
 .card.small {
   font-size: 0.95rem;
 }
@@ -877,6 +889,12 @@ textarea {
 
 .form-grid label.inline-checkbox {
   display: flex;
+}
+
+.checkbox-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(9rem, 1fr));
+  gap: 0.15rem 0.75rem;
 }
 
 .bed-making-mode-toggle {

@@ -26,8 +26,14 @@ export const taskAnchors: TaskAnchor[] = [
 export type TaskType =
   | "seed_in_tray"
   | "direct_seed"
-  | "bed_prep"
+  | "till"
+  | "fertilizing_spraying"
+  | "bed_making"
   | "transplant"
+  | "cultivation"
+  | "cleanup"
+  | "cover_crop"
+  | "bed_prep"
   | "cultivate"
   | "weed"
   | "mow"
@@ -39,8 +45,14 @@ export type TaskType =
 export const taskTypes: TaskType[] = [
   "seed_in_tray",
   "direct_seed",
-  "bed_prep",
+  "till",
+  "fertilizing_spraying",
+  "bed_making",
   "transplant",
+  "cultivation",
+  "cleanup",
+  "cover_crop",
+  "bed_prep",
   "cultivate",
   "weed",
   "mow",

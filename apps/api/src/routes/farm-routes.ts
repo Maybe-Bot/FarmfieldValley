@@ -33,6 +33,7 @@ import {
   taskFlowUpdateSchema,
   taskRecordSchema,
   tractorProfileSchema,
+  unplannedWorkSchema,
   zoneActualStateSchema
 } from "../schemas";
 
@@ -1296,6 +1297,8 @@ app.post("/api/blocks/:id/split-zone", requireRole("planner"), asyncHandler(asyn
     const { targetCoordinates, remainderCoordinates } = await splitBlockBoundaryIntoZoneCoordinates(client, {
       blockId,
       lineCoordinates: body.lineCoordinates,
+      splitLines: body.splitLines,
+      firstBedSidePoint: body.firstBedSidePoint,
       useLargerSide: body.useLargerSide
     });
 
@@ -1314,17 +1317,19 @@ app.post("/api/blocks/:id/split-zone", requireRole("planner"), asyncHandler(asyn
       notes: body.notes ?? null,
       coordinates: targetCoordinates
     });
-    await upsertBlockZoneGeometry(client, {
-      blockId,
-      farmId: auth.farmId,
-      name: `Area ${existingZoneCount + 2}`,
-      plannedUse: null,
-      actualState: body.actualState,
-      plannedCoverCropSeedDate: null,
-      plannedCoverCropTerminateDate: null,
-      notes: null,
-      coordinates: remainderCoordinates
-    });
+    for (const [index, coordinates] of remainderCoordinates.entries()) {
+      await upsertBlockZoneGeometry(client, {
+        blockId,
+        farmId: auth.farmId,
+        name: `Area ${existingZoneCount + 2 + index}`,
+        plannedUse: null,
+        actualState: body.actualState,
+        plannedCoverCropSeedDate: null,
+        plannedCoverCropTerminateDate: null,
+        notes: null,
+        coordinates
+      });
+    }
     await pruneUndoSnapshots(client, auth);
     await client.query("commit");
     res.status(201).json(primaryZone);
@@ -1491,6 +1496,217 @@ app.put("/api/block-zones/:id/cover-crop-work", requireRole(), asyncHandler(asyn
   } finally {
     client.release();
   }
+}));
+
+app.post("/api/work-events/unplanned", requireRole("worker"), asyncHandler(async (req, res) => {
+  const body = unplannedWorkSchema.parse(req.body);
+  const auth = currentAuth(req) as AuthContext;
+
+  if (body.eventDate > todayIsoDate()) {
+    throw new Error("Work date cannot be in the future");
+  }
+
+  const result = await runWithUndoSnapshot(auth, "Record unplanned work", async (client) => {
+    let fieldId = body.fieldId ?? null;
+    let blockId = body.blockId ?? null;
+    let zoneId = body.zoneId ?? null;
+    let bedId = body.bedId ?? null;
+    let locationName = "selected area";
+    let coordinates: LatLngInput[] | null = null;
+
+    if (bedId != null) {
+      await ensureBedInFarm(client, bedId, auth.farmId);
+      const bedResult = await client.query<{
+        id: number;
+        name: string;
+        block_id: number;
+        block_name: string;
+        field_id: number;
+        boundary: GeoJsonPolygonInput;
+      }>(
+        `
+          select
+            bed.id,
+            bed.name,
+            bed.block_id,
+            block.name as block_name,
+            field.id as field_id,
+            ST_AsGeoJSON(coalesce(bed.boundary, ST_Transform(bed.geom, 4326)))::json as boundary
+          from beds bed
+          join blocks block on block.id = bed.block_id
+          join fields field on field.id = block.field_id
+          where bed.id = $1
+        `,
+        [bedId]
+      );
+      const bed = bedResult.rows[0];
+      if (!bed) {
+        throw new Error("Bed not found");
+      }
+      blockId = bed.block_id;
+      fieldId = bed.field_id;
+      locationName = `${bed.name} in ${bed.block_name}`;
+      coordinates = geoJsonPolygonToLatLngs(bed.boundary);
+    } else if (zoneId != null) {
+      await ensureBlockZoneInFarm(client, zoneId, auth.farmId);
+      const zoneResult = await client.query<{
+        id: number;
+        name: string;
+        block_id: number;
+        block_name: string;
+        field_id: number;
+        boundary: GeoJsonPolygonInput;
+      }>(
+        `
+          select
+            zone.id,
+            zone.name,
+            zone.block_id,
+            block.name as block_name,
+            field.id as field_id,
+            ST_AsGeoJSON(zone.boundary)::json as boundary
+          from block_zones zone
+          join blocks block on block.id = zone.block_id
+          join fields field on field.id = block.field_id
+          where zone.id = $1
+        `,
+        [zoneId]
+      );
+      const zone = zoneResult.rows[0];
+      if (!zone) {
+        throw new Error("Block area not found");
+      }
+      blockId = zone.block_id;
+      fieldId = zone.field_id;
+      locationName = `${zone.name} in ${zone.block_name}`;
+      coordinates = geoJsonPolygonToLatLngs(zone.boundary);
+    } else if (blockId != null) {
+      await ensureBlockInFarm(client, blockId, auth.farmId);
+      const blockResult = await client.query<{
+        id: number;
+        name: string;
+        field_id: number;
+        boundary: GeoJsonPolygonInput;
+      }>(
+        `
+          select
+            block.id,
+            block.name,
+            field.id as field_id,
+            ST_AsGeoJSON(block.boundary)::json as boundary
+          from blocks block
+          join fields field on field.id = block.field_id
+          where block.id = $1
+        `,
+        [blockId]
+      );
+      const block = blockResult.rows[0];
+      if (!block) {
+        throw new Error("Block not found");
+      }
+      fieldId = block.field_id;
+      locationName = block.name;
+      coordinates = geoJsonPolygonToLatLngs(block.boundary);
+    } else if (fieldId != null) {
+      await ensureFieldInFarm(client, fieldId, auth.farmId);
+      const fieldResult = await client.query<{
+        id: number;
+        name: string;
+        boundary: GeoJsonPolygonInput;
+      }>(
+        `
+          select
+            id,
+            name,
+            ST_AsGeoJSON(boundary)::json as boundary
+          from fields
+          where id = $1
+        `,
+        [fieldId]
+      );
+      const field = fieldResult.rows[0];
+      if (!field) {
+        throw new Error("Field not found");
+      }
+      locationName = field.name;
+      coordinates = geoJsonPolygonToLatLngs(field.boundary);
+    }
+
+    const transplantBedIds = [...new Set(body.transplantBedIds ?? [])];
+    const cultivationBedIds = [...new Set(body.cultivationBedIds ?? [])];
+    const workBedIds = [...new Set([...transplantBedIds, ...cultivationBedIds])];
+    if (workBedIds.length > 0) {
+      const bedsResult = await client.query<{
+        id: number;
+        block_id: number;
+        field_id: number;
+      }>(
+        `
+          select bed.id, bed.block_id, field.id as field_id
+          from beds bed
+          join blocks block on block.id = bed.block_id
+          join fields field on field.id = block.field_id
+          where bed.id = any($1::int[]) and field.farm_id = $2 and bed.source <> 'road'
+        `,
+        [workBedIds, auth.farmId]
+      );
+      if (bedsResult.rows.length !== workBedIds.length) {
+        throw new Error("One or more selected work beds are not valid for this farm.");
+      }
+      const firstBed = bedsResult.rows[0];
+      if (firstBed) {
+        blockId = blockId ?? firstBed.block_id;
+        fieldId = fieldId ?? firstBed.field_id;
+      }
+    }
+    if (body.transplantPlantingId != null) {
+      await ensurePlantingInFarm(client, body.transplantPlantingId, auth.farmId);
+    }
+
+    const workType = body.workType.trim();
+    const title = body.title?.trim() || `${workType} at ${locationName}`;
+    const metadata = {
+      timelineVisible: true,
+      source: "unplanned_work",
+      workType,
+      taskType: body.taskType?.trim() || null,
+      workSubcategory: body.workSubcategory?.trim() || null,
+      bedMakingBedCount: body.bedMakingBedCount ?? null,
+      bedMakingBlockFull: body.bedMakingBlockFull ?? null,
+      bedMakingBedCover: body.bedMakingBedCover ?? null,
+      applicationRateUsed: body.applicationRateUsed ?? null,
+      applicationAmountUsed: body.applicationAmountUsed ?? null,
+      applicationProduct: body.applicationProduct?.trim() || null,
+      applicationUnit: body.applicationUnit?.trim() || null,
+      applicationAreaSqM: body.applicationAreaSqM ?? null,
+      transplantPlantingId: body.transplantPlantingId ?? null,
+      transplantCrop: body.transplantCrop?.trim() || null,
+      transplantVariety: body.transplantVariety?.trim() || null,
+      transplantPlantCount: body.transplantPlantCount ?? null,
+      transplantTrayCount: body.transplantTrayCount ?? null,
+      transplantInRowSpacing: body.transplantInRowSpacing ?? null,
+      transplantRowsPerBed: body.transplantRowsPerBed ?? null,
+      transplantBedIds,
+      cultivationBedIds
+    };
+    await recordFarmEvent(client, {
+      farmId: auth.farmId,
+      eventDate: body.eventDate,
+      eventType: "unplanned_work",
+      title,
+      notes: body.notes?.trim() || null,
+      metadata,
+      fieldId,
+      blockId,
+      zoneId,
+      bedId,
+      coordinates
+    });
+
+    return { ok: true };
+  });
+
+  res.status(201).json(result);
 }));
 
 app.delete("/api/block-zones/:id", requireRole("planner"), asyncHandler(async (req, res) => {
@@ -2402,7 +2618,7 @@ app.post("/api/tasks/:id/record", requireRole("worker"), asyncHandler(async (req
       if (auth.role !== "planner") {
         throw new Error("Planner access required for bed-making adjustments");
       }
-      if (task.task_type !== "bed_prep") {
+      if (task.task_type !== "bed_prep" && task.task_type !== "bed_making") {
         throw new Error("Bed counts can only be recorded on bed-making tasks.");
       }
 
@@ -2674,13 +2890,13 @@ app.post("/api/tasks/:id/record", requireRole("worker"), asyncHandler(async (req
               farm_id, bed_id, task_type, title, status, anchor, offset_days,
               scheduled_date, notes, is_auto_generated, icon_color, icon_secondary_color
             )
-            select $1, $2, 'bed_prep', $3, 'pending', null, null, null, $4, true, '#8b6f43', '#f4c430'
+            select $1, $2, 'bed_making', $3, 'pending', null, null, null, $4, true, '#8b6f43', '#f4c430'
             where not exists (
               select 1
               from tasks
               where farm_id = $1
                 and planting_id is null
-                and task_type = 'bed_prep'
+                and task_type in ('bed_prep', 'bed_making')
                 and status <> 'done'
                 and title = $3
             )
@@ -2721,7 +2937,7 @@ app.post("/api/tasks/:id/record", requireRole("worker"), asyncHandler(async (req
             left join beds intended_bed on intended_bed.id = planting.intended_bed_id
             where related_task.farm_id = $1
               and related_task.id <> $2
-              and related_task.task_type = 'bed_prep'
+              and related_task.task_type in ('bed_prep', 'bed_making')
               and related_task.status <> 'done'
               and related_task.planting_id = planting.id
               and (

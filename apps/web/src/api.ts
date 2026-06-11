@@ -171,6 +171,7 @@ export const api = {
   updatePlanting: (id: number, body: unknown) => request(`/api/plantings/${id}`, { method: "PUT", body: JSON.stringify(body) }),
   deletePlanting: (id: number) => request(`/api/plantings/${id}`, { method: "DELETE" }),
   recordTask: (taskId: number, body: unknown) => request(`/api/tasks/${taskId}/record`, { method: "POST", body: JSON.stringify(body) }),
+  recordUnplannedWork: (body: unknown) => request<{ ok: boolean }>("/api/work-events/unplanned", { method: "POST", body: JSON.stringify(body) }),
   addPlacement: (plantingId: number, body: unknown) => request(`/api/plantings/${plantingId}/placements`, { method: "POST", body: JSON.stringify(body) }),
   recordActual: (plantingId: number, body: unknown) => request(`/api/plantings/${plantingId}/actuals`, { method: "POST", body: JSON.stringify(body) }),
   createHarvest: (body: unknown) => request("/api/harvests", { method: "POST", body: JSON.stringify(body) })

@@ -5,15 +5,13 @@ import { Task } from "./types";
 export const taskTypeOptions = [
   "seed_in_tray",
   "direct_seed",
-  "bed_prep",
+  "till",
+  "fertilizing_spraying",
+  "bed_making",
   "transplant",
-  "cultivate",
-  "weed",
-  "mow",
-  "thin",
-  "harvest",
-  "finish_crop",
-  "irrigation_check"
+  "cultivation",
+  "cleanup",
+  "cover_crop"
 ] as const;
 
 export const taskAnchorOptions = [
@@ -30,8 +28,28 @@ function sentenceCase(input: string) {
   return input.replaceAll("_", " ");
 }
 
+const taskTypeLabels: Record<string, string> = {
+  seed_in_tray: "seed in tray",
+  direct_seed: "direct seed",
+  till: "till",
+  fertilizing_spraying: "fertilizing / spraying",
+  bed_making: "bed making",
+  transplant: "transplanting",
+  cultivation: "cultivation",
+  cleanup: "cleanup",
+  cover_crop: "covercrop",
+  bed_prep: "bed making",
+  cultivate: "cultivation",
+  weed: "weed",
+  mow: "mow",
+  thin: "thin",
+  harvest: "harvest",
+  finish_crop: "finish crop",
+  irrigation_check: "irrigation check"
+};
+
 export function formatTaskTypeLabel(taskType: string) {
-  return sentenceCase(taskType);
+  return taskTypeLabels[taskType] ?? sentenceCase(taskType);
 }
 
 export function formatTaskAnchorLabel(anchor: string) {
@@ -43,11 +61,13 @@ export function formatTaskAnchorLabel(anchor: string) {
 }
 
 export function taskIconColor(taskType: string) {
-  if (taskType === "cultivate" || taskType === "weed" || taskType === "mow") return "#d98c2b";
+  if (taskType === "cultivation" || taskType === "cultivate" || taskType === "weed" || taskType === "mow") return "#d98c2b";
   if (taskType === "transplant") return "#4f9b58";
   if (taskType === "direct_seed" || taskType === "seed_in_tray") return "#7c9f35";
   if (taskType === "harvest") return "#c6503f";
-  if (taskType === "bed_prep") return "#8b6f43";
+  if (taskType === "bed_making" || taskType === "bed_prep" || taskType === "till") return "#8b6f43";
+  if (taskType === "fertilizing_spraying") return "#5f8f4f";
+  if (taskType === "cleanup" || taskType === "cover_crop") return "#6d7f45";
   return "#4f84aa";
 }
 
