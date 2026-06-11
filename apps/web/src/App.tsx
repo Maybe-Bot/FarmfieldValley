@@ -3231,6 +3231,36 @@ function App() {
     }
     selectMapObject({ type: "field", id: field.id });
   }
+
+  function pointIsInSelectedBlock(point: CoordinateDraft) {
+    return Boolean(
+      selectedBlockContext
+      && pointIsInsideOrOnPolygon(point, geoJsonPolygonToLatLngs(selectedBlockContext.boundary))
+    );
+  }
+
+  function addBedLinePoint(point: CoordinateDraft) {
+    setBedLineCoordinates((current) => {
+      const maxPoints = bedLineMode === "straight" ? 2 : 12;
+      if (current.length >= maxPoints) {
+        setMapNotice("Bed line already has the maximum number of points. Generate or Cancel.");
+        return current;
+      }
+      return [...current, point];
+    });
+    setMapNotice(null);
+  }
+
+  function addZoneSplitPoint(point: CoordinateDraft) {
+    setZoneSplitCoordinates((current) => {
+      if (current.length >= 2) {
+        setMapNotice("Two section lines are already placed. Drag a line to move it, Save, or Cancel.");
+        return current;
+      }
+      return [...current, point];
+    });
+    setMapNotice(null);
+  }
   function findSuggestedTaskForBed(bed: Bed) {
     const bedPlantingIds = new Set(
       data.plantings
@@ -5465,25 +5495,15 @@ function App() {
                     mode={mapMode}
                     onAddPoint={(point) => {
                       if (mapMode === "draw_bed_line") {
-                        setBedLineCoordinates((current) => {
-                          const maxPoints = bedLineMode === "straight" ? 2 : 12;
-                          if (current.length >= maxPoints) {
-                            setMapNotice("Bed line already has the maximum number of points. Generate or Cancel.");
-                            return current;
-                          }
-                          return [...current, point];
-                        });
+                        if (pointIsInSelectedBlock(point)) {
+                          addBedLinePoint(point);
+                        }
                         return;
                       }
                       if (mapMode === "draw_zone_split") {
-                        setZoneSplitCoordinates((current) => {
-                          if (current.length >= 2) {
-                            setMapNotice("Two section lines are already placed. Drag a line to move it, Save, or Cancel.");
-                            return current;
-                          }
-                          return [...current, point];
-                        });
-                        setMapNotice(null);
+                        if (pointIsInSelectedBlock(point)) {
+                          addZoneSplitPoint(point);
+                        }
                         return;
                       }
                       setDraftCoordinates((current) => {
@@ -5533,8 +5553,24 @@ function App() {
                               return [...current, { lat: event.latlng.lat, lng: event.latlng.lng }];
                             });
                             setMapNotice(null);
-                          return;
-                        }
+                            return;
+                          }
+                          const point = { lat: event.latlng.lat, lng: event.latlng.lng };
+                          if (mapMode === "draw_bed_line") {
+                            if (pointIsInSelectedBlock(point)) {
+                              addBedLinePoint(point);
+                            }
+                            return;
+                          }
+                          if (mapMode === "draw_zone_split") {
+                            if (pointIsInSelectedBlock(point)) {
+                              addZoneSplitPoint(point);
+                            }
+                            return;
+                          }
+                          if (isPointSelectionMapMode(mapMode)) {
+                            return;
+                          }
 
                           runMapSelectClick(() => selectMapObject({ type: "field", id: field.id }));
                         },
@@ -5570,15 +5606,7 @@ function App() {
                             return;
                           }
                           if (mapMode === "draw_bed_line" && selectedBlockContext?.id === block.id) {
-                            setBedLineCoordinates((current) => {
-                              const maxPoints = bedLineMode === "straight" ? 2 : 12;
-                              if (current.length >= maxPoints) {
-                                setMapNotice("Bed line already has the maximum number of points. Generate or Cancel.");
-                                return current;
-                              }
-                              return [...current, { lat: event.latlng.lat, lng: event.latlng.lng }];
-                            });
-                            setMapNotice(null);
+                            addBedLinePoint({ lat: event.latlng.lat, lng: event.latlng.lng });
                             return;
                           }
                           if (mapMode === "draw_zone" && selectedBlockContext?.id === block.id) {
@@ -5593,14 +5621,10 @@ function App() {
                             return;
                           }
                           if (mapMode === "draw_zone_split" && selectedBlockContext?.id === block.id) {
-                            setZoneSplitCoordinates((current) => {
-                              if (current.length >= 2) {
-                                setMapNotice("Two section lines are already placed. Drag a line to move it, Save, or Cancel.");
-                                return current;
-                              }
-                              return [...current, { lat: event.latlng.lat, lng: event.latlng.lng }];
-                            });
-                            setMapNotice(null);
+                            addZoneSplitPoint({ lat: event.latlng.lat, lng: event.latlng.lng });
+                            return;
+                          }
+                          if (isPointSelectionMapMode(mapMode)) {
                             return;
                           }
                           if (mapMode === "bed_tools" && ownBeds.some((bed) => bed.blockId === block.id && bed.source !== "road")) {
@@ -5645,26 +5669,14 @@ function App() {
                             return;
                           }
                           if (mapMode === "draw_bed_line" && selectedBlockContext?.id === zone.blockId) {
-                            setBedLineCoordinates((current) => {
-                              const maxPoints = bedLineMode === "straight" ? 2 : 12;
-                              if (current.length >= maxPoints) {
-                                setMapNotice("Bed line already has the maximum number of points. Generate or Cancel.");
-                                return current;
-                              }
-                              return [...current, { lat: event.latlng.lat, lng: event.latlng.lng }];
-                            });
-                            setMapNotice(null);
+                            addBedLinePoint({ lat: event.latlng.lat, lng: event.latlng.lng });
                             return;
                           }
                           if (mapMode === "draw_zone_split" && selectedBlockContext?.id === zone.blockId) {
-                            setZoneSplitCoordinates((current) => {
-                              if (current.length >= 2) {
-                                setMapNotice("Two section lines are already placed. Drag a line to move it, Save, or Cancel.");
-                                return current;
-                              }
-                              return [...current, { lat: event.latlng.lat, lng: event.latlng.lng }];
-                            });
-                            setMapNotice(null);
+                            addZoneSplitPoint({ lat: event.latlng.lat, lng: event.latlng.lng });
+                            return;
+                          }
+                          if (isPointSelectionMapMode(mapMode)) {
                             return;
                           }
                           runMapSelectClick(() => selectMapObject({ type: "zone", id: zone.id }, zone.blockId));
@@ -5705,15 +5717,14 @@ function App() {
                             return;
                           }
                           if (mapMode === "draw_bed_line" && selectedBlockContext?.id === bed.blockId) {
-                            setBedLineCoordinates((current) => {
-                              const maxPoints = bedLineMode === "straight" ? 2 : 12;
-                              if (current.length >= maxPoints) {
-                                setMapNotice("Bed line already has the maximum number of points. Generate or Cancel.");
-                                return current;
-                              }
-                              return [...current, { lat: event.latlng.lat, lng: event.latlng.lng }];
-                            });
-                            setMapNotice(null);
+                            addBedLinePoint({ lat: event.latlng.lat, lng: event.latlng.lng });
+                            return;
+                          }
+                          if (mapMode === "draw_zone_split" && selectedBlockContext?.id === bed.blockId) {
+                            addZoneSplitPoint({ lat: event.latlng.lat, lng: event.latlng.lng });
+                            return;
+                          }
+                          if (isPointSelectionMapMode(mapMode)) {
                             return;
                           }
                           const originalEvent = event.originalEvent as MouseEvent | undefined;
@@ -5744,12 +5755,12 @@ function App() {
                     <Polygon
                       key={`planned-overlay-${bed.id}`}
                       positions={positions}
-                      interactive={mapWorkflowMode === "field_work" && mapMode !== "pick_bed_edge"}
+                      interactive={mapWorkflowMode === "field_work" && !isPointSelectionMapMode(mapMode)}
                       bubblingMouseEvents={false}
-                      pathOptions={plantingOverlayStyleForColor(plantingColor, mapWorkflowMode === "field_work" ? "map-work-select-path" : undefined)}
+                      pathOptions={plantingOverlayStyleForColor(plantingColor, mapWorkflowMode === "field_work" && !isPointSelectionMapMode(mapMode) ? "map-work-select-path" : undefined)}
                       eventHandlers={{
                         click: () => {
-                          if (mapWorkflowMode !== "field_work" || mapMode === "pick_bed_edge") {
+                          if (mapWorkflowMode !== "field_work" || isPointSelectionMapMode(mapMode)) {
                             return;
                           }
                           const planting = planned[0] ?? null;
@@ -5777,7 +5788,7 @@ function App() {
                     <Polygon
                       key={overlay.key}
                       positions={positions}
-                      interactive={mapWorkflowMode === "field_work" && mapMode !== "pick_bed_edge"}
+                      interactive={mapWorkflowMode === "field_work" && !isPointSelectionMapMode(mapMode)}
                       bubblingMouseEvents={false}
                       pathOptions={overlay.isGap ? {
                         color: "#84776b",
@@ -5785,11 +5796,11 @@ function App() {
                         fillOpacity: 0.42,
                         weight: 1.5,
                         dashArray: "5 4",
-                        className: mapWorkflowMode === "field_work" ? "map-work-select-path" : undefined
-                      } : plantingOverlayStyleForColor(overlay.color, mapWorkflowMode === "field_work" ? "map-work-select-path" : undefined)}
+                        className: mapWorkflowMode === "field_work" && !isPointSelectionMapMode(mapMode) ? "map-work-select-path" : undefined
+                      } : plantingOverlayStyleForColor(overlay.color, mapWorkflowMode === "field_work" && !isPointSelectionMapMode(mapMode) ? "map-work-select-path" : undefined)}
                       eventHandlers={{
                         click: () => {
-                          if (mapWorkflowMode !== "field_work" || mapMode === "pick_bed_edge") {
+                          if (mapWorkflowMode !== "field_work" || isPointSelectionMapMode(mapMode)) {
                             return;
                           }
                           const bed = bedsById.get(overlay.bedId) ?? null;
@@ -5815,7 +5826,7 @@ function App() {
                     <Polygon
                       key={overlay.key}
                       positions={positions}
-                      interactive={mapWorkflowMode === "field_work" && mapMode !== "pick_bed_edge"}
+                      interactive={mapWorkflowMode === "field_work" && !isPointSelectionMapMode(mapMode)}
                       bubblingMouseEvents={false}
                       pathOptions={overlay.isGap ? {
                         color: "#84776b",
@@ -5823,11 +5834,11 @@ function App() {
                         fillOpacity: 0.42,
                         weight: 1.5,
                         dashArray: "5 4",
-                        className: mapWorkflowMode === "field_work" ? "map-work-select-path" : undefined
-                      } : plantingOverlayStyleForColor(overlay.color, mapWorkflowMode === "field_work" ? "map-work-select-path" : undefined)}
+                        className: mapWorkflowMode === "field_work" && !isPointSelectionMapMode(mapMode) ? "map-work-select-path" : undefined
+                      } : plantingOverlayStyleForColor(overlay.color, mapWorkflowMode === "field_work" && !isPointSelectionMapMode(mapMode) ? "map-work-select-path" : undefined)}
                       eventHandlers={{
                         click: () => {
-                          if (mapWorkflowMode !== "field_work" || mapMode === "pick_bed_edge") {
+                          if (mapWorkflowMode !== "field_work" || isPointSelectionMapMode(mapMode)) {
                             return;
                           }
                           const bed = bedsById.get(overlay.bedId) ?? null;
@@ -5853,12 +5864,12 @@ function App() {
                     <Polygon
                       key={`placement-overlay-${overlay.key}`}
                       positions={positions}
-                      interactive={mapWorkflowMode === "field_work" && mapMode !== "pick_bed_edge"}
+                      interactive={mapWorkflowMode === "field_work" && !isPointSelectionMapMode(mapMode)}
                       bubblingMouseEvents={false}
-                      pathOptions={plantingOverlayStyleForColor(overlay.color, mapWorkflowMode === "field_work" ? "map-work-select-path" : undefined)}
+                      pathOptions={plantingOverlayStyleForColor(overlay.color, mapWorkflowMode === "field_work" && !isPointSelectionMapMode(mapMode) ? "map-work-select-path" : undefined)}
                       eventHandlers={{
                         click: () => {
-                          if (mapWorkflowMode !== "field_work" || mapMode === "pick_bed_edge") {
+                          if (mapWorkflowMode !== "field_work" || isPointSelectionMapMode(mapMode)) {
                             return;
                           }
                           const bed = bedsById.get(overlay.bedId) ?? null;
@@ -5935,10 +5946,10 @@ function App() {
                     key={key}
                     position={[center.lat, center.lng]}
                     icon={taskMapIcon(task.taskType, taskColor(task), task.iconSecondaryColor, bearing, runDistancePx, task.tractorModel, mapTaskSpriteSheetUrls.get(task.id), runDurationSec, animationDelaySec)}
-                    interactive={mapMode !== "pick_bed_edge"}
+                    interactive={!isPointSelectionMapMode(mapMode)}
                     eventHandlers={{
                       click: () => {
-                        if (mapMode === "pick_bed_edge") {
+                        if (isPointSelectionMapMode(mapMode)) {
                           return;
                         }
                         openTaskRecordFromMap(task);
@@ -10040,13 +10051,30 @@ const defaultWorkSubcategories: Record<string, string[]> = {
   "Fertilizing / spraying": ["Fertilizer", "Pesticide"],
   "Bed making": ["Shape beds"],
   Cultivation: ["Cultivate"],
-  Cleanup: ["Mow", "Remove crop"]
+  Cleanup: ["Mow", "Remove crop"],
+  Covercrop: ["Cover crop seed"]
 };
 
 const defaultApplicationProducts: Record<string, string[]> = {
   Fertilizer: ["Compost", "Lime"],
-  Pesticide: []
+  Pesticide: [],
+  "Cover crop seed": []
 };
+
+function workDetailLabel(workType: string) {
+  if (workType === "Covercrop") return "Seed";
+  if (workType === "Seed in tray" || workType === "Direct seed") return "Method";
+  if (workType === "Till") return "Tool";
+  if (workType === "Fertilizing / spraying") return "Application type";
+  if (workType === "Bed making") return "Bed work";
+  if (workType === "Cultivation") return "Cultivation type";
+  if (workType === "Cleanup") return "Cleanup type";
+  return "Work type";
+}
+
+function lowerFirst(value: string) {
+  return value ? `${value.charAt(0).toLowerCase()}${value.slice(1)}` : value;
+}
 
 function readWorkOptionStore(): WorkOptionStore {
   if (typeof window === "undefined") {
@@ -10282,7 +10310,7 @@ function UnplannedWorkCard({
     events
   }), [bed, block, blockBeds, events, placements, zone]);
   const cardTitle = "Record Work (unplanned)";
-  const showSubcategoryFields = workType !== "Transplanting" && workType !== "Covercrop";
+  const showSubcategoryFields = workType !== "Transplanting";
   const subcategoryOptions = uniqueWorkOptions([
     ...(defaultWorkSubcategories[workType] ?? []),
     ...(workOptionStore.subcategories?.[workType] ?? [])
@@ -10302,11 +10330,12 @@ function UnplannedWorkCard({
   const finalWorkType = workType;
   const finalTaskType = workTypeTaskTypes[workType] ?? null;
   const showSectionTools = ["Till", "Fertilizing / spraying", "Cleanup", "Covercrop"].includes(workType) && block != null;
-  const showApplicationFields = workType === "Fertilizing / spraying";
+  const showApplicationFields = workType === "Fertilizing / spraying" || workType === "Covercrop";
   const showBedMakingFields = workType === "Bed making";
   const showTransplantFields = workType === "Transplanting";
   const showCultivationFields = workType === "Cultivation";
   const selectedBedMakingPreset = bedMakingPresets.find((preset) => String(preset.id) === bedMakingPresetId) ?? bedMakingPresets[0] ?? null;
+  const detailLabel = workDetailLabel(workType);
   const bedMakingMinLinePoints = bedLineMode === "straight" ? 2 : 3;
   const bedMakingMaxLinePoints = bedLineMode === "straight" ? 2 : 12;
   const bedMakingCountNumber = Number(bedMakingCount);
@@ -10322,6 +10351,7 @@ function UnplannedWorkCard({
   const selectedAreaSqM = pendingWorkAreaSqM ?? toNumericValue(bed?.areaSqM ?? zone?.areaSqM ?? block?.areaSqM ?? field?.areaSqM ?? null);
   const selectedAreaAcres = selectedAreaSqM == null ? null : selectedAreaSqM / 4046.8564224;
   const applicationUnitLabel = applicationUnit.trim() || "units";
+  const applicationProductLabel = workType === "Covercrop" ? "Seed used" : "Product used";
   const selectedTransplantPlanting = transplantPlantingId
     ? plantings.find((planting) => String(planting.id) === transplantPlantingId) ?? null
     : null;
@@ -10506,11 +10536,11 @@ function UnplannedWorkCard({
       return;
     }
     if (showSubcategoryFields && !resolvedWorkSubcategory) {
-      setStatus("Choose or add the subcategory.");
+      setStatus(`Choose or add the ${lowerFirst(detailLabel)}.`);
       return;
     }
     if (showApplicationFields && !resolvedApplicationProduct) {
-      setStatus("Choose or add the product used.");
+      setStatus(workType === "Covercrop" ? "Choose or add the seed used." : "Choose or add the product used.");
       return;
     }
     if (showBedMakingFields && !block) {
@@ -10713,7 +10743,7 @@ function UnplannedWorkCard({
         </label>
         {showSubcategoryFields && (
           <label>
-            <span>Subcategory</span>
+            <span>{detailLabel}</span>
             <select value={workSubcategory} onChange={(event) => setWorkSubcategory(event.target.value)}>
               {subcategoryOptions.map((option) => <option key={option} value={option}>{option}</option>)}
               <option value={ADD_NEW_WORK_OPTION}>Add new...</option>
@@ -10722,15 +10752,15 @@ function UnplannedWorkCard({
         )}
         {showSubcategoryFields && workSubcategory === ADD_NEW_WORK_OPTION && (
           <label className="full-span">
-            <span>New subcategory</span>
+            <span>New {lowerFirst(detailLabel)}</span>
             <input value={customWorkSubcategory} onChange={(event) => setCustomWorkSubcategory(event.target.value)} maxLength={80} required />
           </label>
         )}
         {showApplicationFields && (
           <label className="full-span">
-            <span>Product used</span>
+            <span>{applicationProductLabel}</span>
             <select value={applicationProduct} onChange={(event) => setApplicationProduct(event.target.value)}>
-              {applicationProductOptions.length === 0 && <option value="">Choose product</option>}
+              {applicationProductOptions.length === 0 && <option value="">Choose {workType === "Covercrop" ? "seed" : "product"}</option>}
               {applicationProductOptions.map((option) => <option key={option} value={option}>{option}</option>)}
               <option value={ADD_NEW_WORK_OPTION}>Add new...</option>
             </select>
@@ -10738,7 +10768,7 @@ function UnplannedWorkCard({
         )}
         {showApplicationFields && applicationProduct === ADD_NEW_WORK_OPTION && (
           <label className="full-span">
-            <span>New product</span>
+            <span>New {workType === "Covercrop" ? "seed" : "product"}</span>
             <input value={customApplicationProduct} onChange={(event) => setCustomApplicationProduct(event.target.value)} maxLength={120} required />
           </label>
         )}
