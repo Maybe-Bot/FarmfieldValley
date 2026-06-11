@@ -1340,6 +1340,140 @@ function bedParallelSplitLinesForBlock(block: Block | null, beds: Bed[], anchors
     .filter((line) => line.length === 2);
 }
 
+type ProjectedPoint = ReturnType<typeof projectForEdgePicking>;
+
+function projectedLineSide(line: ProjectedPoint[], point: ProjectedPoint) {
+  if (line.length < 2) {
+    return 0;
+  }
+  const start = line[0];
+  const end = line[line.length - 1];
+  return (end.x - start.x) * (point.y - start.y) - (end.y - start.y) * (point.x - start.x);
+}
+
+function projectedLineIntersection(
+  lineStart: ProjectedPoint,
+  lineEnd: ProjectedPoint,
+  segmentStart: ProjectedPoint,
+  segmentEnd: ProjectedPoint
+) {
+  const lineDx = lineEnd.x - lineStart.x;
+  const lineDy = lineEnd.y - lineStart.y;
+  const segmentDx = segmentEnd.x - segmentStart.x;
+  const segmentDy = segmentEnd.y - segmentStart.y;
+  const denominator = lineDx * segmentDy - lineDy * segmentDx;
+  if (Math.abs(denominator) < 0.000001) {
+    return null;
+  }
+  const t = ((segmentStart.x - lineStart.x) * segmentDy - (segmentStart.y - lineStart.y) * segmentDx) / denominator;
+  return {
+    x: lineStart.x + t * lineDx,
+    y: lineStart.y + t * lineDy
+  };
+}
+
+function clipProjectedPolygonToLineSide(polygon: ProjectedPoint[], line: ProjectedPoint[], keepSign: number) {
+  if (polygon.length < 3 || line.length < 2 || keepSign === 0) {
+    return polygon;
+  }
+
+  const output: ProjectedPoint[] = [];
+  const inside = (point: ProjectedPoint) => projectedLineSide(line, point) * keepSign >= -0.000001;
+
+  for (let index = 0; index < polygon.length; index += 1) {
+    const current = polygon[index];
+    const previous = polygon[(index + polygon.length - 1) % polygon.length];
+    const currentInside = inside(current);
+    const previousInside = inside(previous);
+    const intersection = projectedLineIntersection(line[0], line[line.length - 1], previous, current);
+
+    if (currentInside) {
+      if (!previousInside && intersection) {
+        output.push(intersection);
+      }
+      output.push(current);
+    } else if (previousInside && intersection) {
+      output.push(intersection);
+    }
+  }
+
+  return output;
+}
+
+function clipLineToPolygon(line: CoordinateDraft[], boundary: CoordinateDraft[]) {
+  if (line.length < 2 || boundary.length < 3) {
+    return line;
+  }
+
+  const projectedLine = line.map(projectForEdgePicking);
+  const projectedBoundary = boundary.map(projectForEdgePicking);
+  const intersections: ProjectedPoint[] = [];
+  for (let index = 0; index < projectedBoundary.length; index += 1) {
+    const start = projectedBoundary[index];
+    const end = projectedBoundary[(index + 1) % projectedBoundary.length];
+    const intersection = projectedLineIntersection(projectedLine[0], projectedLine[1], start, end);
+    if (!intersection) {
+      continue;
+    }
+    const segmentDx = end.x - start.x;
+    const segmentDy = end.y - start.y;
+    const segmentLengthSq = segmentDx * segmentDx + segmentDy * segmentDy;
+    const segmentT = segmentLengthSq === 0 ? 0 : ((intersection.x - start.x) * segmentDx + (intersection.y - start.y) * segmentDy) / segmentLengthSq;
+    if (segmentT >= -0.000001 && segmentT <= 1.000001) {
+      const duplicate = intersections.some((point) => Math.hypot(point.x - intersection.x, point.y - intersection.y) < 0.01);
+      if (!duplicate) {
+        intersections.push(intersection);
+      }
+    }
+  }
+
+  if (intersections.length < 2) {
+    return line;
+  }
+
+  const direction = {
+    x: projectedLine[1].x - projectedLine[0].x,
+    y: projectedLine[1].y - projectedLine[0].y
+  };
+  return intersections
+    .sort((left, right) => (
+      ((left.x - projectedLine[0].x) * direction.x + (left.y - projectedLine[0].y) * direction.y)
+      - ((right.x - projectedLine[0].x) * direction.x + (right.y - projectedLine[0].y) * direction.y)
+    ))
+    .slice(0, 2)
+    .map(unprojectFromWebMercator);
+}
+
+function splitAreaPreviewForBlock(
+  block: Block | null,
+  splitLines: CoordinateDraft[][],
+  firstBedSidePoint: CoordinateDraft | null
+) {
+  const boundary = geoJsonPolygonToLatLngs(block?.boundary ?? null);
+  if (boundary.length < 3 || splitLines.length < 1 || splitLines.length > 2 || splitLines.some((line) => line.length < 2)) {
+    return [] as CoordinateDraft[];
+  }
+
+  const projectedBoundary = boundary.map(projectForEdgePicking);
+  const projectedLines = splitLines.map((line) => line.map(projectForEdgePicking));
+  let clippedPolygon = projectedBoundary;
+
+  if (projectedLines.length === 1) {
+    const sidePoint = firstBedSidePoint ?? polygonCenter(boundary);
+    const keepSign = sidePoint ? Math.sign(projectedLineSide(projectedLines[0], projectForEdgePicking(sidePoint))) : 0;
+    clippedPolygon = clipProjectedPolygonToLineSide(clippedPolygon, projectedLines[0], keepSign || 1);
+  } else {
+    const firstLine = projectedLines[0];
+    const secondLine = projectedLines[1];
+    const secondLineAnchorSide = Math.sign(projectedLineSide(firstLine, secondLine[0]));
+    const firstLineAnchorSide = Math.sign(projectedLineSide(secondLine, firstLine[0]));
+    clippedPolygon = clipProjectedPolygonToLineSide(clippedPolygon, firstLine, secondLineAnchorSide || 1);
+    clippedPolygon = clipProjectedPolygonToLineSide(clippedPolygon, secondLine, firstLineAnchorSide || 1);
+  }
+
+  return clippedPolygon.length >= 3 ? clippedPolygon.map(unprojectFromWebMercator) : [];
+}
+
 function summarizeTitles(titles: string[]) {
   const uniqueTitles = [...new Set(titles.filter(Boolean))];
   if (uniqueTitles.length === 0) {
@@ -1902,6 +2036,9 @@ function App() {
   ));
   const [mapMode, setMapMode] = useState<MapMode>("select");
   const [selection, setSelection] = useState<MapSelection>(null);
+  const selectionRef = useRef<MapSelection>(null);
+  const lastBlockSelectionRef = useRef<number | null>(null);
+  const mapSingleClickTimerRef = useRef<ReturnType<typeof window.setTimeout> | null>(null);
   const [mapPlantingBedIds, setMapPlantingBedIds] = useState<number[]>([]);
   const [workBedPickActive, setWorkBedPickActive] = useState(false);
   const [workSelectedBedIds, setWorkSelectedBedIds] = useState<number[]>([]);
@@ -2989,6 +3126,111 @@ function App() {
       : selectedBed
         ? geoJsonPolygonToLatLngs(selectedBed.boundary)
       : [];
+
+  useEffect(() => {
+    selectionRef.current = selection;
+    if (selection?.type === "block") {
+      lastBlockSelectionRef.current = selection.id;
+    }
+    if (selection?.type === "zone") {
+      const selectedZoneForRef = data.blockZones.find((zone) => zone.id === selection.id) ?? null;
+      if (selectedZoneForRef) {
+        lastBlockSelectionRef.current = selectedZoneForRef.blockId;
+      }
+    }
+    if (selection?.type === "bed") {
+      const selectedBedForRef = data.beds.find((bed) => bed.id === selection.id) ?? null;
+      if (selectedBedForRef) {
+        lastBlockSelectionRef.current = selectedBedForRef.blockId;
+      }
+    }
+  }, [data.beds, data.blockZones, selection]);
+
+  useEffect(() => () => {
+    if (mapSingleClickTimerRef.current != null) {
+      window.clearTimeout(mapSingleClickTimerRef.current);
+    }
+  }, []);
+
+  function clearPendingMapSingleClick() {
+    if (mapSingleClickTimerRef.current != null) {
+      window.clearTimeout(mapSingleClickTimerRef.current);
+      mapSingleClickTimerRef.current = null;
+    }
+  }
+
+  function scheduleMapSingleClick(action: () => void) {
+    clearPendingMapSingleClick();
+    mapSingleClickTimerRef.current = window.setTimeout(() => {
+      mapSingleClickTimerRef.current = null;
+      action();
+    }, 220);
+  }
+
+  function selectMapObject(nextSelection: Exclude<MapSelection, null>, blockHintId?: number | null) {
+    selectionRef.current = nextSelection;
+    if (nextSelection.type === "block") {
+      lastBlockSelectionRef.current = nextSelection.id;
+    } else if (blockHintId != null) {
+      lastBlockSelectionRef.current = blockHintId;
+    }
+    setMapPlantingBedIds([]);
+    setSelection(nextSelection);
+    if (mapWorkflowMode === "field_work") {
+      setSelectedTaskId(null);
+      setSelectedPlantingId(null);
+    }
+    setMapNotice(null);
+  }
+
+  function blockAtPointInField(fieldId: number, point: CoordinateDraft) {
+    return data.blocks
+      .filter((block) => block.fieldId === fieldId)
+      .sort((left, right) => left.areaSqM - right.areaSqM)
+      .find((block) => pointIsInsideOrOnPolygon(point, geoJsonPolygonToLatLngs(block.boundary))) ?? null;
+  }
+
+  function runMapSelectClick(action: () => void) {
+    if (mapMode === "select") {
+      scheduleMapSingleClick(action);
+      return;
+    }
+    action();
+  }
+
+  function stopMapDoubleClick(event: { originalEvent?: MouseEvent }) {
+    event.originalEvent?.preventDefault();
+    event.originalEvent?.stopPropagation();
+  }
+
+  function selectBlockFieldCycle(block: Block) {
+    const currentSelection = selectionRef.current;
+    const parentField = data.fields.find((field) => field.id === block.fieldId) ?? null;
+    if (currentSelection?.type === "block" && currentSelection.id === block.id && parentField) {
+      selectMapObject({ type: "field", id: parentField.id });
+      return;
+    }
+    if (currentSelection?.type === "field" && currentSelection.id === block.fieldId) {
+      selectMapObject({ type: "block", id: block.id });
+      return;
+    }
+    selectMapObject({ type: "block", id: block.id });
+  }
+
+  function selectFieldBlockCycle(field: Field, point: CoordinateDraft) {
+    const currentSelection = selectionRef.current;
+    if (currentSelection?.type === "field" && currentSelection.id === field.id) {
+      const lastBlock = lastBlockSelectionRef.current == null
+        ? null
+        : data.blocks.find((block) => block.id === lastBlockSelectionRef.current && block.fieldId === field.id) ?? null;
+      const nextBlock = blockAtPointInField(field.id, point) ?? lastBlock;
+      if (nextBlock) {
+        selectMapObject({ type: "block", id: nextBlock.id });
+      }
+      return;
+    }
+    selectMapObject({ type: "field", id: field.id });
+  }
   function findSuggestedTaskForBed(bed: Bed) {
     const bedPlantingIds = new Set(
       data.plantings
@@ -3116,6 +3358,18 @@ function App() {
     () => firstBedSideReferencePoint(selectedBlockContext, selectedBlockPlantableBeds),
     [selectedBlockContext, selectedBlockPlantableBeds]
   );
+  const zoneSplitPreviewCoordinates = useMemo(
+    () => splitAreaPreviewForBlock(selectedBlockContext, zoneSplitLines, zoneSplitFirstBedSidePoint),
+    [selectedBlockContext, zoneSplitFirstBedSidePoint, zoneSplitLines]
+  );
+  const zoneSplitPreviewAreaSqM = useMemo(
+    () => zoneSplitPreviewCoordinates.length >= 3 ? polygonAreaSqM(zoneSplitPreviewCoordinates) : null,
+    [zoneSplitPreviewCoordinates]
+  );
+  const zoneSplitDisplayLines = useMemo(() => {
+    const boundary = geoJsonPolygonToLatLngs(selectedBlockContext?.boundary ?? null);
+    return zoneSplitLines.map((line) => clipLineToPolygon(line, boundary));
+  }, [selectedBlockContext, zoneSplitLines]);
   useEffect(() => {
     const selectedBlockBedIds = new Set(selectedBlockPlantableBeds.map((bed) => bed.id));
     setWorkSelectedBedIds((current) => current.filter((bedId) => selectedBlockBedIds.has(bedId)));
@@ -5191,6 +5445,7 @@ function App() {
                   attributionControl={false}
                   style={{ height: "100%", width: "100%" }}
                   zoomSnap={0.25}
+                  doubleClickZoom={false}
                 >
                   <AttributionControl position="bottomright" prefix={false} />
                   <ResponsiveBasemap />
@@ -5281,13 +5536,15 @@ function App() {
                           return;
                         }
 
-                          setMapPlantingBedIds([]);
-                          setSelection({ type: "field", id: field.id });
-                          if (mapWorkflowMode === "field_work") {
-                            setSelectedTaskId(null);
-                            setSelectedPlantingId(null);
+                          runMapSelectClick(() => selectMapObject({ type: "field", id: field.id }));
+                        },
+                        dblclick: (event) => {
+                          stopMapDoubleClick(event);
+                          if (mapMode !== "select") {
+                            return;
                           }
-                          setMapNotice(null);
+                          clearPendingMapSingleClick();
+                          selectFieldBlockCycle(field, { lat: event.latlng.lat, lng: event.latlng.lng });
                         }
                       }}
                     >
@@ -5350,13 +5607,15 @@ function App() {
                             resetMapDrafts("select");
                           }
 
-                          setMapPlantingBedIds([]);
-                          setSelection({ type: "block", id: block.id });
-                          if (mapWorkflowMode === "field_work") {
-                            setSelectedTaskId(null);
-                            setSelectedPlantingId(null);
+                          runMapSelectClick(() => selectMapObject({ type: "block", id: block.id }));
+                        },
+                        dblclick: (event) => {
+                          stopMapDoubleClick(event);
+                          if (mapMode !== "select") {
+                            return;
                           }
-                          setMapNotice(null);
+                          clearPendingMapSingleClick();
+                          selectBlockFieldCycle(block);
                         }
                       }}
                     >
@@ -5408,13 +5667,15 @@ function App() {
                             setMapNotice(null);
                             return;
                           }
-                          setMapPlantingBedIds([]);
-                          setSelection({ type: "zone", id: zone.id });
-                          if (mapWorkflowMode === "field_work") {
-                            setSelectedTaskId(null);
-                            setSelectedPlantingId(null);
+                          runMapSelectClick(() => selectMapObject({ type: "zone", id: zone.id }, zone.blockId));
+                        },
+                        dblclick: (event) => {
+                          stopMapDoubleClick(event);
+                          if (mapMode !== "select" || !parentBlock) {
+                            return;
                           }
-                          setMapNotice(null);
+                          clearPendingMapSingleClick();
+                          selectBlockFieldCycle(parentBlock);
                         }
                       }}
                     >
@@ -5742,7 +6003,20 @@ function App() {
 
                 {mapMode === "draw_zone_split" && zoneSplitLines.length > 0 && (
                   <>
-                    {zoneSplitLines.map((line, index) => (
+                    {zoneSplitPreviewCoordinates.length >= 3 && (
+                      <Polygon
+                        positions={polygonPositions(zoneSplitPreviewCoordinates)}
+                        interactive={false}
+                        pathOptions={{
+                          color: "#f6cf73",
+                          fillColor: "#f6cf73",
+                          fillOpacity: 0.28,
+                          weight: 2,
+                          dashArray: "6 4"
+                        }}
+                      />
+                    )}
+                    {zoneSplitDisplayLines.map((line, index) => (
                       <Fragment key={`zone-split-line-${index}`}>
                         <Polyline
                           positions={polygonPositions(line)}
@@ -5976,6 +6250,7 @@ function App() {
                       placements={ownFarmData.placements}
                       events={ownFarmData.events}
                       distanceUnit={distanceUnit}
+                      pendingWorkAreaSqM={zoneDraftActive && zoneDraftMethod === "split_line" ? zoneSplitPreviewAreaSqM : null}
                       bedLineCoordinates={bedLineCoordinates}
                       bedLineSource={bedLineSource}
                       bedLineMode={bedLineMode}
@@ -6453,6 +6728,7 @@ function App() {
                   placements={ownFarmData.placements}
                   events={ownFarmData.events}
                   distanceUnit={distanceUnit}
+                  pendingWorkAreaSqM={zoneDraftActive && zoneDraftMethod === "split_line" ? zoneSplitPreviewAreaSqM : null}
                   bedLineCoordinates={bedLineCoordinates}
                   bedLineSource={bedLineSource}
                   bedLineMode={bedLineMode}
@@ -9897,6 +10173,7 @@ function UnplannedWorkCard({
   placements,
   events,
   distanceUnit,
+  pendingWorkAreaSqM,
   bedLineCoordinates,
   bedLineSource,
   bedLineMode,
@@ -9933,6 +10210,7 @@ function UnplannedWorkCard({
   placements: Placement[];
   events: FarmEvent[];
   distanceUnit: DistanceUnit;
+  pendingWorkAreaSqM: number | null;
   bedLineCoordinates: CoordinateDraft[];
   bedLineSource: BedLineSource;
   bedLineMode: "straight" | "curved";
@@ -10041,7 +10319,7 @@ function UnplannedWorkCard({
   const transplantRowsPerBedNumber = Number(transplantRowsPerBed);
   const applicationRateUsedNumber = Number(applicationRateUsed);
   const applicationAmountUsedNumber = Number(applicationAmountUsed);
-  const selectedAreaSqM = toNumericValue(bed?.areaSqM ?? zone?.areaSqM ?? block?.areaSqM ?? field?.areaSqM ?? null);
+  const selectedAreaSqM = pendingWorkAreaSqM ?? toNumericValue(bed?.areaSqM ?? zone?.areaSqM ?? block?.areaSqM ?? field?.areaSqM ?? null);
   const selectedAreaAcres = selectedAreaSqM == null ? null : selectedAreaSqM / 4046.8564224;
   const applicationUnitLabel = applicationUnit.trim() || "units";
   const selectedTransplantPlanting = transplantPlantingId
@@ -10467,6 +10745,9 @@ function UnplannedWorkCard({
         {showSectionTools && (
           <div className="full-span stack">
             <span className="field-label">Block section</span>
+            <div className="instruction-box">
+              Area selected: {formatDisplayArea(selectedAreaSqM, distanceUnit)}.
+            </div>
             {zone ? (
               <div className="instruction-box">
                 This record will attach to {zone.name}. You can still make a new section from the parent block.
@@ -10500,9 +10781,6 @@ function UnplannedWorkCard({
         )}
         {showApplicationFields && (
           <>
-            <div className="instruction-box full-span">
-              Area selected: {formatDisplayArea(selectedAreaSqM, distanceUnit)}.
-            </div>
             <label>
               <span>Rate used ({applicationUnitLabel}/ac)</span>
               <input
