@@ -117,7 +117,7 @@ export function taskMapIcon(
   const markerWidth = Math.max(168, Math.round((runDistancePx ?? 44) * 2 + 120));
   return L.divIcon({
     className: "",
-    html: `<div class="task-map-vehicle-icon" style="width: ${markerWidth}px;">${vehicleSpriteHtml(color, accentColor || defaultVehicleAccentColor(), { bearing: bearingDegrees, animated, scale: 0.84, model: isVehicleModel(model) ? model : vehicleModelForTask(taskType), runDistancePx, runDurationSec, animationDelaySec, spriteSheetUrl })}</div>`,
+    html: `<div class="task-map-vehicle-icon" style="width: ${markerWidth}px;">${vehicleSpriteHtml(color, accentColor || defaultVehicleAccentColor(), { bearing: bearingDegrees, animated, oneWay: oneWayRun, scale: 0.84, model: isVehicleModel(model) ? model : vehicleModelForTask(taskType), runDistancePx, runDurationSec, animationDelaySec, spriteSheetUrl })}</div>`,
     iconSize: [markerWidth, 168],
     iconAnchor: [markerWidth / 2, 84]
   });

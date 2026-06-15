@@ -14,15 +14,30 @@ export const taskTypeOptions = [
   "cover_crop"
 ] as const;
 
-export const taskAnchorOptions = [
-  "planned_sow",
-  "actual_tray_seeding",
-  "actual_direct_seeding",
-  "planned_transplant",
-  "actual_transplant",
-  "actual_cultivation",
-  "actual_harvest"
+export const legacyTaskTypeOptions = [
+  "bed_prep",
+  "cultivate",
+  "weed",
+  "mow",
+  "thin",
+  "harvest",
+  "finish_crop",
+  "irrigation_check"
 ] as const;
+
+export function isCurrentTaskType(taskType: string) {
+  return (taskTypeOptions as readonly string[]).includes(taskType);
+}
+
+export function isLegacyTaskType(taskType: string) {
+  return (legacyTaskTypeOptions as readonly string[]).includes(taskType);
+}
+
+export function staleTaskTypeMessage(taskType: string) {
+  return isLegacyTaskType(taskType)
+    ? `Old category "${taskType}". Change this to a current category before using it.`
+    : `Unknown category "${taskType}". Change this to a current category before using it.`;
+}
 
 function sentenceCase(input: string) {
   return input.replaceAll("_", " ");
@@ -37,18 +52,17 @@ const taskTypeLabels: Record<string, string> = {
   transplant: "transplanting",
   cultivation: "cultivation",
   cleanup: "cleanup",
-  cover_crop: "covercrop",
-  bed_prep: "bed making",
-  cultivate: "cultivation",
-  weed: "weed",
-  mow: "mow",
-  thin: "thin",
-  harvest: "harvest",
-  finish_crop: "finish crop",
-  irrigation_check: "irrigation check"
+  cover_crop: "covercrop"
+};
+
+const taskAnchorLabels: Record<string, string> = {
+  planned_sow: "seeding date"
 };
 
 export function formatTaskTypeLabel(taskType: string) {
+  if (!isCurrentTaskType(taskType)) {
+    return `stale: ${sentenceCase(taskType)}`;
+  }
   return taskTypeLabels[taskType] ?? sentenceCase(taskType);
 }
 
@@ -57,15 +71,15 @@ export function formatTaskAnchorLabel(anchor: string) {
     return `after ${anchor.slice("after:".length).split(",").filter(Boolean).join(", ")}`;
   }
 
-  return sentenceCase(anchor);
+  return taskAnchorLabels[anchor] ?? `stale: ${sentenceCase(anchor)}`;
 }
 
 export function taskIconColor(taskType: string) {
-  if (taskType === "cultivation" || taskType === "cultivate" || taskType === "weed" || taskType === "mow") return "#d98c2b";
+  if (!isCurrentTaskType(taskType)) return "#b42318";
+  if (taskType === "cultivation") return "#d98c2b";
   if (taskType === "transplant") return "#4f9b58";
   if (taskType === "direct_seed" || taskType === "seed_in_tray") return "#7c9f35";
-  if (taskType === "harvest") return "#c6503f";
-  if (taskType === "bed_making" || taskType === "bed_prep" || taskType === "till") return "#8b6f43";
+  if (taskType === "bed_making" || taskType === "till") return "#8b6f43";
   if (taskType === "fertilizing_spraying") return "#5f8f4f";
   if (taskType === "cleanup" || taskType === "cover_crop") return "#6d7f45";
   return "#4f84aa";

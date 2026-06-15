@@ -14,11 +14,7 @@ export function isTractorTask(taskType: string) {
     "bed_making",
     "cultivation",
     "cleanup",
-    "cover_crop",
-    "cultivate",
-    "weed",
-    "mow",
-    "bed_prep"
+    "cover_crop"
   ].includes(taskType);
 }
 
@@ -27,10 +23,10 @@ export function defaultTractorAccentColor() {
 }
 
 export function tractorModelForTask(taskType: string): TractorModel {
-  if (taskType === "bed_prep" || taskType === "bed_making" || taskType === "till" || taskType === "fertilizing_spraying") {
+  if (taskType === "bed_making" || taskType === "till" || taskType === "fertilizing_spraying") {
     return "cab";
   }
-  if (taskType === "cultivate" || taskType === "cultivation") {
+  if (taskType === "cultivation") {
     return "canopy";
   }
   return "open";

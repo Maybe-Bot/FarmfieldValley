@@ -271,6 +271,22 @@ export type FeedbackReport = {
   recentActivity: Array<Record<string, unknown>>;
   userAgent: string | null;
   createdAt: string;
+  replyCount: number;
+  lastReplyAt: string | null;
+};
+
+export type UserMessage = {
+  id: number;
+  farmId: number | null;
+  senderUserId: number | null;
+  senderUsername: string | null;
+  senderDisplayName: string | null;
+  recipientUserId: number;
+  relatedFeedbackReportId: number | null;
+  subject: string;
+  body: string;
+  readAt: string | null;
+  createdAt: string;
 };
 
 export type UsageEvent = {

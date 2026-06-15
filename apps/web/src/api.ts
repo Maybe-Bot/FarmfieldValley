@@ -5,7 +5,7 @@
  * shared request helper attaches cookies, sends JSON, and turns backend error
  * responses into normal JavaScript Error objects for the UI to display.
  */
-import { AdminUser, DashboardData, FarmAccount, FeedbackReport, OfflineImageryStatus, SessionInfo, UndoState, UsageEvent } from "./types";
+import { AdminUser, DashboardData, FarmAccount, FeedbackReport, OfflineImageryStatus, SessionInfo, UndoState, UsageEvent, UserMessage } from "./types";
 
 // Vite exposes only variables prefixed with VITE_ to browser code. Local dev
 // keeps the old localhost default, while hosted builds can point at a deployed API.
@@ -116,6 +116,9 @@ export const api = {
   updateFarmSettings: (body: unknown) => request<{ ok: boolean }>("/api/farm/settings", { method: "PUT", body: JSON.stringify(body) }),
   createFeedback: (body: unknown) => request<{ id: number }>("/api/feedback", { method: "POST", body: JSON.stringify(body) }),
   getFeedbackReports: () => request<FeedbackReport[]>("/api/feedback"),
+  replyToFeedbackReport: (id: number, body: unknown) => request<UserMessage>(`/api/feedback/${id}/replies`, { method: "POST", body: JSON.stringify(body) }),
+  getMessages: () => request<UserMessage[]>("/api/messages"),
+  markMessageRead: (id: number) => request<{ ok: boolean }>(`/api/messages/${id}/read`, { method: "POST" }),
   getUsageEvents: (limit = 200) => request<UsageEvent[]>(`/api/usage/events?limit=${encodeURIComponent(String(limit))}`),
   getUndoSnapshots: () => request<UndoState>("/api/undo"),
   undoLastChange: () => request<{ ok: boolean; label: string }>("/api/undo", { method: "POST" }),

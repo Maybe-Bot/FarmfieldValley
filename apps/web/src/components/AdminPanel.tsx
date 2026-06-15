@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { FormEvent, useEffect, useState } from "react";
 import { api } from "../api";
 import { roleLabel } from "../account-utils";
 import { formatDate } from "../display-utils";
@@ -145,7 +145,7 @@ export function AdminPanel({ reports, onRefresh, onOpenFeedback }: AdminPanelPro
       </div>
       <div className="stack">
         <UsageEventsCard events={usageEvents} loading={loadingUsage} />
-        <FeedbackReportsCard reports={reports} />
+        <FeedbackReportsCard reports={reports} onRefresh={onRefresh} />
       </div>
     </section>
   );
@@ -227,11 +227,38 @@ function UsageEventsCard({ events, loading }: { events: UsageEvent[]; loading: b
 }
 
 // Shows saved Suggestion/problem reports with enough context to reproduce issues.
-function FeedbackReportsCard({ reports }: { reports: FeedbackReport[] }) {
+function FeedbackReportsCard({ reports, onRefresh }: { reports: FeedbackReport[]; onRefresh: () => Promise<void> }) {
+  const [replyDrafts, setReplyDrafts] = useState<Record<number, string>>({});
+  const [savingReportId, setSavingReportId] = useState<number | null>(null);
+  const [status, setStatus] = useState<string | null>(null);
+
+  async function sendReply(event: FormEvent<HTMLFormElement>, report: FeedbackReport) {
+    event.preventDefault();
+    const body = replyDrafts[report.id]?.trim() ?? "";
+    if (!body) {
+      setStatus("Reply message is required.");
+      return;
+    }
+
+    try {
+      setSavingReportId(report.id);
+      setStatus(null);
+      await api.replyToFeedbackReport(report.id, { body });
+      setReplyDrafts((current) => ({ ...current, [report.id]: "" }));
+      await onRefresh();
+      setStatus("Reply sent to the user's inbox.");
+    } catch (error) {
+      setStatus(error instanceof Error ? error.message : "Could not send reply.");
+    } finally {
+      setSavingReportId(null);
+    }
+  }
+
   return (
     <div className="card">
       <h2>Recent reports</h2>
       <p className="muted">Problem reports and suggestions submitted from the top-right button.</p>
+      {status && <p className="muted"><strong>{status}</strong></p>}
       {reports.length === 0 ? (
         <p className="muted">No reports yet.</p>
       ) : (
@@ -242,6 +269,9 @@ function FeedbackReportsCard({ reports }: { reports: FeedbackReport[] }) {
               <p className="muted">
                 {formatDate(report.createdAt)} • {report.displayName ?? report.username} • {report.page}
               </p>
+              <p className="muted">
+                Replies: {report.replyCount}{report.lastReplyAt ? ` • Last reply ${formatDate(report.lastReplyAt)}` : ""}
+              </p>
               <details>
                 <summary>Context and activity</summary>
                 <pre className="feedback-context">
@@ -251,6 +281,28 @@ function FeedbackReportsCard({ reports }: { reports: FeedbackReport[] }) {
                   }, null, 2)}
                 </pre>
               </details>
+              {report.userId == null ? (
+                <p className="muted">Anonymous report: no inbox reply available.</p>
+              ) : (
+                <form className="mini-form feedback-reply-form" onSubmit={(event) => void sendReply(event, report)}>
+                  <label>
+                    <span>Reply to {report.displayName ?? report.username}</span>
+                    <textarea
+                      rows={3}
+                      value={replyDrafts[report.id] ?? ""}
+                      onChange={(event) => setReplyDrafts((current) => ({ ...current, [report.id]: event.target.value }))}
+                      placeholder="Write a reply that will appear in their inbox"
+                    />
+                  </label>
+                  <button
+                    type="submit"
+                    className="primary-button compact-button"
+                    disabled={savingReportId === report.id}
+                  >
+                    {savingReportId === report.id ? "Sending..." : "Send reply"}
+                  </button>
+                </form>
+              )}
             </article>
           ))}
         </div>

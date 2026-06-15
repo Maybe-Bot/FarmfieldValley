@@ -734,23 +734,23 @@ async function run() {
       farmId,
       cropId: cabbage.rows[0].id,
       name: "Full brassica transplant flow",
-      notes: "Fourteen-node sample with tray seeding, pot-up, field prep, transplanting, cultivation, spray/check passes, and harvest.",
+      notes: "Fourteen-node sample with tray seeding, pot-up, field prep, transplanting, cultivation, spray/check passes, and cleanup.",
       isDefault: true,
       nodes: [
         { nodeKey: "seed_tray", taskType: "seed_in_tray", label: "Seed trays", anchor: "planned_sow", offsetDays: 0, x: 0.08, y: 0.72 },
         { nodeKey: "pot_up", taskType: "seed_in_tray", label: "Pot up", anchor: "after:seed_tray", offsetDays: 21, x: 0.22, y: 0.72 },
-        { nodeKey: "disk", taskType: "bed_prep", label: "Disk ground", anchor: "planned_transplant", offsetDays: -35, x: 0.08, y: 0.24 },
-        { nodeKey: "lime", taskType: "bed_prep", label: "Spread lime", anchor: "after:disk", offsetDays: 1, x: 0.22, y: 0.24 },
-        { nodeKey: "fertilize", taskType: "bed_prep", label: "Fertilize", anchor: "after:lime", offsetDays: 14, x: 0.36, y: 0.24 },
-        { nodeKey: "perfecta", taskType: "bed_prep", label: "Perfecta pass", anchor: "after:fertilize", offsetDays: 1, x: 0.5, y: 0.24 },
-        { nodeKey: "bed_shape", taskType: "bed_prep", label: "Bed shape", anchor: "after:perfecta", offsetDays: 1, x: 0.64, y: 0.24 },
+        { nodeKey: "disk", taskType: "bed_making", label: "Disk ground", anchor: "planned_sow", offsetDays: 14, x: 0.08, y: 0.24 },
+        { nodeKey: "lime", taskType: "bed_making", label: "Spread lime", anchor: "after:disk", offsetDays: 1, x: 0.22, y: 0.24 },
+        { nodeKey: "fertilize", taskType: "bed_making", label: "Fertilize", anchor: "after:lime", offsetDays: 14, x: 0.36, y: 0.24 },
+        { nodeKey: "perfecta", taskType: "bed_making", label: "Perfecta pass", anchor: "after:fertilize", offsetDays: 1, x: 0.5, y: 0.24 },
+        { nodeKey: "bed_shape", taskType: "bed_making", label: "Bed shape", anchor: "after:perfecta", offsetDays: 1, x: 0.64, y: 0.24 },
         { nodeKey: "transplant", taskType: "transplant", label: "Transplant", anchor: "after:pot_up,bed_shape", offsetDays: 1, x: 0.64, y: 0.52 },
-        { nodeKey: "water_in", taskType: "irrigation_check", label: "Water in", anchor: "after:transplant", offsetDays: 1, x: 0.78, y: 0.38 },
-        { nodeKey: "cultivate_1", taskType: "cultivate", label: "First cultivation", anchor: "after:transplant", offsetDays: 7, x: 0.78, y: 0.62 },
-        { nodeKey: "cultivate_2", taskType: "cultivate", label: "Second cultivation", anchor: "after:cultivate_1", offsetDays: 10, x: 0.9, y: 0.62 },
-        { nodeKey: "spray", taskType: "irrigation_check", label: "Spray/check pests", anchor: "after:cultivate_2", offsetDays: 3, x: 0.9, y: 0.38 },
-        { nodeKey: "cultivate_3", taskType: "cultivate", label: "Third cultivation", anchor: "after:spray", offsetDays: 7, x: 0.9, y: 0.76 },
-        { nodeKey: "harvest", taskType: "harvest", label: "Harvest start", anchor: "after:cultivate_3", offsetDays: 40, x: 0.9, y: 0.9 }
+        { nodeKey: "water_in", taskType: "fertilizing_spraying", label: "Water in", anchor: "after:transplant", offsetDays: 1, x: 0.78, y: 0.38 },
+        { nodeKey: "cultivate_1", taskType: "cultivation", label: "First cultivation", anchor: "after:transplant", offsetDays: 7, x: 0.78, y: 0.62 },
+        { nodeKey: "cultivate_2", taskType: "cultivation", label: "Second cultivation", anchor: "after:cultivation_1", offsetDays: 10, x: 0.9, y: 0.62 },
+        { nodeKey: "spray", taskType: "fertilizing_spraying", label: "Spray/check pests", anchor: "after:cultivation_2", offsetDays: 3, x: 0.9, y: 0.38 },
+        { nodeKey: "cultivate_3", taskType: "cultivation", label: "Third cultivation", anchor: "after:spray", offsetDays: 7, x: 0.9, y: 0.76 },
+        { nodeKey: "cleanup", taskType: "cleanup", label: "Cleanup", anchor: "after:cultivation_3", offsetDays: 40, x: 0.9, y: 0.9 }
       ],
       edges: [
         { fromNodeKey: "seed_tray", toNodeKey: "pot_up" },
@@ -765,24 +765,24 @@ async function run() {
         { fromNodeKey: "cultivate_1", toNodeKey: "cultivate_2" },
         { fromNodeKey: "cultivate_2", toNodeKey: "spray" },
         { fromNodeKey: "spray", toNodeKey: "cultivate_3" },
-        { fromNodeKey: "cultivate_3", toNodeKey: "harvest" }
+        { fromNodeKey: "cultivate_3", toNodeKey: "cleanup" }
       ]
     });
     const lettuceFlowId = await insertTaskFlowTemplate(client, {
       farmId,
       cropId: lettuce.rows[0].id,
       name: "Eight-node transplant flow",
-      notes: "Compact sample showing field prep leading into transplant and harvest.",
+      notes: "Compact sample showing field prep leading into transplant and cleanup.",
       isDefault: true,
       nodes: [
         { nodeKey: "seed_tray", taskType: "seed_in_tray", label: "Seed trays", anchor: "planned_sow", offsetDays: 0, x: 0.08, y: 0.7 },
-        { nodeKey: "disk", taskType: "bed_prep", label: "Disk ground", anchor: "planned_transplant", offsetDays: -21, x: 0.08, y: 0.28 },
-        { nodeKey: "lime", taskType: "bed_prep", label: "Spread lime", anchor: "after:disk", offsetDays: 1, x: 0.22, y: 0.28 },
-        { nodeKey: "fertilize", taskType: "bed_prep", label: "Fertilize", anchor: "after:lime", offsetDays: 10, x: 0.36, y: 0.28 },
-        { nodeKey: "perfecta", taskType: "bed_prep", label: "Perfecta pass", anchor: "after:fertilize", offsetDays: 1, x: 0.5, y: 0.28 },
-        { nodeKey: "bed_shape", taskType: "bed_prep", label: "Bed shape", anchor: "after:perfecta", offsetDays: 1, x: 0.64, y: 0.28 },
+        { nodeKey: "disk", taskType: "bed_making", label: "Disk ground", anchor: "planned_sow", offsetDays: 7, x: 0.08, y: 0.28 },
+        { nodeKey: "lime", taskType: "bed_making", label: "Spread lime", anchor: "after:disk", offsetDays: 1, x: 0.22, y: 0.28 },
+        { nodeKey: "fertilize", taskType: "bed_making", label: "Fertilize", anchor: "after:lime", offsetDays: 10, x: 0.36, y: 0.28 },
+        { nodeKey: "perfecta", taskType: "bed_making", label: "Perfecta pass", anchor: "after:fertilize", offsetDays: 1, x: 0.5, y: 0.28 },
+        { nodeKey: "bed_shape", taskType: "bed_making", label: "Bed shape", anchor: "after:perfecta", offsetDays: 1, x: 0.64, y: 0.28 },
         { nodeKey: "transplant", taskType: "transplant", label: "Transplant", anchor: "after:seed_tray,bed_shape", offsetDays: 1, x: 0.64, y: 0.58 },
-        { nodeKey: "harvest", taskType: "harvest", label: "Harvest start", anchor: "after:transplant", offsetDays: 35, x: 0.86, y: 0.58 }
+        { nodeKey: "cleanup", taskType: "cleanup", label: "Cleanup", anchor: "after:transplant", offsetDays: 35, x: 0.86, y: 0.58 }
       ],
       edges: [
         { fromNodeKey: "disk", toNodeKey: "lime" },
@@ -791,7 +791,7 @@ async function run() {
         { fromNodeKey: "perfecta", toNodeKey: "bed_shape" },
         { fromNodeKey: "seed_tray", toNodeKey: "transplant" },
         { fromNodeKey: "bed_shape", toNodeKey: "transplant" },
-        { fromNodeKey: "transplant", toNodeKey: "harvest" }
+        { fromNodeKey: "transplant", toNodeKey: "cleanup" }
       ]
     });
     const directSeedFlowId = await insertTaskFlowTemplate(client, {
@@ -801,19 +801,19 @@ async function run() {
       notes: "Used for carrots and other direct-seeded roots.",
       isDefault: true,
       nodes: [
-        { nodeKey: "bed_prep", taskType: "bed_prep", label: "Fine seedbed prep", anchor: "planned_sow", offsetDays: -2, x: 0.12, y: 0.5 },
-        { nodeKey: "seed", taskType: "direct_seed", label: "Direct seed", anchor: "actual_direct_seeding", offsetDays: 0, x: 0.36, y: 0.5 },
-        { nodeKey: "thin", taskType: "thin", label: "Thin stand", anchor: "actual_direct_seeding", offsetDays: 18, x: 0.6, y: 0.25 },
-        { nodeKey: "weed", taskType: "weed", label: "Weed pass", anchor: "actual_direct_seeding", offsetDays: 22, x: 0.6, y: 0.52 },
-        { nodeKey: "harvest", taskType: "harvest", label: "Harvest start", anchor: "actual_direct_seeding", offsetDays: 80, x: 0.6, y: 0.78 },
-        { nodeKey: "finish", taskType: "finish_crop", label: "Finish crop", anchor: "actual_harvest", offsetDays: 21, x: 0.84, y: 0.78 }
+        { nodeKey: "bed_making", taskType: "bed_making", label: "Fine seedbed prep", anchor: "planned_sow", offsetDays: -2, x: 0.12, y: 0.5 },
+        { nodeKey: "seed", taskType: "direct_seed", label: "Direct seed", anchor: "after:bed_making", offsetDays: 2, x: 0.36, y: 0.5 },
+        { nodeKey: "thin_stand", taskType: "cultivation", label: "Thin stand", anchor: "after:seed", offsetDays: 18, x: 0.6, y: 0.25 },
+        { nodeKey: "weed_pass", taskType: "cultivation", label: "Weed pass", anchor: "after:seed", offsetDays: 22, x: 0.6, y: 0.52 },
+        { nodeKey: "cleanup", taskType: "cleanup", label: "Cleanup", anchor: "after:seed", offsetDays: 80, x: 0.6, y: 0.78 },
+        { nodeKey: "finish", taskType: "cleanup", label: "Cleanup finish", anchor: "after:cleanup", offsetDays: 21, x: 0.84, y: 0.78 }
       ],
       edges: [
-        { fromNodeKey: "bed_prep", toNodeKey: "seed" },
-        { fromNodeKey: "seed", toNodeKey: "thin" },
-        { fromNodeKey: "seed", toNodeKey: "weed" },
-        { fromNodeKey: "seed", toNodeKey: "harvest" },
-        { fromNodeKey: "harvest", toNodeKey: "finish" }
+        { fromNodeKey: "bed_making", toNodeKey: "seed" },
+        { fromNodeKey: "seed", toNodeKey: "thin_stand" },
+        { fromNodeKey: "seed", toNodeKey: "weed_pass" },
+        { fromNodeKey: "seed", toNodeKey: "cleanup" },
+        { fromNodeKey: "cleanup", toNodeKey: "finish" }
       ]
     });
     const tunnelTomatoFlowId = await insertTaskFlowTemplate(client, {
@@ -823,19 +823,19 @@ async function run() {
       notes: "Protected crop flow with transplant and repeated checks.",
       isDefault: true,
       nodes: [
-        { nodeKey: "bed_prep", taskType: "bed_prep", label: "Tunnel bed prep", anchor: "planned_transplant", offsetDays: -7, x: 0.1, y: 0.28 },
-        { nodeKey: "seed", taskType: "seed_in_tray", label: "Seed in tray", anchor: "actual_tray_seeding", offsetDays: 0, x: 0.1, y: 0.7 },
-        { nodeKey: "transplant", taskType: "transplant", label: "Transplant", anchor: "actual_transplant", offsetDays: 0, x: 0.38, y: 0.5 },
-        { nodeKey: "irrigation", taskType: "irrigation_check", label: "Irrigation check", anchor: "actual_transplant", offsetDays: 1, x: 0.64, y: 0.28 },
-        { nodeKey: "harvest", taskType: "harvest", label: "Harvest start", anchor: "actual_transplant", offsetDays: 54, x: 0.64, y: 0.68 },
-        { nodeKey: "finish", taskType: "finish_crop", label: "Finish crop", anchor: "actual_harvest", offsetDays: 45, x: 0.88, y: 0.68 }
+        { nodeKey: "bed_making", taskType: "bed_making", label: "Tunnel bed prep", anchor: "planned_sow", offsetDays: 35, x: 0.1, y: 0.28 },
+        { nodeKey: "seed", taskType: "seed_in_tray", label: "Seed in tray", anchor: "planned_sow", offsetDays: 0, x: 0.1, y: 0.7 },
+        { nodeKey: "transplant", taskType: "transplant", label: "Transplant", anchor: "after:seed,bed_prep", offsetDays: 7, x: 0.38, y: 0.5 },
+        { nodeKey: "irrigation", taskType: "fertilizing_spraying", label: "Irrigation check", anchor: "after:transplant", offsetDays: 1, x: 0.64, y: 0.28 },
+        { nodeKey: "cleanup", taskType: "cleanup", label: "Cleanup", anchor: "after:transplant", offsetDays: 54, x: 0.64, y: 0.68 },
+        { nodeKey: "finish", taskType: "cleanup", label: "Cleanup finish", anchor: "after:cleanup", offsetDays: 45, x: 0.88, y: 0.68 }
       ],
       edges: [
-        { fromNodeKey: "bed_prep", toNodeKey: "transplant" },
+        { fromNodeKey: "bed_making", toNodeKey: "transplant" },
         { fromNodeKey: "seed", toNodeKey: "transplant" },
         { fromNodeKey: "transplant", toNodeKey: "irrigation" },
-        { fromNodeKey: "transplant", toNodeKey: "harvest" },
-        { fromNodeKey: "harvest", toNodeKey: "finish" }
+        { fromNodeKey: "transplant", toNodeKey: "cleanup" },
+        { fromNodeKey: "cleanup", toNodeKey: "finish" }
       ]
     });
     const cedarLettuceFlowId = await insertTaskFlowTemplate(client, {
@@ -845,17 +845,17 @@ async function run() {
       notes: "Simpler lettuce flow for the second demo farm.",
       isDefault: true,
       nodes: [
-        { nodeKey: "bed_prep", taskType: "bed_prep", label: "Bed prep", anchor: "planned_transplant", offsetDays: -2, x: 0.14, y: 0.4 },
-        { nodeKey: "seed", taskType: "seed_in_tray", label: "Seed in tray", anchor: "actual_tray_seeding", offsetDays: 0, x: 0.14, y: 0.72 },
-        { nodeKey: "transplant", taskType: "transplant", label: "Transplant", anchor: "actual_transplant", offsetDays: 0, x: 0.44, y: 0.56 },
-        { nodeKey: "harvest", taskType: "harvest", label: "Harvest start", anchor: "actual_transplant", offsetDays: 32, x: 0.74, y: 0.56 },
-        { nodeKey: "finish", taskType: "finish_crop", label: "Finish crop", anchor: "actual_harvest", offsetDays: 10, x: 0.9, y: 0.56 }
+        { nodeKey: "bed_making", taskType: "bed_making", label: "Bed prep", anchor: "planned_sow", offsetDays: 26, x: 0.14, y: 0.4 },
+        { nodeKey: "seed", taskType: "seed_in_tray", label: "Seed in tray", anchor: "planned_sow", offsetDays: 0, x: 0.14, y: 0.72 },
+        { nodeKey: "transplant", taskType: "transplant", label: "Transplant", anchor: "after:seed,bed_prep", offsetDays: 2, x: 0.44, y: 0.56 },
+        { nodeKey: "cleanup", taskType: "cleanup", label: "Cleanup", anchor: "after:transplant", offsetDays: 32, x: 0.74, y: 0.56 },
+        { nodeKey: "finish", taskType: "cleanup", label: "Cleanup finish", anchor: "after:cleanup", offsetDays: 10, x: 0.9, y: 0.56 }
       ],
       edges: [
-        { fromNodeKey: "bed_prep", toNodeKey: "transplant" },
+        { fromNodeKey: "bed_making", toNodeKey: "transplant" },
         { fromNodeKey: "seed", toNodeKey: "transplant" },
-        { fromNodeKey: "transplant", toNodeKey: "harvest" },
-        { fromNodeKey: "harvest", toNodeKey: "finish" }
+        { fromNodeKey: "transplant", toNodeKey: "cleanup" },
+        { fromNodeKey: "cleanup", toNodeKey: "finish" }
       ]
     });
 
@@ -1003,7 +1003,7 @@ async function run() {
 
     await client.query(
       `insert into tasks (farm_id, bed_id, task_type, title, status, scheduled_date, notes, is_auto_generated)
-       values ($1, $2, 'bed_prep', 'Refresh seasonal bed B-4', 'pending', '2026-04-06', 'Seasonal bed reset before next crop', false)`,
+       values ($1, $2, 'bed_making', 'Refresh seasonal bed B-4', 'pending', '2026-04-06', 'Seasonal bed reset before next crop', false)`,
       [farmId, bedIdByName.get("B-4")]
     );
 

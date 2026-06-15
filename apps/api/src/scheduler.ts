@@ -1,15 +1,15 @@
 /**
  * Task scheduler for planting work.
  *
- * A planting points at a task-flow template. Starter nodes schedule from a
- * planting date milestone; nodes with an `after:<node_key>` anchor schedule
+ * A planting points at a task-flow template. Starter nodes schedule from the
+ * planting's seeding date; nodes with an `after:<node_key>` anchor schedule
  * from the linked task's completed date, falling back to that task's planned
  * date until work is recorded. This module updates generated tasks in place so
  * task IDs, farm_events.task_id links, and user-visible history survive.
  */
 import { PoolClient } from "pg";
 import { titleCase } from "./utils";
-import { TaskAnchor, taskAnchors, TaskType } from "./types";
+import { isCurrentTaskType, isLegacyTaskType } from "./types";
 
 type PlantingRow = {
   id: number;
@@ -20,20 +20,14 @@ type PlantingRow = {
   variety_name: string | null;
   task_flow_template_id: number | null;
   planned_sow_date: string | null;
-  planned_transplant_date: string | null;
-  expected_harvest_start: string | null;
   actual_tray_seeding_date: string | null;
   actual_direct_seeding_date: string | null;
-  actual_transplant_date: string | null;
-  actual_cultivation_date: string | null;
-  actual_harvest_date: string | null;
-  actual_finish_date: string | null;
 };
 
 type FlowNodeRow = {
   id: number;
   node_key: string;
-  task_type: TaskType;
+  task_type: string;
   label: string;
   anchor: string;
   offset_days: number;
@@ -61,26 +55,10 @@ type GeneratedTaskTiming = {
   sourceDate: string;
 };
 
-// Prefer actual dates when they exist, otherwise fall back to the planned dates.
-function resolveAnchorDate(planting: PlantingRow, anchor: TaskAnchor) {
-  switch (anchor) {
-    case "planned_sow":
-      return planting.actual_direct_seeding_date ?? planting.actual_tray_seeding_date ?? planting.planned_sow_date;
-    case "actual_tray_seeding":
-      return planting.actual_tray_seeding_date ?? planting.planned_sow_date;
-    case "actual_direct_seeding":
-      return planting.actual_direct_seeding_date ?? planting.planned_sow_date;
-    case "planned_transplant":
-      return planting.actual_transplant_date ?? planting.planned_transplant_date;
-    case "actual_transplant":
-      return planting.actual_transplant_date ?? planting.planned_transplant_date;
-    case "actual_cultivation":
-      return planting.actual_cultivation_date ?? planting.actual_transplant_date ?? planting.actual_direct_seeding_date ?? planting.planned_sow_date;
-    case "actual_harvest":
-      return planting.actual_harvest_date ?? planting.expected_harvest_start;
-    default:
-      return null;
-  }
+// Task flows intentionally use one crop-date anchor: the seeding date. Once real
+// seeding work is recorded it becomes the source date; until then, use the plan.
+function resolvePlantingStartDate(planting: PlantingRow) {
+  return planting.actual_direct_seeding_date ?? planting.actual_tray_seeding_date ?? planting.planned_sow_date;
 }
 
 // Normalize dates to YYYY-MM-DD because the UI and task logic do not need times.
@@ -108,10 +86,6 @@ function addDays(dateValue: string | Date, offsetDays: number) {
   const next = new Date(`${dateString}T00:00:00Z`);
   next.setUTCDate(next.getUTCDate() + offsetDays);
   return next.toISOString().slice(0, 10);
-}
-
-function isTaskAnchor(value: string): value is TaskAnchor {
-  return (taskAnchors as string[]).includes(value);
 }
 
 function afterNodeKeys(anchor: string) {
@@ -186,14 +160,8 @@ export async function recalculatePlantingTasks(client: PoolClient, plantingId: n
         v.name as variety_name,
         p.task_flow_template_id,
         p.planned_sow_date,
-        p.planned_transplant_date,
-        p.expected_harvest_start,
         p.actual_tray_seeding_date,
-        p.actual_direct_seeding_date,
-        p.actual_transplant_date,
-        p.actual_cultivation_date,
-        p.actual_harvest_date,
-        p.actual_finish_date
+        p.actual_direct_seeding_date
       from plantings p
       join crops c on c.id = p.crop_id
       left join varieties v on v.id = p.variety_id
@@ -276,6 +244,12 @@ export async function recalculatePlantingTasks(client: PoolClient, plantingId: n
   );
   const activeTaskIds = new Set<number>();
   const orderedNodes = orderNodesByEdges(nodesResult.rows, edgesResult.rows);
+  const staleNode = orderedNodes.find((node) => !isCurrentTaskType(node.task_type));
+  if (staleNode) {
+    throw new Error(isLegacyTaskType(staleNode.task_type)
+      ? `Task flow uses old category "${staleNode.task_type}" on "${staleNode.label}". Update the flow to current task categories before it can schedule tasks.`
+      : `Task flow uses unknown category "${staleNode.task_type}" on "${staleNode.label}". Update the flow to current task categories before it can schedule tasks.`);
+  }
 
   for (const node of orderedNodes) {
     const sourceNodeKeys = afterNodeKeys(node.anchor);
@@ -284,12 +258,13 @@ export async function recalculatePlantingTasks(client: PoolClient, plantingId: n
       .filter((value: string | undefined): value is string => value != null);
     const baseDate = sourceNodeKeys.length > 0
       ? sourceDates.length === sourceNodeKeys.length ? latestDate(sourceDates) : null
-      : isTaskAnchor(node.anchor) ? resolveAnchorDate(planting, node.anchor) : null;
+      : resolvePlantingStartDate(planting);
     if (!baseDate) {
       continue;
     }
 
-    const scheduledDate = addDays(baseDate, node.offset_days);
+    const effectiveOffsetDays = node.offset_days;
+    const scheduledDate = addDays(baseDate, effectiveOffsetDays);
     const taskAnchor = node.anchor;
     const fallbackLabel = `${titleCase(node.task_type)} ${planting.crop_name}`;
     const taskLabel = `${node.label || fallbackLabel} - ${planting.crop_name}${planting.variety_name ? ` (${planting.variety_name})` : ""}`;
@@ -325,7 +300,7 @@ export async function recalculatePlantingTasks(client: PoolClient, plantingId: n
           node.tractor_model,
           node.tractor_profile_id,
           taskAnchor,
-          node.offset_days,
+          effectiveOffsetDays,
           scheduledDate
         ]
       );
@@ -370,7 +345,7 @@ export async function recalculatePlantingTasks(client: PoolClient, plantingId: n
           node.tractor_model,
           node.tractor_profile_id,
           taskAnchor,
-          node.offset_days,
+          effectiveOffsetDays,
           scheduledDate
         ]
       );

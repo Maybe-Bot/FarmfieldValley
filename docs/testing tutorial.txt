@@ -1,0 +1,23 @@
+testing tutorial
+
+These are my notes from going through the tutorial on 6/14/2026 starting at 21:22
+
+Starting, and after each step of the tutorial (matters more for the simple one than the testing one) i want it to scroll the screen to where the next thing they need to click on is visible on screen. i want the scrolling to be kinda slow. 
+
+the selection card is moot at this point... it's been with us for a while, but i think we are done with it. please remove it from the front end. 
+
+Bed generator
+	[y] rename pick edge in the bed generator to "begining of first bed" with sub text "where planting starts".
+	it would be nice if "keep existing beds" was grayed out if there are no beds in a block.
+	I want the Adcanced line controls bubble removed from the card. I bet i'll put it back later, but in the spirit of keeping things simple, ax it. 
+	I want to add the first bed entrnece to this card and remove it from the block planning card which you still haven't given a ridged name to (please do that too). 
+	
+there is some odd behavior where it switches from work to plan, actuly, mostly from plan to work. Sometimes that might be good, but not all of the times it will do that. Can you tell me what it should be doing now, so i can better explain what i want it to do. 
+
+Part II 22:19
+
+make tutorial spacing better 3 row 12" would work. 
+side note; i'm a little worried that there is too much rounding. It's fine on the front end, but this is build metric native and will be primarily used in  foot mode in the early stages (just who i know) so little things could add up to lots of plants, and i don't want that. again, it looks good in the front end. 
+
+
+

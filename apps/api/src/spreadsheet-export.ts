@@ -277,7 +277,7 @@ export async function buildFarmExportWorkbook(client: PoolClient, farmId: number
       formatNumberCell(row["Plant count"], 0),
       row["Bed length m"] == null ? "" : formatNumberCell(Number(row["Bed length m"]) * METERS_TO_FEET, 2),
       formatDateCell(row["Transplant date"]),
-      formatNumberCell(row["Tray count"], 0),
+      formatNumberCell(row["Tray count"], 2),
       formatNumberCell(row["Cells per tray"], 0),
       formatNumberCell(row["Days to harvest"], 0),
       formatNumberCell(row["Field spacing in row"], 2),

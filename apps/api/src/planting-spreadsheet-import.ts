@@ -9,6 +9,7 @@ import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import { PoolClient } from "pg";
 import { recalculatePlantingTasks } from "./scheduler";
+import { isCurrentTaskType, isLegacyTaskType } from "./types";
 
 type SpreadsheetRow = {
   sheet: string;
@@ -421,7 +422,7 @@ export function parsePlantingTemplateRows(rows: SpreadsheetRow[]) {
       plantCount: derivedPlantCount,
       bedLengthFeet,
       transplantDate: parseIsoDate(transplantDateRaw, row.rowIndex, "Transplant date"),
-      trayCount: parseOptionalInteger(trayCountRaw, row.rowIndex, "Tray count"),
+      trayCount: parseOptionalNumber(trayCountRaw, row.rowIndex, "Tray count"),
       cellsPerTray: parseOptionalInteger(cellsPerTrayRaw, row.rowIndex, "Cells per tray"),
       daysToHarvest: parseOptionalInteger(daysToHarvestRaw, row.rowIndex, "Days to harvest"),
       fieldSpacingInRow,
@@ -470,6 +471,27 @@ function dateOrNull(value: string | null | undefined) {
 function textOrNull(value: string | null | undefined) {
   const clean = (value ?? "").trim();
   return clean || null;
+}
+
+function requireCurrentTaskType(value: string | null | undefined, label: string) {
+  const taskType = textOrNull(value);
+  if (!taskType) {
+    throw new Error(`${label} is missing a task category.`);
+  }
+  if (!isCurrentTaskType(taskType)) {
+    throw new Error(isLegacyTaskType(taskType)
+      ? `${label} uses old task category "${taskType}". Update the backup or task flow to current categories before importing.`
+      : `${label} uses unknown task category "${taskType}". Update the backup or task flow to current categories before importing.`);
+  }
+  return taskType;
+}
+
+function requireCurrentTaskAnchor(value: string | null | undefined, label: string) {
+  const anchor = textOrNull(value) ?? "planned_sow";
+  if (anchor === "planned_sow" || anchor.startsWith("after:")) {
+    return anchor;
+  }
+  throw new Error(`${label} uses old scheduling anchor "${anchor}". Update it to seeding date or an arrow dependency before importing.`);
 }
 
 function booleanFromExport(value: string | null | undefined) {
@@ -557,7 +579,30 @@ async function findDuplicatePolygon(
     `,
     params
   );
-  return result.rows[0]?.id ?? null;
+  const geometryDuplicateId = result.rows[0]?.id ?? null;
+  if (geometryDuplicateId != null) {
+    return geometryDuplicateId;
+  }
+
+  const nameParams: Array<string | number> = [options.farmId, options.name];
+  const nameParentClause = options.parentColumn ? `and target.${options.parentColumn} = $3` : "";
+  if (options.parentColumn) {
+    nameParams.push(options.parentId ?? 0);
+  }
+  const nameResult = await client.query<{ id: number }>(
+    `
+      select target.id
+      from ${options.tableName} target
+      ${options.tableName === "fields" ? "" : options.tableName === "blocks" ? "join fields field on field.id = target.field_id" : "join blocks block on block.id = target.block_id join fields field on field.id = block.field_id"}
+      where ${options.tableName === "fields" ? "target.farm_id" : "field.farm_id"} = $1
+        and lower(target.name) = lower($2)
+        ${nameParentClause}
+      order by target.id
+      limit 1
+    `,
+    nameParams
+  );
+  return nameResult.rows[0]?.id ?? null;
 }
 
 async function loadBedLookup(client: DbClient, farmId: number) {
@@ -1183,6 +1228,8 @@ async function importFullBackupSpreadsheetRowsForFarm(client: DbClient, rows: Sp
     const flowTemplateId = oldFlowId == null ? null : idMaps.taskFlows.get(oldFlowId);
     if (!oldId || !flowTemplateId) continue;
     const oldVehicleId = idFromExport(row.tractorProfileId);
+    const taskType = requireCurrentTaskType(row.taskType, `Task Flow Nodes row ${oldId}`);
+    const anchor = requireCurrentTaskAnchor(row.anchor, `Task Flow Nodes row ${oldId}`);
     const result = await client.query<{ id: number }>(
       `
         insert into task_flow_nodes (
@@ -1206,9 +1253,9 @@ async function importFullBackupSpreadsheetRowsForFarm(client: DbClient, rows: Sp
       [
         flowTemplateId,
         textOrNull(row.nodeKey) ?? `node-${oldId}`,
-        textOrNull(row.taskType) ?? "custom",
+        taskType,
         textOrNull(row.label) ?? "Imported task",
-        textOrNull(row.anchor) ?? "sow",
+        anchor,
         integerOrNull(row.offsetDays) ?? 0,
         numberOrNull(row.x) ?? 0.5,
         numberOrNull(row.y) ?? 0.5,
@@ -1335,7 +1382,7 @@ async function importFullBackupSpreadsheetRowsForFarm(client: DbClient, rows: Sp
         bedLengthUsedM,
         textOrNull(detail.notes),
         textOrNull(detail.trayLocation),
-        integerOrNull(detail.trayCount),
+        numberOrNull(detail.trayCount),
         integerOrNull(detail.cellsPerTray),
         integerOrNull(detail.daysToHarvest),
         numberOrNull(detail.fieldSpacingInRow),
@@ -1440,7 +1487,7 @@ async function importFullBackupSpreadsheetRowsForFarm(client: DbClient, rows: Sp
         textOrNull(row.entryType) ?? "gap",
         numberOrNull(row.bedLengthUsedM) ?? 0.01,
         integerOrNull(row.plantCount),
-        integerOrNull(row.trayCount),
+        numberOrNull(row.trayCount),
         numberOrNull(row.placementOrder) ?? 0,
         textOrNull(row.notes)
       ]
@@ -1456,6 +1503,10 @@ async function importFullBackupSpreadsheetRowsForFarm(client: DbClient, rows: Sp
     const oldBedId = idFromExport(row.bedId);
     const oldNodeId = idFromExport(row.taskFlowNodeId);
     const oldVehicleId = idFromExport(row.tractorProfileId);
+    const taskType = requireCurrentTaskType(row.taskType, `Tasks row ${oldId}`);
+    const anchor = row.anchor == null || row.anchor.trim() === ""
+      ? null
+      : requireCurrentTaskAnchor(row.anchor, `Tasks row ${oldId}`);
     const result = await client.query<{ id: number }>(
       `
         insert into tasks (
@@ -1471,10 +1522,10 @@ async function importFullBackupSpreadsheetRowsForFarm(client: DbClient, rows: Sp
         oldPlantingId == null ? null : idMaps.plantings.get(oldPlantingId) ?? null,
         oldBedId == null ? null : idMaps.beds.get(oldBedId) ?? null,
         oldNodeId == null ? null : idMaps.taskFlowNodes.get(oldNodeId) ?? null,
-        textOrNull(row.taskType) ?? "custom",
+        taskType,
         textOrNull(row.title) ?? "Imported task",
         textOrNull(row.status) ?? "pending",
-        textOrNull(row.anchor),
+        anchor,
         integerOrNull(row.offsetDays),
         dateOrNull(row.scheduledDate),
         dateOrNull(row.completedDate),

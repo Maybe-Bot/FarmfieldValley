@@ -104,6 +104,7 @@ CORS_ALLOWED_ORIGINS=https://your-frontend.example.com
 PUBLIC_WEB_URL=https://your-frontend.example.com
 PUBLIC_API_URL=https://your-api.example.com
 CSRF_SECRET=replace-with-a-long-random-string
+REQUIRE_EMAIL_VERIFICATION=false
 SESSION_COOKIE_SECURE=true
 SESSION_COOKIE_SAMESITE=Lax
 ```
@@ -115,6 +116,8 @@ The API now rejects browser requests from origins not listed in `CORS_ALLOWED_OR
 The first admin account is no longer created from the public website. Create it with the one-time terminal command above before exposing the site publicly.
 
 The admin password is read from the `ADMIN_CREATE_PASSWORD` environment variable so it does not need to be passed on the command line.
+
+Email verification is off by default because the prototype does not include a real mail provider yet. Leave `REQUIRE_EMAIL_VERIFICATION=false` until SMTP or another email service is wired in; otherwise real-email users will be told to check email for a link that never arrives.
 
 ## User spreadsheet import and backup
 

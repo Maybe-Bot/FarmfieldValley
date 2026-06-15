@@ -5,22 +5,10 @@
  * dropdown options. Keep them in sync with migrations and apps/web/src/types.ts.
  */
 export type TaskAnchor =
-  | "planned_sow"
-  | "actual_tray_seeding"
-  | "actual_direct_seeding"
-  | "planned_transplant"
-  | "actual_transplant"
-  | "actual_cultivation"
-  | "actual_harvest";
+  | "planned_sow";
 
 export const taskAnchors: TaskAnchor[] = [
-  "planned_sow",
-  "actual_tray_seeding",
-  "actual_direct_seeding",
-  "planned_transplant",
-  "actual_transplant",
-  "actual_cultivation",
-  "actual_harvest"
+  "planned_sow"
 ];
 
 export type TaskType =
@@ -32,15 +20,7 @@ export type TaskType =
   | "transplant"
   | "cultivation"
   | "cleanup"
-  | "cover_crop"
-  | "bed_prep"
-  | "cultivate"
-  | "weed"
-  | "mow"
-  | "thin"
-  | "harvest"
-  | "finish_crop"
-  | "irrigation_check";
+  | "cover_crop";
 
 export const taskTypes: TaskType[] = [
   "seed_in_tray",
@@ -51,7 +31,10 @@ export const taskTypes: TaskType[] = [
   "transplant",
   "cultivation",
   "cleanup",
-  "cover_crop",
+  "cover_crop"
+];
+
+export const legacyTaskTypes = [
   "bed_prep",
   "cultivate",
   "weed",
@@ -60,7 +43,15 @@ export const taskTypes: TaskType[] = [
   "harvest",
   "finish_crop",
   "irrigation_check"
-];
+] as const;
+
+export function isCurrentTaskType(value: string): value is TaskType {
+  return (taskTypes as readonly string[]).includes(value);
+}
+
+export function isLegacyTaskType(value: string) {
+  return (legacyTaskTypes as readonly string[]).includes(value);
+}
 
 export type PlantingStatus =
   | "planned"

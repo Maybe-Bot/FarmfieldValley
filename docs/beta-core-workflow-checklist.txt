@@ -1,0 +1,158 @@
+Loam Ledger Core Beta Workflow Checklist
+
+Purpose
+
+This is a cleaner checklist for one full beta-readiness pass. The older beta-test-checklist.txt is still the working notes file with stale-check numbers and bug notes. This file is meant to be easier to follow from start to finish.
+
+Mark each item:
+[ ] Not tested
+[y] Works
+[n] Broken
+[?] Confusing
+
+
+1. Account and Safety
+
+[ ] Create or log into a test account.
+[ ] Confirm the beta warning appears and can be dismissed.
+[ ] Confirm the app does not show team account controls, worker/planner role labels, or multi-farm account tools for normal beta use.
+[ ] Submit a suggestion/problem report.
+[ ] If testing admin replies, confirm the reply appears in the user's Inbox and unread count updates.
+
+
+2. Map Setup
+
+[ ] Open Farm Map.
+[ ] Draw a field.
+[ ] Draw a block inside the field.
+[ ] Select the block and confirm only the useful Selection card appears.
+[ ] Use Make beds.
+[ ] Confirm beds appear in the right place and roughly match the expected layout.
+[ ] Change the first-bed entrance side and confirm the preview vehicle drives into the first bed.
+[ ] Switch between Planning and Work modes.
+[ ] Confirm the map still works after changing modes.
+
+
+3. Seed and Crop Planning
+
+[ ] Create or choose a seed record with days to maturity.
+[ ] Create a planting tied to that seed record.
+[ ] Use crop, variety, planting date, spacing, rows per bed, plant count or bed length, and map location.
+[ ] Confirm the planting appears in Annual Crop Plan.
+[ ] Open the planting detail page.
+[ ] Edit the planting.
+[ ] Confirm decimal tray count works, plant count rounds to a whole number, cells per tray defaults to 128 if blank, and bed length recalculates from spacing and rows per bed.
+[ ] Refresh the page and confirm the edit is still saved.
+[ ] Create another planting with the same seed record and confirm spacing prefills from the remembered spacing.
+
+
+4. Task Flow and Planned Work
+
+[ ] Assign or create a task flow for the planting.
+[ ] Confirm task nodes use current task categories, not stale/old categories.
+[ ] Confirm future tasks appear in the Task List.
+[ ] Confirm task dates are based on the planting date and flow offsets.
+[ ] Confirm a harvest or cleanup-style task uses the seed record's days to maturity where expected.
+[ ] Confirm map task markers are tied to the planting when the task belongs to a planting.
+[ ] Confirm bed geometry controls where the vehicle is drawn, but the task still belongs to the planting.
+
+
+5. Recording Planned Work Done
+
+[ ] Open Farm Map in Work mode.
+[ ] Turn on Tasks due this week.
+[ ] Select a block, bed, or task marker with planned work.
+[ ] Record a seed-in-tray task and confirm Trays seeded accepts a decimal such as 2.2.
+[ ] Confirm Cells per tray can be changed before recording.
+[ ] Confirm Cells seeded can be used for a less-than-full tray.
+[ ] Record one field task such as transplanting, cultivation, or bed making.
+[ ] Confirm Record Work Done shows the work type, task name, scheduled date, actual date, and relevant location fields.
+[ ] Confirm a landless bed-making task shows a warning and does not record until it is tied to mapped land.
+[ ] Confirm the task changes to done.
+[ ] Confirm done tasks stay visible under unfinished tasks in the Tasks-this-week card.
+[ ] Confirm the planting history or event history shows the recorded work.
+[ ] Confirm later task dates shift when they are supposed to shift.
+
+
+6. Recording Unplanned Work Done
+
+[ ] In Work mode, select a field, block, section, or bed.
+[ ] Use Record Work for an unplanned map-based task.
+[ ] Choose a date and work category.
+[ ] Confirm the work record is tied to the map location and date.
+[ ] If the work affects a planting, confirm the planting is updated only where appropriate.
+[ ] Confirm the record appears later in the relevant bed/block history.
+
+
+7. Map Vehicles and Labels
+
+[ ] Confirm task icons or vehicles appear when Tasks due this week is checked.
+[ ] Confirm planting-owned task vehicles appear at the planting's first bed or first actual placement.
+[ ] Confirm a planting with only a block and no bed gets a static block marker instead of disappearing.
+[ ] Confirm first-bed entrance movement drives into the bed, resets, and drives in again.
+[ ] Confirm the vehicle does not turn around or drive backward during the entrance loop.
+[ ] Confirm map labels are readable and do not hide important map details.
+
+
+8. Undo, Redo, and Delete Safety
+
+[ ] Use Undo after a test change.
+[ ] Confirm the change is undone.
+[ ] Use Redo.
+[ ] Confirm the change comes back.
+[ ] Try deleting a planting and confirm the app asks first.
+[ ] Try deleting a map item and confirm the app asks first.
+[ ] Confirm spreadsheet import has no option that deletes or replaces existing crop-plan rows.
+
+
+9. Spreadsheet Backup
+
+[ ] Export a farm spreadsheet backup.
+[ ] Confirm the file downloads with a date in the name.
+[ ] Open the spreadsheet and confirm core data is present.
+[ ] Import the backup into a fresh test farm/account.
+[ ] Confirm fields, blocks, beds, plantings, placements, tasks, seed records, vehicles, and events come back.
+[ ] Confirm importing does not delete existing records.
+[ ] Import a simple crop-plan spreadsheet.
+[ ] Confirm incomplete rows are imported with review markers instead of disappearing.
+
+
+10. Mobile Pass
+
+[ ] Open the app on a phone-sized screen.
+[ ] Confirm the Menu / tools button opens the top toolbar.
+[ ] Confirm navigation works from the mobile toolbar.
+[ ] Confirm Farm Map fits the screen.
+[ ] Confirm map controls are reachable on mobile.
+[ ] Confirm Annual Crop Plan and Task List tables can scroll sideways without breaking the page.
+[ ] Confirm planting forms are readable and usable on mobile.
+[ ] Confirm Record Work is usable on mobile.
+[ ] Confirm Settings is usable on mobile.
+
+
+11. Production Hosting Check
+
+[ ] Frontend host has VITE_API_BASE_URL set to the real API address.
+[ ] API host has CORS_ALLOWED_ORIGINS set to the real website address.
+[ ] API host has PUBLIC_WEB_URL set to the real website address.
+[ ] API host has PUBLIC_API_URL set to the real API address.
+[ ] API host has NODE_ENV=production.
+[ ] API host has a real long CSRF_SECRET, not the example value.
+[ ] API host has SESSION_COOKIE_SECURE=true.
+[ ] API host has SESSION_COOKIE_SAMESITE=Lax, unless the website/API setup requires None.
+[ ] If using SESSION_COOKIE_SAMESITE=None, confirm SESSION_COOKIE_SECURE=true.
+[ ] Confirm the production database has automatic backups.
+[ ] Confirm you know how to restore a database backup if something goes wrong.
+[ ] Confirm nobody runs npm run db:seed on real beta data.
+[ ] Confirm migrations run with npm run db:migrate when updating the server.
+
+
+Final Beta Decision
+
+[ ] The full map-to-planting-to-work-recording workflow passes.
+[ ] Export backup works.
+[ ] Import backup works into a fresh test farm.
+[ ] Mobile has no blocker problems.
+[ ] Login works on the hosted site.
+[ ] At least one other person can create/login/use a test account.
+[ ] Remaining broken items are written down and are not data-loss risks.

@@ -1,0 +1,198 @@
+Loam Ledger Beta Test Checklist
+
+Use this as a practical testing pass before inviting beta users.
+
+Mark each item:
+[y] Works
+[y1], [y2], [y3], etc. Worked before; code has changed that many rounds since it was last directly retested
+[y8] or higher means stale: it worked before, but has gone 8+ edit rounds without being rechecked
+[n] Broken
+[?] Confusing
+[ ] Not tested
+
+When updating this checklist after code changes:
+- If the item was directly affected by a change, reset it to [ ] so it gets retested.
+- If the item was not changed, increase [y] to [y1], [y1] to [y2], [y2] to [y3], and so on.
+
+
+1st MOST IMPORTANT: MUST-PASS FARM WORKFLOW
+
+This section answers the main question: can a real farm safely use the app from planning through work recording and backup?
+
+[y4] Open the app and log in successfully.
+[y2] Create a new test farm account, or use a fresh demo/test account. If the username is already taken, confirm the app clearly says to choose a new username.
+[y2] Confirm the beta warning appears with the new "This software is still being built." text and can be dismissed.
+[y5] Confirm the Suggestion/problem button opens and submits a report.
+
+Map setup:
+[y5] Open Farm Map.
+[y5] Draw a Field.
+[y5] Draw a Block inside the Field.
+[y5] Make beds in the Block.
+[y5] Confirm the beds appear in the right place on the map.
+[y1] In map Plan mode, click beds and crop overlays and confirm they do not select a single bed.
+[y1] In map Work mode, select a block and confirm its details look correct.
+[y1] Switch between Planning and Work modes.
+[y1] Confirm the map still works after changing modes.
+
+Crop plan:
+[y1] Open Annual Crop Plan.
+[y5] Create a planting with crop, variety, date, spacing, plant count or bed length, and location.
+[y5] Confirm the planting appears in the crop plan.
+[y5] Open the planting detail page.
+[ ] Edit a transplant planting from the Edit Planting card and save it. Confirm tray count can use decimals such as 22.22, plant count rounds to the nearest whole plant, cells per tray defaults to 128 if blank, and bed length used changes from tray count, spacing, and rows per bed.
+[ ] Confirm the edit is still there after refreshing the page.
+
+Task flow and work recording:
+[y4] Assign or create a task flow for the planting.
+[y4] Confirm future tasks appear in the task list.
+[ ] Record a seed-in-tray task and confirm Trays seeded accepts a decimal such as 2.2.
+[ ] Record one real work task, such as seeding, transplanting, cultivating, or bed making. If a bed-making task is not tied to mapped land, confirm the Record Work Done card shows a visible warning and does not record it.
+[y2] Confirm the task changes to done.
+[ ] Confirm the planting history/event history shows the recorded work, and the Tasks-this-week card keeps done tasks visible under unfinished tasks.
+[ ] Confirm later task dates shift when they are supposed to shift.
+[y1] Use Undo after a test change.
+[y1] Confirm the change is undone.
+[y1] Use Redo.
+[y1] Confirm the change comes back.
+
+Map-to-work workflow:
+[y1] Open Farm Map in Work mode.
+[y1] Select a bed/block/field with a planned task.
+[y1] Record work from the map. Confirm the card is named Record Work Done, shows the specific work type and task name, and bed-making for the whole planned block records without the "Only X of Y beds fit from the planned bed edge" error.
+[ ] Confirm the work appears in the task list and planting history.
+[ ] Confirm vehicles/tractors show on the map when Tasks due this week is checked.
+[ ] Confirm task icons or vehicles move/animate if expected.
+
+Spreadsheet backup safety:
+[y4] Export the farm spreadsheet backup.
+[y4] Confirm the file downloads with a date in the name.
+[y4] Open the spreadsheet and confirm the main farm data is present.
+[y4] Import the backup into a fresh test farm/account.
+[y4] Confirm map items, beds, plantings, tasks, seed records, vehicles, and events come back.
+[y2] Confirm importing does not delete existing records.
+[y2] Import a simple crop-plan spreadsheet.
+[ ] Confirm incomplete rows are imported with review markers instead of disappearing.
+
+Single-user beta safety:
+[y1] Confirm Settings does not show Team accounts, worker/planner roles, controls for creating another farm login, or a Map Privacy card.
+[y2] Confirm the header/account area only shows the current user and farm name, not worker/planner role labels.
+
+Data-loss checks:
+[y4] Try deleting a planting and confirm the app asks before deleting.
+[y5] Try deleting a map item and confirm the app asks before deleting.
+[y4] Confirm Undo is available after important changes.
+[y2] Confirm the app does not offer any spreadsheet option that deletes or replaces existing crop-plan rows.
+
+
+2nd: EVERYTHING ELSE
+
+This section is still important, but these are less likely to block beta if the first section works.
+
+Mobile testing:
+[ ] Open the app on a phone-sized screen.
+[ ] Confirm the Menu / tools button opens the top toolbar.
+[ ] Confirm navigation works from the mobile toolbar.
+[ ] Confirm Farm Map fits the screen.
+[ ] Confirm map controls are reachable on mobile.
+[ ] Confirm Annual Crop Plan table can scroll sideways without breaking the page.
+[ ] Confirm Task List table can scroll sideways without breaking the page.
+[ ] Confirm planting forms are readable and usable on mobile.
+[ ] Confirm Record Work is usable on mobile.
+[ ] Confirm Settings is usable on mobile.
+
+Admin and feedback:
+[y5] Log in as an admin.
+[y5] Open Admin.
+[y5] Confirm user list loads.
+[y5] Confirm recent usage loads.
+[y5] Confirm recent reports load.
+[y4] Send a reply to a report.
+[y4] Log in as that user and confirm the reply appears in Inbox.
+[y4] Mark an inbox message read.
+[ ] Confirm the unread count updates.
+
+Seed bank:
+[y3] Create a seed record.
+[y3] Edit the seed record.
+[y3] Archive the seed record.
+[y3] Restore the seed record.
+[y3] Confirm seed records can be linked to plantings.
+[ ] In the first-account tutorial, confirm the toolbar Make beds button is highlighted when the tutorial asks for bed making.
+[ ] In the Record Work Done card for a seed-in-tray task, confirm Trays seeded and Cells per tray can be adjusted before recording.
+[ ] In the Record Work Done card for a seed-in-tray task, confirm Cells seeded can be used for a less-than-full tray.
+Seed bank spacing reuse:
+[y4] Create or choose a seed record with days to maturity filled in.
+[y4] Create a planting linked to that seed record with a clear spacing, such as 12 in-row, 12 between-row, and 3 rows per bed.
+[y4] Save the planting.
+[y4] Create another planting with the same seed record.
+[y4] Confirm the spacing fields auto-fill from the earlier planting.
+[y4] Change the second planting to a different useful spacing for the same crop, such as 18 in-row, 18 between-row, and 2 rows per bed.
+[y4] Save the second planting.
+[y4] Create a third planting with the same seed record.
+[y4] Confirm the app currently remembers one spacing choice for the seed/crop.
+[y] Confirm the one-spacing limitation is noted in docs/beta-followups.txt, with no new front-end note.
+
+Harvest:
+[ ] Open Harvest Log and confirm it shows the "Feature coming soon, hopefully..." beta-scope message.
+
+Task flows:
+[y4] Create a new task flow.
+[ ] Add several task nodes.
+[ ] Link task nodes together.
+[ ] Save the task flow.
+[ ] Copy the task flow.
+[ ] Delete a test task flow.
+[ ] Confirm deleting asks first.
+
+Vehicles and map icons:
+[y4] Create a saved vehicle/tractor.
+[y4] Change its colors.
+[y4] Assign it to a task flow node.
+[ ] Confirm it appears correctly on the map.
+[ ] Delete the test vehicle.
+
+Display/settings:
+[y2] Change distance units.
+[y2] Confirm bed lengths and areas still make sense.
+[ ] Change color theme.
+[ ] Confirm text stays readable.
+[ ] Confirm Settings keeps beta account management hidden.
+
+
+Offline map:
+[ ] Check Map imagery settings.
+[ ] Confirm live map source works.
+[ ] If using offline imagery, confirm offline status is shown clearly.
+[ ] If not using offline imagery, confirm the app still works normally.
+
+Public beta hosting settings:
+
+This is the item that sounded important but unclear.
+
+Plain meaning: before strangers or beta users use the hosted app, the website and API must know where each other live, and the API must use real security settings. If these are wrong, people may not be able to log in, browsers may block the app, or login cookies may be unsafe.
+
+Ask for help checking these before public beta:
+
+[ ] Frontend host has VITE_API_BASE_URL set to the real API address.
+[ ] API host has CORS_ALLOWED_ORIGINS set to the real website address.
+[ ] API host has PUBLIC_WEB_URL set to the real website address.
+[ ] API host has PUBLIC_API_URL set to the real API address.
+[ ] API host has NODE_ENV=production.
+[ ] API host has a real long CSRF_SECRET, not the example value.
+[ ] API host has SESSION_COOKIE_SECURE=true.
+[ ] API host has SESSION_COOKIE_SAMESITE=Lax, unless the website/API setup requires None.
+[ ] If using SESSION_COOKIE_SAMESITE=None, confirm SESSION_COOKIE_SECURE=true.
+[ ] Confirm the production database has automatic backups.
+[ ] Confirm you know how to restore a database backup if something goes wrong.
+[ ] Confirm nobody runs npm run db:seed on real beta data.
+[ ] Confirm migrations run with npm run db:migrate when updating the server.
+
+Final beta decision:
+[ ] The full 1st MOST IMPORTANT workflow passes.
+[ ] Mobile has no blocker problems.
+[ ] Export backup works.
+[ ] Import backup works into a fresh test farm.
+[ ] Login works on the hosted site.
+[ ] At least one other person can create/login/use a test account.
+[ ] Any remaining broken items are written down and are not data-loss risks.

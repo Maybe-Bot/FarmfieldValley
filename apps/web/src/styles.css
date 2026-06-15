@@ -330,13 +330,6 @@ textarea {
   gap: 0.55rem;
 }
 
-.mobile-list-header {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 0.75rem;
-}
-
 .nav-button,
 .primary-button,
 .secondary-button {
@@ -373,6 +366,10 @@ textarea {
   display: grid;
   gap: 0.65rem;
   align-items: stretch;
+}
+
+.mobile-toolbar-summary {
+  display: none;
 }
 
 .content-grid {
@@ -589,6 +586,17 @@ textarea {
   border-radius: 12px;
   background: var(--surface-soft);
   color: var(--app-text);
+}
+
+.warning-box {
+  border: 1px solid #d99a3a;
+  background: #fff6df;
+  color: #5a3612;
+}
+
+.danger-pill {
+  background: #b42318;
+  color: #fff;
 }
 
 .tutorial-card {
@@ -1155,6 +1163,67 @@ textarea {
   white-space: pre-wrap;
 }
 
+.feedback-reply-form {
+  margin-top: 0.75rem;
+}
+
+.inbox-card {
+  max-width: 880px;
+}
+
+.inbox-list {
+  display: grid;
+  gap: 0.75rem;
+}
+
+.inbox-message {
+  display: grid;
+  gap: 0.65rem;
+  padding: 0.85rem;
+  border: 1px solid var(--card-border);
+  border-radius: 8px;
+  background: var(--surface-soft);
+}
+
+.inbox-message.unread {
+  border-color: var(--button-primary);
+  background: var(--surface-panel);
+}
+
+.inbox-message-header {
+  display: flex;
+  gap: 0.75rem;
+  align-items: flex-start;
+  justify-content: space-between;
+}
+
+.inbox-message-header h3 {
+  margin: 0;
+  font-size: 1rem;
+}
+
+.inbox-message-body {
+  margin: 0;
+  white-space: pre-wrap;
+}
+
+.inline-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  align-items: center;
+}
+
+.status-pill {
+  flex: 0 0 auto;
+  padding: 0.15rem 0.45rem;
+  border-radius: 999px;
+  background: var(--button-primary);
+  color: var(--button-primary-text);
+  font-size: 0.78rem;
+  font-weight: 700;
+}
+
 .flow-chart-grid {
   display: grid;
   gap: 0.75rem;
@@ -1303,6 +1372,11 @@ textarea {
 .flow-node-card.connection-source {
   border-color: #9a6429;
   box-shadow: 0 12px 28px rgba(154, 100, 41, 0.22);
+}
+
+.flow-node-card.stale-flow-node {
+  border-color: #b42318;
+  box-shadow: 0 12px 28px rgba(180, 35, 24, 0.2);
 }
 
 .flow-node-card-actions {
@@ -1709,39 +1783,6 @@ textarea {
   margin: 0;
 }
 
-.mobile-card-list {
-  display: grid;
-  gap: 0.85rem;
-}
-
-.mobile-year-group {
-  display: grid;
-  gap: 0.75rem;
-}
-
-.mobile-year-group h3 {
-  margin: 0;
-}
-
-.mobile-summary-card {
-  display: grid;
-  gap: 0.85rem;
-}
-
-.mobile-summary-grid {
-  display: grid;
-  gap: 0.75rem;
-}
-
-.mobile-summary-row {
-  display: grid;
-  gap: 0.15rem;
-}
-
-.mobile-empty-state {
-  margin: 0;
-}
-
 .plain-list {
   margin: 0;
   padding-left: 1rem;
@@ -2022,6 +2063,18 @@ textarea {
   animation-delay: var(--vehicle-run-delay, 0s);
 }
 
+.vehicle-sprite.animated.one-way {
+  animation-name: vehicle-bed-run-one-way;
+}
+
+.vehicle-sprite.animated.one-way.flipped {
+  animation-name: vehicle-bed-run-one-way-flipped;
+}
+
+.vehicle-sprite.animated.one-way .vehicle-layer {
+  animation: none;
+}
+
 .vehicle-frame-front {
   --vehicle-frame-x: 0%;
 }
@@ -2173,6 +2226,24 @@ textarea {
   91.579%,
   100% {
     transform: translateX(calc(var(--vehicle-run-distance, 44px) * -1)) scaleX(-1);
+  }
+}
+
+@keyframes vehicle-bed-run-one-way {
+  0% {
+    transform: translateX(calc(var(--vehicle-run-distance, 44px) * -1)) scaleX(-1);
+  }
+  100% {
+    transform: translateX(var(--vehicle-run-distance, 44px)) scaleX(-1);
+  }
+}
+
+@keyframes vehicle-bed-run-one-way-flipped {
+  0% {
+    transform: translateX(var(--vehicle-run-distance, 44px)) scaleX(1);
+  }
+  100% {
+    transform: translateX(calc(var(--vehicle-run-distance, 44px) * -1)) scaleX(1);
   }
 }
 
@@ -2664,7 +2735,44 @@ textarea {
   .mobile-shell .topbar {
     flex-direction: column;
     align-items: stretch;
-    gap: 0.8rem;
+    gap: 0.55rem;
+    position: sticky;
+    top: 0;
+    z-index: 30;
+    padding: 0.45rem;
+    border: 1px solid var(--card-border);
+    border-radius: 12px;
+    background: var(--card-bg);
+    box-shadow: var(--card-shadow);
+  }
+
+  .mobile-shell .mobile-toolbar-summary {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.65rem;
+    min-width: 0;
+  }
+
+  .mobile-shell .mobile-toolbar-summary .title-block {
+    display: grid;
+    gap: 0.12rem;
+  }
+
+  .mobile-shell .mobile-toolbar-summary .eyebrow {
+    margin: 0;
+    font-size: 0.68rem;
+  }
+
+  .mobile-shell .mobile-toolbar-summary button {
+    flex: 0 0 auto;
+    min-width: 6.5rem;
+    white-space: nowrap;
+  }
+
+  .mobile-shell .topbar:not(.mobile-toolbar-open) .header-actions,
+  .mobile-shell .topbar:not(.mobile-toolbar-open) .toolbar-map-tools {
+    display: none;
   }
 
   .mobile-shell .topbar > div,
@@ -2676,17 +2784,56 @@ textarea {
     min-width: 0;
   }
 
+  .mobile-shell .section-header {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .mobile-shell .section-header > button,
+  .mobile-shell .section-header > .button-row {
+    width: 100%;
+    min-width: 0;
+  }
+
+  .mobile-shell .section-header > button {
+    white-space: normal;
+    overflow-wrap: anywhere;
+  }
+
   .mobile-shell .header-actions {
     display: grid;
-    grid-template-columns: repeat(2, minmax(0, 1fr));
+    grid-template-columns: 1fr;
     width: 100%;
-    gap: 0.5rem;
+    gap: 0.65rem;
     justify-content: flex-start;
   }
 
   .mobile-shell .toolbar-left,
   .mobile-shell .toolbar-right {
-    display: contents;
+    display: flex;
+    flex-wrap: wrap;
+    align-items: stretch;
+    justify-content: stretch;
+    gap: 0.5rem;
+    width: 100%;
+    min-width: 0;
+    margin-left: 0;
+  }
+
+  .mobile-shell .toolbar-nav {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 0.5rem;
+    width: 100%;
+  }
+
+  .mobile-shell .toolbar-right > button {
+    flex: 1 1 calc(50% - 0.25rem);
+  }
+
+  .mobile-shell .toolbar-right > .toolbar-nav,
+  .mobile-shell .toolbar-right > .small-chip {
+    flex: 1 1 100%;
   }
 
   .mobile-shell .small-chip {
@@ -2714,13 +2861,23 @@ textarea {
     gap: 0.5rem;
   }
 
+  .mobile-shell .toolbar-map-tools {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 0.5rem;
+    width: 100%;
+  }
+
   .mobile-shell .toolbar-workflow-toggle {
+    grid-column: 1 / -1;
     gap: 0;
+    width: 100%;
+    justify-content: center;
   }
 
   .mobile-shell .toolbar-workflow-toggle button {
-    width: auto;
-    min-width: 4rem;
+    flex: 1 1 0;
+    min-width: 0;
     white-space: nowrap;
   }
 
@@ -2743,8 +2900,14 @@ textarea {
 
   .data-table {
     display: block;
+    max-width: 100%;
     overflow-x: auto;
     white-space: nowrap;
+  }
+
+  .mobile-shell .form-grid,
+  .mobile-shell .spacing-pair {
+    grid-template-columns: 1fr;
   }
 
   .detail-list div {

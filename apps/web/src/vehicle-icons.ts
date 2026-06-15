@@ -5,10 +5,7 @@ export function isVehicleModel(model: string | null | undefined): model is Vehic
 }
 
 export function vehicleModelForTask(taskType: string): VehicleModel {
-  if (taskType === "harvest") {
-    return "box";
-  }
-  if (taskType === "transplant" || taskType === "finish_crop" || taskType === "irrigation_check") {
+  if (taskType === "transplant") {
     return "van";
   }
   return "pickup";
@@ -59,7 +56,7 @@ function vehicleDisplayBearing(bearingDegrees: number | null | undefined) {
 export function vehicleSpriteStyle(
   bodyColor: string,
   accentColor: string,
-  options: { bearing?: number | null; animated?: boolean; scale?: number; model?: VehicleModel | string; frame?: "front" | "three-quarter" | "side" | "rear"; runDistancePx?: number; runDurationSec?: number; animationDelaySec?: number; spriteSheetUrl?: string | null } = {}
+  options: { bearing?: number | null; animated?: boolean; oneWay?: boolean; scale?: number; model?: VehicleModel | string; frame?: "front" | "three-quarter" | "side" | "rear"; runDistancePx?: number; runDurationSec?: number; animationDelaySec?: number; spriteSheetUrl?: string | null } = {}
 ) {
   const model: VehicleModel =
     options.model === "box" || options.model === "van" || options.model === "pickup"
@@ -74,7 +71,8 @@ export function vehicleSpriteStyle(
     `vehicle-frame-${frame}`,
     `vehicle-model-${model}`,
     bearingFrame.flipped ? "flipped" : "",
-    options.animated ? "animated" : ""
+    options.animated ? "animated" : "",
+    options.oneWay ? "one-way" : ""
   ].filter(Boolean).join(" ");
   const runDurationSec = Number.isFinite(options.runDurationSec) ? Math.max(4, Math.min(18, options.runDurationSec ?? 9.5)) : 9.5;
   const animationDelaySec = Number.isFinite(options.animationDelaySec) ? options.animationDelaySec ?? 0 : 0;
@@ -116,7 +114,7 @@ function escapeHtmlAttribute(value: string) {
 export function vehicleSpriteHtml(
   bodyColor: string,
   accentColor: string,
-  options: { bearing?: number | null; animated?: boolean; scale?: number; model?: VehicleModel | string; frame?: "front" | "three-quarter" | "side" | "rear"; runDistancePx?: number; runDurationSec?: number; animationDelaySec?: number; spriteSheetUrl?: string | null } = {}
+  options: { bearing?: number | null; animated?: boolean; oneWay?: boolean; scale?: number; model?: VehicleModel | string; frame?: "front" | "three-quarter" | "side" | "rear"; runDistancePx?: number; runDurationSec?: number; animationDelaySec?: number; spriteSheetUrl?: string | null } = {}
 ) {
   const sprite = vehicleSpriteStyle(bodyColor, accentColor, options);
   if (options.spriteSheetUrl) {

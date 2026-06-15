@@ -1126,13 +1126,13 @@ async function createDefaultTaskFlow(client: DbClient, farmId: number) {
     isDefault: true,
     nodes: [
       { nodeKey: "seed_tray", taskType: "seed_in_tray", label: "Seed trays", anchor: "planned_sow", offsetDays: 0, x: 0.08, y: 0.7 },
-      { nodeKey: "disk", taskType: "bed_prep", label: "Disk ground", anchor: "planned_transplant", offsetDays: -21, x: 0.08, y: 0.28 },
-      { nodeKey: "lime", taskType: "bed_prep", label: "Spread lime", anchor: "after:disk", offsetDays: 1, x: 0.22, y: 0.28 },
-      { nodeKey: "fertilize", taskType: "bed_prep", label: "Fertilize", anchor: "after:lime", offsetDays: 10, x: 0.36, y: 0.28 },
-      { nodeKey: "perfecta", taskType: "bed_prep", label: "Perfecta pass", anchor: "after:fertilize", offsetDays: 1, x: 0.5, y: 0.28 },
-      { nodeKey: "bed_shape", taskType: "bed_prep", label: "Bed shape", anchor: "after:perfecta", offsetDays: 1, x: 0.64, y: 0.28 },
+      { nodeKey: "disk", taskType: "bed_making", label: "Disk ground", anchor: "planned_sow", offsetDays: 7, x: 0.08, y: 0.28 },
+      { nodeKey: "lime", taskType: "bed_making", label: "Spread lime", anchor: "after:disk", offsetDays: 1, x: 0.22, y: 0.28 },
+      { nodeKey: "fertilize", taskType: "bed_making", label: "Fertilize", anchor: "after:lime", offsetDays: 10, x: 0.36, y: 0.28 },
+      { nodeKey: "perfecta", taskType: "bed_making", label: "Perfecta pass", anchor: "after:fertilize", offsetDays: 1, x: 0.5, y: 0.28 },
+      { nodeKey: "bed_shape", taskType: "bed_making", label: "Bed shape", anchor: "after:perfecta", offsetDays: 1, x: 0.64, y: 0.28 },
       { nodeKey: "transplant", taskType: "transplant", label: "Transplant", anchor: "after:seed_tray,bed_shape", offsetDays: 1, x: 0.64, y: 0.58 },
-      { nodeKey: "harvest", taskType: "harvest", label: "Harvest start", anchor: "after:transplant", offsetDays: 35, x: 0.86, y: 0.58 }
+      { nodeKey: "cleanup", taskType: "cleanup", label: "Cleanup", anchor: "after:transplant", offsetDays: 35, x: 0.86, y: 0.58 }
     ],
     edges: [
       { fromNodeKey: "disk", toNodeKey: "lime" },
@@ -1141,7 +1141,7 @@ async function createDefaultTaskFlow(client: DbClient, farmId: number) {
       { fromNodeKey: "perfecta", toNodeKey: "bed_shape" },
       { fromNodeKey: "seed_tray", toNodeKey: "transplant" },
       { fromNodeKey: "bed_shape", toNodeKey: "transplant" },
-      { fromNodeKey: "transplant", toNodeKey: "harvest" }
+      { fromNodeKey: "transplant", toNodeKey: "cleanup" }
     ]
   });
 }

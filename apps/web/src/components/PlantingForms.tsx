@@ -829,8 +829,16 @@ export function PlantingForm({
             const varietyName = selectedVariety?.name ?? "";
 
             const plannedSowDate = plantingDate || null;
-            const plantCount = selectedPlantCount != null && selectedPlantCount > 0 ? Math.round(selectedPlantCount) : null;
-            const bedLengthUsedM = selectedBedLengthM != null && selectedBedLengthM > 0 ? selectedBedLengthM : null;
+            const trayInputsChanged = Boolean(editingPlanting)
+              && (trayCountValue !== (editingPlanting?.trayCount ?? null) || traySizeValue !== (editingPlanting?.cellsPerTray ?? 128));
+            const savePlantCount = trayInputsChanged && plantingMethod === "transplant" && trayPlantCount != null
+              ? trayPlantCount
+              : selectedPlantCount;
+            const saveBedLengthM = trayInputsChanged && plantingMethod === "transplant"
+              ? bedLengthFromPlantCount(savePlantCount, inRowSpacingM, rowsPerBedForCalc)
+              : selectedBedLengthM;
+            const plantCount = savePlantCount != null && savePlantCount > 0 ? Math.round(savePlantCount) : null;
+            const bedLengthUsedM = saveBedLengthM != null && saveBedLengthM > 0 ? saveBedLengthM : null;
             if (countSourceNeedsBlock) {
               setStatus("Choose a block before using Full block.");
               return;
@@ -1138,7 +1146,13 @@ export function PlantingForm({
           <>
             <label>
               <span>Tray size</span>
-              <select value={traySize} onChange={(event) => setTraySize(event.target.value)}>
+              <select
+                value={traySize}
+                onChange={(event) => {
+                  setPlantCountSource("tray_count");
+                  setTraySize(event.target.value);
+                }}
+              >
                 <option value="128">128-cell</option>
                 <option value="288">288-cell</option>
                 <option value="72">72-cell</option>
@@ -1150,7 +1164,7 @@ export function PlantingForm({
               <input
                 type="number"
                 min="0"
-                step="1"
+                step="0.1"
                 value={trayCount}
                 onChange={(event) => {
                   setPlantCountSource("tray_count");
@@ -1176,56 +1190,6 @@ export function PlantingForm({
         <label className="full-span"><span>Notes</span><textarea name="notes" rows={3} value={notes} onChange={(event) => setNotes(event.target.value)} /></label>
         {status && <p className="muted full-span"><strong>{status}</strong></p>}
         <button className={`primary-button full-span${tutorialReadyToCreate ? " tutorial-target" : ""}`}>{isEditing ? "Save planting" : "Create planting"}</button>
-      </form>
-    </div>
-  );
-}
-
-// Manual placement form for splitting one planting across one or more beds.
-export function PlacementForm({
-  plantingId,
-  beds,
-  distanceUnit,
-  onSave
-}: {
-  plantingId: number;
-  beds: Bed[];
-  distanceUnit: DistanceUnit;
-  onSave: () => Promise<void>;
-}) {
-  const plantableBeds = beds.filter((bed) => bed.source !== "road");
-
-  return (
-    <div className="card">
-      <h2>Add child placement</h2>
-      <form
-        className="form-grid"
-        onSubmit={(event) =>
-          void handleForm(event, async (form) => {
-            await api.addPlacement(plantingId, {
-              bedId: Number(form.get("bedId")),
-              plantCount: form.get("plantCount") ? Number(form.get("plantCount")) : null,
-              bedLengthUsedM: parseLengthInputValue(form.get("bedLengthUsedM"), distanceUnit),
-              actualDate: String(form.get("actualDate") || "") || null,
-              locationDetail: String(form.get("locationDetail") || "") || null,
-              notes: String(form.get("notes") || "")
-            });
-            await onSave();
-          })
-        }
-      >
-        <label>
-          <span>Bed</span>
-          <select name="bedId">
-            {plantableBeds.map((bed) => <option key={bed.id} value={bed.id}>{bed.name}</option>)}
-          </select>
-        </label>
-        <label><span>Date</span><input name="actualDate" type="date" defaultValue={todayDateInputValue()} /></label>
-        <label><span>Plant count</span><input name="plantCount" type="number" /></label>
-        <label><span>Bed length used ({distanceUnit})</span><input name="bedLengthUsedM" type="number" step="0.1" /></label>
-        <label><span>Exact location detail</span><input name="locationDetail" placeholder="North half of bed, east side" /></label>
-        <label className="full-span"><span>Notes</span><textarea name="notes" rows={3} defaultValue="Split placement" /></label>
-        <button className="primary-button full-span">Add placement</button>
       </form>
     </div>
   );

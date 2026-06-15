@@ -55,6 +55,7 @@ export const config = {
   csrfSecret:
     process.env.CSRF_SECRET ??
     (process.env.NODE_ENV === "production" ? "" : "loam-ledger-local-dev-csrf-secret"),
+  requireEmailVerification: parseBoolean(process.env.REQUIRE_EMAIL_VERIFICATION, false),
   sessionCookieName: process.env.SESSION_COOKIE_NAME ?? "loam_ledger_session",
   sessionMaxAgeDays: Number(process.env.SESSION_MAX_AGE_DAYS ?? 14),
   sessionCookieSecure: parseBoolean(process.env.SESSION_COOKIE_SECURE, process.env.NODE_ENV === "production"),

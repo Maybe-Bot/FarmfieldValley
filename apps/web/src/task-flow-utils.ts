@@ -66,7 +66,7 @@ export function newTaskFlowNode(index: number) {
     nodeKey: `node_${Date.now()}_${index}`,
     taskType: "bed_making",
     label: `Task ${index + 1}`,
-    anchor: "planned_transplant",
+    anchor: "planned_sow",
     offsetDays: 0,
     iconColor: taskIconColor("bed_making"),
     iconSecondaryColor: "#f4c430",

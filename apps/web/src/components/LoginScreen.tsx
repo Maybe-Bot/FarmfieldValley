@@ -42,7 +42,7 @@ export function LoginScreen({
   const [feedbackStatus, setFeedbackStatus] = useState<string | null>(null);
   const [isSavingFeedback, setIsSavingFeedback] = useState(false);
   const passwordHelp = "Password requirements: at least 8 characters, including one letter and one number.";
-  const emailHelp = `Real accounts must verify email before login. Use ${EMAIL_VERIFICATION_BYPASS_ADDRESS} for reusable testing accounts.`;
+  const emailHelp = `Use a real email for beta accounts. ${EMAIL_VERIFICATION_BYPASS_ADDRESS} is reusable for throwaway testing accounts.`;
   const repoUrl = "https://github.com/Maybe-Bot/FarmfieldValley";
 
   async function submitLoginFeedback(event: FormEvent<HTMLFormElement>) {

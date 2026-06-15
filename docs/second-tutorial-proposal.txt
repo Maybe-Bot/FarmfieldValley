@@ -1,0 +1,227 @@
+Second Tutorial Proposal: Full Farm Workflow
+
+Working name
+
+Full farm workflow tutorial
+
+Where it should live
+
+Settings should keep the existing First account tutorial card, but add a second button below it:
+
+Start full workflow tutorial
+
+This should be only available in the settings. It should be restartable because it doubles as a guided test path.
+
+
+Goal
+
+Walk the user through the most important beta workflow:
+
+1. Build a small map.
+2. Make beds.
+3. Create a seed record.
+4. Create a planting tied to that seed record.
+5. Attach or review a task flow.
+6. Show planned task vehicles on the map.
+7. Record planned work done.
+8. Confirm the work appears as a dated record.
+9. Export a backup.
+
+The tutorial should teach the app's core mental model:
+
+Planned work belongs mostly to the planting.
+Completed work belongs to a date and map location, and updates the planting/task when relevant.
+
+
+Recommended tutorial shape
+
+Step 1: Open Farm Map
+
+View: Farm Map
+Mode: Planning
+Highlight: Farm Map navigation, then Planning mode if needed
+User action: Go to the map.
+Checks covered: map opens, mode switching is understandable.
+
+
+Step 2: Draw Field
+
+View: Farm Map
+Mode: Planning
+Highlight: Draw field, map surface, name field, Save
+User action: Draw a simple field and save it.
+Checks covered: field drawing, save workflow, map surface interaction.
+
+
+Step 3: Draw Block
+
+View: Farm Map
+Mode: Planning
+Highlight: Select field if needed, Draw block, map surface, name field, Save
+User action: Draw a block inside the field and save it.
+Checks covered: block drawing, field/block relationship.
+
+
+Step 4: Make Beds
+
+View: Farm Map
+Mode: Planning
+Highlight: Select block, Make beds, first-bed entrance side, Fill remaining block or Generate
+User action: Generate beds in the block.
+Checks covered: bed generation, first-bed entrance side, no redundant block-selection card.
+
+
+Step 5: Check Entrance Vehicle
+
+View: Farm Map
+Mode: Planning
+Highlight: first-bed entrance preview
+User action: Watch the vehicle briefly.
+Checks covered: entrance vehicle drives into first bed, resets, and repeats without turning around.
+
+
+Step 6: Create Seed Record
+
+View: Seed Bank
+Highlight: New seed record form
+User action: Create a tutorial seed record with days to maturity.
+Suggested sample:
+- Crop: Cabbage
+- Variety: Tutorial cabbage
+- Days to maturity: 70
+Checks covered: seed creation, seed days to maturity.
+
+
+Step 7: Create Planting
+
+View: Farm Map or Annual Crop Plan
+Highlight: New Planting card
+User action: Create a planting linked to the tutorial seed record and mapped bed/block.
+Suggested sample:
+- Planting date: current week or a tutorial-controlled date
+- Tray count: 2.2
+- Cells per tray: 128
+- Spacing: 12 in-row, 12 between-row, 3 rows per bed
+- Plant count: auto-calculated or rounded
+Checks covered: planting creation, seed link, decimal tray count, spacing, plant count, map location.
+
+
+Step 8: Review Task Flow
+
+View: Task Flows
+Highlight: tutorial flow
+User action: Open the assigned flow and inspect the nodes.
+Checks covered: task flow exists, current task categories, seeding-date anchor model, days-to-maturity-driven later task.
+
+Optional action:
+Add one cleanup or cultivation node and save.
+
+
+Step 9: Find Planned Work on the Map
+
+View: Farm Map
+Mode: Work
+Highlight: Tasks due this week checkbox and week controls
+User action: Turn on Tasks due this week and select the tutorial planting/block.
+Checks covered: map task layer, vehicle marker, planting-owned task marker using bed geometry.
+
+
+Step 10: Record Seed-in-Tray Work
+
+View: Farm Map
+Mode: Work
+Highlight: Record Work Done card
+User action: Record a seed-in-tray task.
+Fields to guide:
+- Date: scheduled date
+- Trays seeded: 2.2
+- Cells per tray: 128
+Checks covered: decimal tray count, work record, task completion.
+
+
+Step 11: Record Field Work
+
+View: Farm Map
+Mode: Work
+Highlight: Record Work Done card
+User action: Record a transplanting or cultivation task tied to the planting and bed.
+Fields to guide:
+- Date: scheduled date
+- Bed/location: selected map location
+- Plant count if relevant
+Checks covered: completed work is tied to date and map, while task/planting update correctly.
+
+
+Step 12: Confirm Done Work Stays Visible
+
+View: Farm Map
+Mode: Work
+Highlight: Tasks-this-week card
+User action: Look at the card after recording.
+Expected result:
+- unfinished work appears under Work to do
+- completed work appears under Done this week
+Checks covered: done tasks do not disappear from the weekly map card.
+
+
+Step 13: Check Planting History
+
+View: Planting detail
+Highlight: history/event area
+User action: Open the tutorial planting.
+Expected result:
+Recorded work is visible in planting history or event history.
+Checks covered: work record is findable after it is recorded.
+
+
+Step 14: Export Backup
+
+View: Annual Crop Plan
+Highlight: spreadsheet export/download
+User action: Export a farm backup.
+Expected result:
+Backup downloads with a date in the filename.
+Checks covered: backup export.
+
+
+Step 15: Finish
+
+View: Settings or current page
+Highlight: tutorial completion button
+User action: Finish tutorial.
+Message:
+The tutorial farm workflow is complete. You created map land, beds, seed data, a planting, planned work, recorded work done, and a backup.
+
+
+Implementation notes
+
+- Do not make this a marketing-style walkthrough. It should be a working guided path through the real app.
+- Keep it separate from the first-account tutorial state so either tutorial can be restarted.
+- Reuse existing tutorial target highlighting where possible.
+- Use generated sample data only when it saves time; avoid hiding the real workflow from the user.
+- The tutorial should not require importing a spreadsheet. It can point out where import/export lives, but backup export is enough for this guided path.
+- The tutorial should be useful as a beta smoke test. If a step fails, that should indicate a real workflow problem.
+
+
+Checklist coverage
+
+This tutorial would cover most of:
+- account orientation
+- map setup
+- bed generation
+- seed record creation
+- planting creation
+- task flow review
+- map task vehicles
+- planned work recording
+- done-task visibility
+- planting/event history
+- backup export
+
+It would not fully cover:
+- backup import into a fresh account
+- mobile layout
+- admin feedback replies
+- production hosting settings
+- destructive delete confirmation
+- color theme readability

@@ -48,6 +48,7 @@ import {
   accountCreateSchema,
   BlockPlacementPlanRow,
   farmSettingsSchema,
+  feedbackReplySchema,
   feedbackSchema,
   loginSchema,
   PlantingInput,
@@ -55,7 +56,7 @@ import {
   SeedItemLotInput,
   ZoneActualStateInput
 } from "./schemas";
-import { ActualEventType, FarmRole, PlantingStatus, TaskType } from "./types";
+import { ActualEventType, FarmRole, isCurrentTaskType, isLegacyTaskType, PlantingStatus, TaskType } from "./types";
 import { assertUndoRestoreIsAccountSafe } from "./undo-safety";
 
 const app = express();
@@ -263,13 +264,8 @@ function actualUpdateForTaskType(taskType: string): { eventType: ActualEventType
       return { eventType: "direct_seeding", field: "actual_direct_seeding_date", status: "direct_seeded" };
     case "transplant":
       return { eventType: "transplant", field: "actual_transplant_date", status: "transplanted" };
-    case "cultivate":
     case "cultivation":
       return { eventType: "cultivation", field: "actual_cultivation_date", status: "growing" };
-    case "harvest":
-      return { eventType: "harvest", field: "actual_harvest_date", status: "harvested" };
-    case "finish_crop":
-      return { eventType: "finish", field: "actual_finish_date", status: "finished" };
     default:
       return null;
   }
@@ -1244,7 +1240,7 @@ async function upsertBlockBedMakingTask(client: PoolClient, farmId: number, bloc
       from tasks
       where farm_id = $1
         and planting_id is null
-        and task_type in ('bed_prep', 'bed_making')
+        and task_type = 'bed_making'
         and title = $2
         and notes like 'Auto-created block bed-making task.%'
       limit 1
@@ -1328,7 +1324,7 @@ async function loadExistingBlockPlacementPlanRows(client: PoolClient, farmId: nu
           gap.placement_order,
           gap.bed_length_used_m,
           null::integer as plant_count,
-          null::integer as tray_count
+          null::numeric as tray_count
         from block_placement_gaps gap
         where gap.block_id = $2
           and gap.farm_id = $1
@@ -1634,7 +1630,7 @@ async function moveBlockBedAssignmentsToOverflowForReplacement(
           gap.placement_order,
           gap.bed_length_used_m,
           null::integer as plant_count,
-          null::integer as tray_count
+          null::numeric as tray_count
         from block_placement_gaps gap
         join target_beds target on target.id = gap.bed_id
         where gap.farm_id = $1
@@ -2796,6 +2792,16 @@ async function saveTaskFlowTemplate(
   }
 ) {
   validateTaskFlowGraph(options.nodes, options.edges);
+  for (const node of options.nodes) {
+    if (!isCurrentTaskType(node.taskType)) {
+      throw new Error(isLegacyTaskType(node.taskType)
+        ? `The task "${node.label}" uses the old category "${node.taskType}". Change it to one of the current task categories before saving.`
+        : `The task "${node.label}" uses an unknown category "${node.taskType}". Change it to one of the current task categories before saving.`);
+    }
+    if (node.anchor !== "planned_sow" && !node.anchor.startsWith("after:")) {
+      throw new Error(`The task "${node.label}" uses an old scheduling anchor. Reconnect it with arrows or set it back to the seeding date before saving.`);
+    }
+  }
 
   let flowTemplateId = options.id;
   if (flowTemplateId == null) {
@@ -2882,13 +2888,13 @@ async function saveTaskFlowTemplate(
         values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
         returning id
       `,
-      [
-        flowTemplateId,
-        node.nodeKey,
-        node.taskType,
-        node.label,
-        node.anchor,
-        node.offsetDays,
+	    [
+	      flowTemplateId,
+	      node.nodeKey,
+	      node.taskType,
+	      node.label,
+	      node.anchor,
+	      node.offsetDays,
         node.iconColor,
         node.iconSecondaryColor,
         node.tractorModel ?? null,
@@ -2990,7 +2996,7 @@ app.post("/api/auth/login", asyncHandler(async (req, res) => {
       res.status(401).json({ error: "Invalid username or password" });
       return;
     }
-    if (!isEmailVerificationBypassAddress(user.email) && !user.email_verified_at) {
+    if (config.requireEmailVerification && !isEmailVerificationBypassAddress(user.email) && !user.email_verified_at) {
       recordLoginFailure(req, body.username);
       res.status(403).json({ error: "Check your email to verify this account before logging in." });
       return;
@@ -3028,7 +3034,8 @@ app.post("/api/auth/register", asyncHandler(async (req, res) => {
   const body = registerSchema.parse(req.body);
   const email = normalizeAccountEmail(body.email);
   const bypassEmailVerification = isEmailVerificationBypassAddress(email);
-  const verificationToken = bypassEmailVerification ? null : createEmailVerificationToken();
+  const verificationRequired = config.requireEmailVerification && !bypassEmailVerification;
+  const verificationToken = verificationRequired ? createEmailVerificationToken() : null;
   if (!enforceRateLimit(req, res, `register:${requestIp(req)}`, {
     limit: 8,
     windowMs: 60 * 60 * 1000,
@@ -3074,7 +3081,7 @@ app.post("/api/auth/register", asyncHandler(async (req, res) => {
         body.username.trim(),
         hashPassword(body.password),
         body.displayName?.trim() || null,
-        bypassEmailVerification ? new Date().toISOString() : null,
+        verificationRequired ? null : new Date().toISOString(),
         verificationToken ? emailVerificationTokenHash(verificationToken) : null,
         verificationToken ? new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString() : null
       ]
@@ -3109,7 +3116,7 @@ app.post("/api/auth/register", asyncHandler(async (req, res) => {
     await client.query("rollback");
     const maybeError = error as { code?: string };
     if (maybeError.code === "23505") {
-      res.status(400).json({ error: "That username or email is already in use" });
+      res.status(400).json({ error: "That username is already taken. Choose a new username, or use a different email." });
       return;
     }
     throw error;
@@ -3257,7 +3264,8 @@ app.post("/api/accounts", requireRole("planner"), asyncHandler(async (req, res) 
   const body = accountCreateSchema.parse(req.body);
   const email = normalizeAccountEmail(body.email);
   const bypassEmailVerification = isEmailVerificationBypassAddress(email);
-  const verificationToken = bypassEmailVerification ? null : createEmailVerificationToken();
+  const verificationRequired = config.requireEmailVerification && !bypassEmailVerification;
+  const verificationToken = verificationRequired ? createEmailVerificationToken() : null;
   const client = await pool.connect();
   try {
     await client.query("begin");
@@ -3285,7 +3293,7 @@ app.post("/api/accounts", requireRole("planner"), asyncHandler(async (req, res) 
         body.username.trim(),
         hashPassword(body.password),
         body.displayName?.trim() || null,
-        bypassEmailVerification ? new Date().toISOString() : null,
+        verificationRequired ? null : new Date().toISOString(),
         verificationToken ? emailVerificationTokenHash(verificationToken) : null,
         verificationToken ? new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString() : null
       ]
@@ -3313,7 +3321,7 @@ app.post("/api/accounts", requireRole("planner"), asyncHandler(async (req, res) 
     await client.query("rollback");
     const maybeError = error as { code?: string };
     if (maybeError.code === "23505") {
-      res.status(400).json({ error: "That username or email is already in use" });
+      res.status(400).json({ error: "That username is already taken. Choose a new username, or use a different email." });
       return;
     }
     throw error;
@@ -3408,6 +3416,73 @@ app.delete("/api/admin/users/:id", requireAdmin(), asyncHandler(async (req, res)
   }
 }));
 
+app.get("/api/messages", requireRole("worker"), asyncHandler(async (req, res) => {
+  const auth = currentAuth(req) as AuthContext;
+  const result = await pool.query<{
+    id: number;
+    farm_id: number | null;
+    sender_user_id: number | null;
+    sender_username: string | null;
+    sender_display_name: string | null;
+    recipient_user_id: number;
+    related_feedback_report_id: number | null;
+    subject: string;
+    body: string;
+    read_at: string | null;
+    created_at: string;
+  }>(
+    `
+      select
+        message.id,
+        message.farm_id,
+        message.sender_user_id,
+        sender.username as sender_username,
+        sender.display_name as sender_display_name,
+        message.recipient_user_id,
+        message.related_feedback_report_id,
+        message.subject,
+        message.body,
+        message.read_at,
+        message.created_at
+      from user_messages message
+      left join app_users sender on sender.id = message.sender_user_id
+      where message.recipient_user_id = $1
+      order by message.created_at desc, message.id desc
+      limit 100
+    `,
+    [auth.userId]
+  );
+
+  res.json(result.rows.map((row) => ({
+    id: row.id,
+    farmId: row.farm_id,
+    senderUserId: row.sender_user_id,
+    senderUsername: row.sender_username,
+    senderDisplayName: row.sender_display_name,
+    recipientUserId: row.recipient_user_id,
+    relatedFeedbackReportId: row.related_feedback_report_id,
+    subject: row.subject,
+    body: row.body,
+    readAt: row.read_at,
+    createdAt: row.created_at
+  })));
+}));
+
+app.post("/api/messages/:id/read", requireRole("worker"), asyncHandler(async (req, res) => {
+  const auth = currentAuth(req) as AuthContext;
+  const messageId = Number(req.params.id);
+  await pool.query(
+    `
+      update user_messages
+      set read_at = coalesce(read_at, now())
+      where id = $1
+        and recipient_user_id = $2
+    `,
+    [messageId, auth.userId]
+  );
+  res.json({ ok: true });
+}));
+
 // Farm-wide settings and feedback/suggestion reporting.
 app.put("/api/farm/settings", requireAdmin(), asyncHandler(async (req, res) => {
   const auth = currentAuth(req) as AuthContext;
@@ -3458,7 +3533,7 @@ app.post("/api/feedback", asyncHandler(async (req, res) => {
 
 app.get("/api/feedback", requireAdmin(), asyncHandler(async (req, res) => {
   const auth = currentAuth(req) as AuthContext;
-  const result = await pool.query<{
+  type FeedbackReportRow = {
     id: number;
     farm_id: number | null;
     user_id: number | null;
@@ -3470,42 +3545,70 @@ app.get("/api/feedback", requireAdmin(), asyncHandler(async (req, res) => {
     recent_activity: Array<Record<string, unknown>>;
     user_agent: string | null;
     created_at: string;
-  }>(
-    `
-      select
-        report.id,
-        report.farm_id,
-        report.user_id,
-        app_user.username,
-        app_user.display_name,
-        report.page,
-        report.comment,
-        report.context,
-        report.recent_activity,
-        report.user_agent,
-        report.created_at
-      from feedback_reports report
-      left join app_users app_user on app_user.id = report.user_id
-      where $1::boolean = true
-      order by report.created_at desc, report.id desc
-      limit 50
-    `,
-    [auth.isAdmin]
-  );
+    reply_count: string;
+    last_reply_at: string | null;
+  };
+  let rows: FeedbackReportRow[];
+  try {
+    const result = await pool.query<FeedbackReportRow>(
+      `
+        select
+          report.id,
+          report.farm_id,
+          report.user_id,
+          app_user.username,
+          app_user.display_name,
+          report.page,
+          report.comment,
+          report.context,
+          report.recent_activity,
+          report.user_agent,
+          report.created_at,
+          count(reply.id)::text as reply_count,
+          max(reply.created_at) as last_reply_at
+        from feedback_reports report
+        left join app_users app_user on app_user.id = report.user_id
+        left join user_messages reply on reply.related_feedback_report_id = report.id
+        where $1::boolean = true
+        group by report.id, app_user.id
+        order by report.created_at desc, report.id desc
+        limit 50
+      `,
+      [auth.isAdmin]
+    );
+    rows = result.rows;
+  } catch (error) {
+    if ((error as { code?: string }).code !== "42P01") {
+      throw error;
+    }
+    const result = await pool.query<FeedbackReportRow>(
+      `
+        select
+          report.id,
+          report.farm_id,
+          report.user_id,
+          app_user.username,
+          app_user.display_name,
+          report.page,
+          report.comment,
+          report.context,
+          report.recent_activity,
+          report.user_agent,
+          report.created_at,
+          '0'::text as reply_count,
+          null::timestamptz as last_reply_at
+        from feedback_reports report
+        left join app_users app_user on app_user.id = report.user_id
+        where $1::boolean = true
+        order by report.created_at desc, report.id desc
+        limit 50
+      `,
+      [auth.isAdmin]
+    );
+    rows = result.rows;
+  }
 
-  res.json(result.rows.map((row: {
-    id: number;
-    farm_id: number | null;
-    user_id: number | null;
-    username: string | null;
-    display_name: string | null;
-    page: string;
-    comment: string | null;
-    context: Record<string, unknown>;
-    recent_activity: Array<Record<string, unknown>>;
-    user_agent: string | null;
-    created_at: string;
-  }) => ({
+  res.json(rows.map((row) => ({
     id: row.id,
     farmId: row.farm_id,
     userId: row.user_id,
@@ -3516,8 +3619,105 @@ app.get("/api/feedback", requireAdmin(), asyncHandler(async (req, res) => {
     context: row.context,
     recentActivity: row.recent_activity,
     userAgent: row.user_agent,
-    createdAt: row.created_at
+    createdAt: row.created_at,
+    replyCount: Number(row.reply_count),
+    lastReplyAt: row.last_reply_at
   })));
+}));
+
+app.post("/api/feedback/:id/replies", requireAdmin(), asyncHandler(async (req, res) => {
+  const auth = currentAuth(req) as AuthContext;
+  const feedbackId = Number(req.params.id);
+  const body = feedbackReplySchema.parse(req.body);
+  const reportResult = await pool.query<{
+    id: number;
+    farm_id: number | null;
+    user_id: number | null;
+    comment: string | null;
+  }>(
+    `
+      select id, farm_id, user_id, comment
+      from feedback_reports
+      where id = $1
+      limit 1
+    `,
+    [feedbackId]
+  );
+  const report = reportResult.rows[0];
+  if (!report) {
+    res.status(404).json({ error: "Feedback report not found" });
+    return;
+  }
+  if (report.user_id == null) {
+    res.status(400).json({ error: "Anonymous reports cannot receive inbox replies." });
+    return;
+  }
+
+  const result = await pool.query<{
+    id: number;
+    farm_id: number | null;
+    sender_user_id: number | null;
+    sender_username: string | null;
+    sender_display_name: string | null;
+    recipient_user_id: number;
+    related_feedback_report_id: number | null;
+    subject: string;
+    body: string;
+    read_at: string | null;
+    created_at: string;
+  }>(
+    `
+      with inserted as (
+        insert into user_messages (
+          farm_id,
+          sender_user_id,
+          recipient_user_id,
+          related_feedback_report_id,
+          subject,
+          body
+        )
+        values ($1, $2, $3, $4, $5, $6)
+        returning *
+      )
+      select
+        inserted.id,
+        inserted.farm_id,
+        inserted.sender_user_id,
+        sender.username as sender_username,
+        sender.display_name as sender_display_name,
+        inserted.recipient_user_id,
+        inserted.related_feedback_report_id,
+        inserted.subject,
+        inserted.body,
+        inserted.read_at,
+        inserted.created_at
+      from inserted
+      left join app_users sender on sender.id = inserted.sender_user_id
+    `,
+    [
+      report.farm_id,
+      auth.userId,
+      report.user_id,
+      report.id,
+      "Reply to your suggestion/problem report",
+      body.body
+    ]
+  );
+  const row = result.rows[0];
+
+  res.status(201).json({
+    id: row.id,
+    farmId: row.farm_id,
+    senderUserId: row.sender_user_id,
+    senderUsername: row.sender_username,
+    senderDisplayName: row.sender_display_name,
+    recipientUserId: row.recipient_user_id,
+    relatedFeedbackReportId: row.related_feedback_report_id,
+    subject: row.subject,
+    body: row.body,
+    readAt: row.read_at,
+    createdAt: row.created_at
+  });
 }));
 
 // Recent undo/redo controls for the current farm user.

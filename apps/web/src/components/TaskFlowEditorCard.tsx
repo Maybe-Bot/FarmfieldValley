@@ -4,9 +4,10 @@ import { TaskIconMark } from "./TaskIconMark";
 import {
   formatTaskAnchorLabel,
   formatTaskTypeLabel,
-  taskAnchorOptions,
+  isCurrentTaskType,
   taskIconColor,
-  taskTypeOptions
+  taskTypeOptions,
+  staleTaskTypeMessage
 } from "../task-display";
 import {
   clampFlowCoordinate,
@@ -118,9 +119,9 @@ export function TaskFlowEditorCard({
         notes: node.notes ?? ""
       }))
     : [
-        { ...newTaskFlowNode(0), label: "Shape beds", taskType: "bed_making", iconColor: defaultProfileForTask("bed_making")?.iconColor ?? taskIconColor("bed_making"), iconSecondaryColor: defaultProfileForTask("bed_making")?.iconSecondaryColor ?? "#f4c430", tractorModel: defaultProfileForTask("bed_making")?.tractorModel ?? defaultModelForTask("bed_making"), tractorProfileId: defaultProfileForTask("bed_making")?.id ?? null, anchor: "planned_transplant", offsetDays: -5 },
-        { ...newTaskFlowNode(1), label: "Transplant", taskType: "transplant", iconColor: defaultProfileForTask("transplant")?.iconColor ?? taskIconColor("transplant"), iconSecondaryColor: defaultProfileForTask("transplant")?.iconSecondaryColor ?? "#f4c430", tractorModel: defaultProfileForTask("transplant")?.tractorModel ?? defaultModelForTask("transplant"), tractorProfileId: defaultProfileForTask("transplant")?.id ?? null, anchor: "actual_transplant", offsetDays: 0 },
-        { ...newTaskFlowNode(2), label: "Cultivate", taskType: "cultivation", iconColor: defaultProfileForTask("cultivation")?.iconColor ?? taskIconColor("cultivation"), iconSecondaryColor: defaultProfileForTask("cultivation")?.iconSecondaryColor ?? "#f4c430", tractorModel: defaultProfileForTask("cultivation")?.tractorModel ?? defaultModelForTask("cultivation"), tractorProfileId: defaultProfileForTask("cultivation")?.id ?? null, anchor: "actual_transplant", offsetDays: 7 }
+        { ...newTaskFlowNode(0), nodeKey: "shape_beds", label: "Shape beds", taskType: "bed_making", iconColor: defaultProfileForTask("bed_making")?.iconColor ?? taskIconColor("bed_making"), iconSecondaryColor: defaultProfileForTask("bed_making")?.iconSecondaryColor ?? "#f4c430", tractorModel: defaultProfileForTask("bed_making")?.tractorModel ?? defaultModelForTask("bed_making"), tractorProfileId: defaultProfileForTask("bed_making")?.id ?? null, anchor: "planned_sow", offsetDays: 23 },
+        { ...newTaskFlowNode(1), nodeKey: "transplant", label: "Transplant", taskType: "transplant", iconColor: defaultProfileForTask("transplant")?.iconColor ?? taskIconColor("transplant"), iconSecondaryColor: defaultProfileForTask("transplant")?.iconSecondaryColor ?? "#f4c430", tractorModel: defaultProfileForTask("transplant")?.tractorModel ?? defaultModelForTask("transplant"), tractorProfileId: defaultProfileForTask("transplant")?.id ?? null, anchor: "after:shape_beds", offsetDays: 5 },
+        { ...newTaskFlowNode(2), nodeKey: "cultivation", label: "Cultivate", taskType: "cultivation", iconColor: defaultProfileForTask("cultivation")?.iconColor ?? taskIconColor("cultivation"), iconSecondaryColor: defaultProfileForTask("cultivation")?.iconSecondaryColor ?? "#f4c430", tractorModel: defaultProfileForTask("cultivation")?.tractorModel ?? defaultModelForTask("cultivation"), tractorProfileId: defaultProfileForTask("cultivation")?.id ?? null, anchor: "after:transplant", offsetDays: 7 }
       ];
   const initialEdges = edges.length > 0
     ? edges.map((edge) => ({
@@ -159,62 +160,62 @@ export function TaskFlowEditorCard({
       }
       return next;
     }, [localEdges, localNodes]);
-    const tutorialHarvestNode = localNodes.find((node) => node.taskType === "harvest") ?? null;
-  const tutorialExistingMowNode = localNodes.find((node) => node.taskType === "mow") ?? null;
+    const tutorialCleanupSourceNode = localNodes.find((node) => node.nodeKey === "cleanup") ?? localNodes.find((node) => node.taskType === "cleanup") ?? null;
+  const tutorialExistingExtraCleanupNode = localNodes.find((node) => node.taskType === "cleanup" && node.nodeKey !== tutorialCleanupSourceNode?.nodeKey) ?? null;
   const tutorialAddedNode = tutorialAddedNodeKey ? nodeMap.get(tutorialAddedNodeKey) ?? null : null;
-  const tutorialTargetNode = tutorialAddedNode ?? tutorialExistingMowNode;
-  const tutorialMowNode = tutorialTargetNode?.taskType === "mow" ? tutorialTargetNode : null;
-  const tutorialMowLinkedAfterHarvest = Boolean(tutorialHarvestNode && tutorialMowNode && localEdges.some((edge) =>
-    edge.fromNodeKey === tutorialHarvestNode.nodeKey && edge.toNodeKey === tutorialMowNode.nodeKey
+  const tutorialTargetNode = tutorialAddedNode ?? tutorialExistingExtraCleanupNode;
+  const tutorialCleanupNode = tutorialTargetNode?.taskType === "cleanup" ? tutorialTargetNode : null;
+  const tutorialCleanupLinkedAfterCleanup = Boolean(tutorialCleanupSourceNode && tutorialCleanupNode && localEdges.some((edge) =>
+    edge.fromNodeKey === tutorialCleanupSourceNode.nodeKey && edge.toNodeKey === tutorialCleanupNode.nodeKey
   ));
   const tutorialHighlightAddNode = tutorialActive && !tutorialTargetNode;
     const tutorialHighlightMowEdit = tutorialActive
       && tutorialTargetNode != null
-      && tutorialTargetNode.taskType !== "mow"
+      && tutorialTargetNode.taskType !== "cleanup"
       && openNodeEditorKey !== tutorialTargetNode.nodeKey;
   const tutorialHighlightTaskType = tutorialActive
     && tutorialTargetNode != null
     && openNodeEditorKey === tutorialTargetNode.nodeKey
-    && tutorialTargetNode.taskType !== "mow";
+    && tutorialTargetNode.taskType !== "cleanup";
     const tutorialHighlightAnchor = tutorialActive
       && tutorialTargetNode != null
       && openNodeEditorKey === tutorialTargetNode.nodeKey
-      && tutorialTargetNode.taskType === "mow"
+      && tutorialTargetNode.taskType === "cleanup"
       && false;
     const tutorialReadyToLinkMow = tutorialActive
-      && tutorialHarvestNode != null
-      && tutorialMowNode != null
-      && !tutorialMowLinkedAfterHarvest;
+      && tutorialCleanupSourceNode != null
+      && tutorialCleanupNode != null
+      && !tutorialCleanupLinkedAfterCleanup;
   const tutorialHighlightHarvestLink = tutorialReadyToLinkMow
     && !connectionDraft
-    && openNodeMenuKey !== tutorialHarvestNode?.nodeKey;
+    && openNodeMenuKey !== tutorialCleanupSourceNode?.nodeKey;
   const tutorialHighlightHarvestDownstream = tutorialReadyToLinkMow
     && !connectionDraft
-    && openNodeMenuKey === tutorialHarvestNode?.nodeKey;
+    && openNodeMenuKey === tutorialCleanupSourceNode?.nodeKey;
   const tutorialHighlightMowNodeClick = tutorialReadyToLinkMow
-    && connectionDraft?.sourceNodeKey === tutorialHarvestNode?.nodeKey
+    && connectionDraft?.sourceNodeKey === tutorialCleanupSourceNode?.nodeKey
     && connectionDraft.direction === "downstream";
     const tutorialHighlightSaveFlow = tutorialActive
-      && tutorialMowNode != null
-      && tutorialMowLinkedAfterHarvest;
+      && tutorialCleanupNode != null
+      && tutorialCleanupLinkedAfterCleanup;
   const tutorialHint = tutorialHighlightAddNode
-    ? "Click Add node to create the new task that will happen after harvest."
+    ? "Click Add node to create the new cleanup task."
         : tutorialHighlightTaskType
-          ? "Set Task type to Mow. The label will update so the node is easy to recognize."
+          ? "Set Task type to Cleanup. The label will update so the node is easy to recognize."
         : tutorialHighlightAnchor
-          ? "Use the Harvest link to schedule mowing from harvest work."
+          ? "Use the Cleanup link to schedule this after the earlier cleanup task."
           : tutorialHighlightMowEdit
             ? "Open the new node's Edit controls to set the task type."
           : tutorialHighlightHarvestDownstream
-            ? "Choose Add downstream dependent. That means Mow will happen after Harvest."
+            ? "Choose Add downstream dependent. That means the new cleanup task will happen after the earlier cleanup task."
             : tutorialHighlightMowNodeClick
-              ? "Click the Mow node to finish the link from Harvest to Mow."
+              ? "Click the new Cleanup node to finish the link."
               : tutorialHighlightHarvestLink
-                ? "Click Link on the Harvest node. Harvest is the step Mow should follow."
+                ? "Click Link on the Cleanup node. This is the step the new Cleanup should follow."
                 : tutorialHighlightSaveFlow
-                  ? "The Mow task is linked after Harvest. Click Save flow to keep the change."
+                  ? "The new Cleanup task is linked. Click Save flow to keep the change."
                     : tutorialActive
-                      ? "Add a Mow task after Harvest, link Harvest to Mow, then save the flow."
+                      ? "Add a Cleanup task after Cleanup, link them, then save the flow."
                     : null;
 
   useEffect(() => {
@@ -296,6 +297,10 @@ export function TaskFlowEditorCard({
     }
 
     return formatTaskAnchorLabel(node.anchor);
+  }
+
+  function timingSummaryLabel(node: FlowNodeDraft) {
+    return `${scheduleSourceLabel(node)} ${node.offsetDays >= 0 ? "+" : ""}${node.offsetDays}d`;
   }
 
   function addNode() {
@@ -488,6 +493,20 @@ export function TaskFlowEditorCard({
       setStatus("Task flow has a dependency loop. Remove one link before saving.");
       return;
     }
+    const staleTypeNode = localNodes.find((node) => !isCurrentTaskType(node.taskType));
+    if (staleTypeNode) {
+      setStatus(`${staleTypeNode.label}: ${staleTaskTypeMessage(staleTypeNode.taskType)}`);
+      setSelectedNodeKey(staleTypeNode.nodeKey);
+      setOpenNodeEditorKey(staleTypeNode.nodeKey);
+      return;
+    }
+    const staleAnchorNode = localNodes.find((node) => node.anchor !== "planned_sow" && !node.anchor.startsWith("after:"));
+    if (staleAnchorNode) {
+      setStatus(`${staleAnchorNode.label}: old scheduling anchor. Reconnect it with arrows or set it back to the seeding date before saving.`);
+      setSelectedNodeKey(staleAnchorNode.nodeKey);
+      setOpenNodeEditorKey(staleAnchorNode.nodeKey);
+      return;
+    }
 
     try {
       setSaving(true);
@@ -538,7 +557,7 @@ export function TaskFlowEditorCard({
     <div className="card">
       <h2>{template ? "Edit task flow" : "New task flow"}</h2>
       {status && <p className="muted"><strong>{status}</strong></p>}
-      <p className="muted">Drag nodes on the chart, edit the selected node, and connect nodes to define task dependencies.</p>
+      <p className="muted">Build a work recipe for a crop. Each card is one job. Unlinked jobs count from the seeding date; linked jobs count from the earlier linked job.</p>
       {tutorialHint && (
         <div className="tutorial-helper-bubble">
           <strong>Tutorial next:</strong> {tutorialHint}
@@ -581,7 +600,7 @@ export function TaskFlowEditorCard({
                 <button
                   type="button"
                   className={`secondary-button compact-button${tutorialHighlightAddNode ? " tutorial-target" : ""}`}
-                  data-tutorial-label={tutorialHighlightAddNode ? "Add Mow task" : undefined}
+                  data-tutorial-label={tutorialHighlightAddNode ? "Add Cleanup task" : undefined}
                   onClick={addNode}
                 >
                   Add node
@@ -611,7 +630,7 @@ export function TaskFlowEditorCard({
                 </div>
               </div>
             </div>
-            <p className="muted">Arrows schedule later tasks from earlier connected tasks. Nodes without incoming arrows use their selected planting date.</p>
+            <p className="muted">Use arrows when one job should follow another job. Without an arrow, the job counts from the seeding date.</p>
           </div>
           <div ref={canvasRef} className={`flow-canvas flow-canvas-${canvasSize}`}>
           <svg className="flow-edge-layer" viewBox="0 0 100 100" preserveAspectRatio="none">
@@ -645,14 +664,16 @@ export function TaskFlowEditorCard({
             })}
           </svg>
           {localNodes.map((node) => {
-            const nodeIsTutorialTarget = tutorialHighlightMowNodeClick && tutorialMowNode?.nodeKey === node.nodeKey;
+            const nodeIsTutorialTarget = tutorialHighlightMowNodeClick && tutorialCleanupNode?.nodeKey === node.nodeKey;
             const editIsTutorialTarget = tutorialHighlightMowEdit && tutorialTargetNode?.nodeKey === node.nodeKey;
-            const linkIsTutorialTarget = tutorialHighlightHarvestLink && tutorialHarvestNode?.nodeKey === node.nodeKey;
+            const linkIsTutorialTarget = tutorialHighlightHarvestLink && tutorialCleanupSourceNode?.nodeKey === node.nodeKey;
+            const nodeHasStaleCategory = !isCurrentTaskType(node.taskType);
+            const nodeHasStaleAnchor = node.anchor !== "planned_sow" && !node.anchor.startsWith("after:");
             return (
               <div
                 key={node.nodeKey}
-                className={`flow-node-card${selectedNodeKey === node.nodeKey ? " selected" : ""}${connectionDraft?.sourceNodeKey === node.nodeKey ? " connection-source" : ""}${openNodeEditorKey === node.nodeKey ? " expanded" : ""}${nodeIsTutorialTarget ? " tutorial-target" : ""}`}
-                data-tutorial-label={nodeIsTutorialTarget ? "Click Mow" : undefined}
+                className={`flow-node-card${selectedNodeKey === node.nodeKey ? " selected" : ""}${connectionDraft?.sourceNodeKey === node.nodeKey ? " connection-source" : ""}${openNodeEditorKey === node.nodeKey ? " expanded" : ""}${nodeIsTutorialTarget ? " tutorial-target" : ""}${nodeHasStaleCategory || nodeHasStaleAnchor ? " stale-flow-node" : ""}`}
+                data-tutorial-label={nodeIsTutorialTarget ? "Click Cleanup" : undefined}
                   style={nodeCardStyle(node)}
                 onMouseDown={(event) => {
                   if (connectionDraft || openNodeEditorKey === node.nodeKey) {
@@ -670,13 +691,14 @@ export function TaskFlowEditorCard({
                     <TaskIconMark taskType={node.taskType} color={node.iconColor} secondaryColor={node.iconSecondaryColor} tractorModel={node.tractorModel} mini />
                   </span>
                   <span className="small-chip">{formatTaskTypeLabel(node.taskType)}</span>
-                    <span className="table-subtle">{scheduleSourceLabel(node)} {node.offsetDays >= 0 ? "+" : ""}{node.offsetDays}d</span>
+                  {(nodeHasStaleCategory || nodeHasStaleAnchor) && <span className="status-pill danger-pill">Update</span>}
+                    <span className="table-subtle">{timingSummaryLabel(node)}</span>
                 </div>
                 <div className="flow-node-card-actions">
                   <button
                     type="button"
                     className={`secondary-button compact-button flow-node-menu-button${editIsTutorialTarget ? " tutorial-target" : ""}`}
-                    data-tutorial-label={editIsTutorialTarget ? "Edit Mow" : undefined}
+                    data-tutorial-label={editIsTutorialTarget ? "Edit Cleanup" : undefined}
                     onMouseDown={(event) => {
                       event.stopPropagation();
                     }}
@@ -724,7 +746,7 @@ export function TaskFlowEditorCard({
                   </label>
                   <label
                     className={tutorialHighlightTaskType && tutorialTargetNode?.nodeKey === node.nodeKey ? " tutorial-target" : ""}
-                    data-tutorial-label={tutorialHighlightTaskType && tutorialTargetNode?.nodeKey === node.nodeKey ? "Set to Mow" : undefined}
+                    data-tutorial-label={tutorialHighlightTaskType && tutorialTargetNode?.nodeKey === node.nodeKey ? "Set to Cleanup" : undefined}
                   >
                     <span>Task type</span>
                     <select value={node.taskType} onChange={(event) => updateNodeTaskType(node, event.target.value)}>
@@ -740,23 +762,22 @@ export function TaskFlowEditorCard({
                   </label>
                     {afterNodeKeys(node.anchor).length > 0 ? (
                       <div className="flow-node-schedule-source">
-                        <span>Schedule from</span>
+                        <span>Counts from</span>
                         <strong>{scheduleSourceLabel(node)}</strong>
                         <p className="muted flow-node-menu-note">Change this by adding or removing arrows.</p>
                       </div>
                     ) : (
-                      <label
-                        className={tutorialHighlightAnchor && tutorialTargetNode?.nodeKey === node.nodeKey ? " tutorial-target" : ""}
-                        data-tutorial-label={tutorialHighlightAnchor && tutorialTargetNode?.nodeKey === node.nodeKey ? "Planned date" : undefined}
+                      <div
+                        className={`flow-node-schedule-source${tutorialHighlightAnchor && tutorialTargetNode?.nodeKey === node.nodeKey ? " tutorial-target" : ""}`}
+                        data-tutorial-label={tutorialHighlightAnchor && tutorialTargetNode?.nodeKey === node.nodeKey ? "Seeding date" : undefined}
                       >
-                        <span>Schedule from</span>
-                        <select value={node.anchor} onChange={(event) => updateNode(node.nodeKey, { anchor: event.target.value })}>
-                          {taskAnchorOptions.map((anchor) => <option key={anchor} value={anchor}>{formatTaskAnchorLabel(anchor)}</option>)}
-                        </select>
-                      </label>
+                        <span>Counts from</span>
+                        <strong>{formatTaskAnchorLabel("planned_sow")}</strong>
+                        <p className="muted flow-node-menu-note">Add an arrow if this job should count from another job instead.</p>
+                      </div>
                     )}
                   <label>
-                    <span>Offset days</span>
+                    <span>Days before/after</span>
                     <input
                       type="number"
                       value={node.offsetDays}
@@ -834,8 +855,8 @@ export function TaskFlowEditorCard({
               </button>
               <button
                 type="button"
-                className={`flow-node-menu-item${tutorialHighlightHarvestDownstream && tutorialHarvestNode?.nodeKey === openNodeMenuNode.nodeKey ? " tutorial-target" : ""}`}
-                data-tutorial-label={tutorialHighlightHarvestDownstream && tutorialHarvestNode?.nodeKey === openNodeMenuNode.nodeKey ? "Choose this" : undefined}
+                className={`flow-node-menu-item${tutorialHighlightHarvestDownstream && tutorialCleanupSourceNode?.nodeKey === openNodeMenuNode.nodeKey ? " tutorial-target" : ""}`}
+                data-tutorial-label={tutorialHighlightHarvestDownstream && tutorialCleanupSourceNode?.nodeKey === openNodeMenuNode.nodeKey ? "Choose this" : undefined}
                 onMouseDown={(event) => {
                   event.preventDefault();
                   event.stopPropagation();
@@ -868,9 +889,11 @@ export function TaskFlowEditorCard({
             <dl className="detail-list">
               <div><dt>Label</dt><dd>{selectedNode.label}</dd></div>
               <div><dt>Task type</dt><dd>{formatTaskTypeLabel(selectedNode.taskType)}</dd></div>
+              {!isCurrentTaskType(selectedNode.taskType) && <div><dt>Needs update</dt><dd>{staleTaskTypeMessage(selectedNode.taskType)}</dd></div>}
+              {selectedNode.anchor !== "planned_sow" && !selectedNode.anchor.startsWith("after:") && <div><dt>Needs update</dt><dd>Old scheduling anchor. Reconnect this node with arrows or set it back to the seeding date.</dd></div>}
               <div><dt>Saved vehicle</dt><dd>{tractorProfiles.find((profile) => profile.id === selectedNode.tractorProfileId)?.name ?? "Default vehicle"}</dd></div>
-                <div><dt>Schedule from</dt><dd>{scheduleSourceLabel(selectedNode)}</dd></div>
-              <div><dt>Offset</dt><dd>{selectedNode.offsetDays >= 0 ? "+" : ""}{selectedNode.offsetDays} days</dd></div>
+                <div><dt>Counts from</dt><dd>{scheduleSourceLabel(selectedNode)}</dd></div>
+              <div><dt>Days before/after</dt><dd>{selectedNode.offsetDays >= 0 ? "+" : ""}{selectedNode.offsetDays} days</dd></div>
               <div><dt>Notes</dt><dd>{selectedNode.notes || "—"}</dd></div>
               <div><dt>Edit</dt><dd>Use the node card controls to save or cancel inline edits.</dd></div>
             </dl>

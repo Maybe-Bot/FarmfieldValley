@@ -1,0 +1,108 @@
+Loam Ledger mobile card map
+Purpose: Edit this file with small mobile-specific change requests. Mobile now has the same essential cards and functions as desktop; the main difference is layout.
+
+Global mobile layout
+- Top toolbar is collapsed by default. It shows "Loam Ledger", the current page name, and a Menu / tools button.
+- When Menu / tools is opened, it shows navigation, Undo, Redo, Settings/Admin, user/farm chip, and map tools if on Farm Map.
+- Most page layouts become one column. Cards stack vertically in page order.
+- Tables keep all desktop columns and scroll sideways inside the card when too wide.
+- Form grids become one column so fields are easier to read.
+- Week buttons put "This week" first, then Previous week and Next week below.
+
+Global modal cards
+- Loading card: same content as desktop.
+- Login card: same content as desktop.
+- Suggestion/problem card: modal. Same as desktop, stacked for phone width.
+- Beta warning card: modal. Same as desktop.
+- Active tutorial card: same tutorial content as desktop, stacked above page content when open.
+
+Farm Map page
+Layout: one column. Map appears first, then map controls, then the map-side cards stacked below. Map tools live in the collapsed top toolbar and appear after opening Menu / tools.
+
+- Farm Map card: full-width map. Same map layers and editing/selection behavior as desktop.
+- Map controls card: below map. Contains Use phone GPS, map week controls, week slider, map layer checkboxes.
+- Map status notice: small instruction box above relevant map cards.
+- New field / New block / New mapped area / New cover crop area card: stacked below map controls while drawing. Same fields as desktop, one-column form.
+- Edit field/block/area card: stacked below map controls while editing. Same fields/actions as desktop, one-column form.
+- Generate beds in block card: stacked below map controls. Same bed generator controls as desktop. Buttons wrap into phone-width rows.
+- Manage bed presets foldout: inside Generate beds. Same as desktop, stacked.
+- New Planting card: appears after selecting beds or on Annual Crop Plan. Same fields as desktop, one-column form.
+- Record Work Done card: stacked where selected-task work is available. Same fields as desktop.
+- Bed records card: stacked after selecting a bed in Work mode. Same chips and sections as desktop.
+- Bed Maker card: stacked after selecting a block with no plantable beds.
+- Block placement plan card: stacked after selecting a block/bed. Full table scrolls sideways. Inline New planting/Edit planting forms stack one column.
+- Cover crop work card: stacked after selecting cover-crop area in Work mode.
+- Record Work (unplanned) card: stacked after selecting a map item in Work mode. Same work categories and conditional fields as desktop.
+- Selection card: stacked near bottom of map-side cards. Same details and Edit/Delete/Switch to Planning controls as desktop.
+- Block tools card: shown to worker accounts when tools are planner-only.
+- Weekly tasks card: stacked in Work-only map context. Same task rows and actions as desktop.
+
+Annual Crop Plan page
+Layout: one column. Crop plan card first, then New Planting, then Spreadsheet Import.
+
+- Annual crop plan card: full desktop table appears on mobile, with sideways scrolling if needed. Contains Pick, Planting, Status, Planned sow, Planned transplant, Harvest window, Intended bed, Actions/Delete, Delete selected, and Unscheduled tasks.
+- New Planting card: below the plan table. Same desktop fields, one-column form.
+- Import crop plan spreadsheet card: below New Planting. Same template/export/upload/import controls.
+- Planning access card: replaces planning tools for worker accounts.
+
+Planting Detail page
+Layout: one column. Detail/history cards appear first, then edit/placement/actuals tools.
+
+- Planting detail card: same content as desktop. Milestones and Planning detail stack vertically.
+- Bed placement history card: read-only full table scrolls sideways.
+- Event history card: full table scrolls sideways.
+- Edit planting card: appears after the detail/history cards while editing.
+- Record actual work card: appears below history when not editing. Bed/location placement is handled from the map workflow, not from a separate Planting Detail form.
+- Planning access card: shown to worker accounts.
+
+Task List page
+Layout: one column. Task table first, then selected-task recording, then explanation.
+
+- This week / selected week task card: full desktop task table appears on mobile and scrolls sideways. Contains week controls, Past undone, Date, Task, Planting, Bed, Status, Depends on, Rule, Done.
+- Record from task card: below the task table.
+- How shifting works card: below Record from task.
+
+Record Work page
+Layout: one column.
+
+- Record from task card: first.
+- Log harvest by bed card: below it.
+
+Task Flows page
+Layout: one column. The flow list appears above the editor.
+
+- Reusable task flows card: first. Same New flow, Copy selected, Delete, and list controls.
+- Task flow editor card: below flow list. Full editor, node cards, and canvas; wide flow controls may scroll/wrap.
+- Flow node cards: inside Task flow editor. Same node content and inline edit controls.
+- Garage card: below task flow editor.
+
+Seed Bank page
+Layout: one column.
+
+- Seed Bank card: first. Full table scrolls sideways. Filters and inline editor remain available.
+- Add seed card: below Seed Bank. Form is one column. Workers see access text.
+
+Harvest Log page
+Layout: one column.
+
+- Harvest log card: first. Full table scrolls sideways.
+- Summary card: below Harvest log.
+
+Admin page
+Layout: one column.
+
+- Admin control panel card: first. Buttons stack/wrap.
+- Users card: below control panel. Full table scrolls sideways.
+- Recent usage card: below Users. Full table scrolls sideways.
+- Recent reports card: below Recent usage. Report context expands inline.
+
+Settings page
+Layout: one column.
+
+- Display settings card: first. Selectors stack one column.
+- Preview card: below Display settings.
+- Tutorials card: below Preview for planner accounts.
+- Account card: below tutorial.
+- Team accounts card: below Account for planner accounts. Workers see access text.
+- Map imagery card: below Team accounts/access text.
+- Map privacy card: below Map imagery.

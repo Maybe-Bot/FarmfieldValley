@@ -6,7 +6,7 @@ import { seedStarterSeedCatalog } from "../default-seed-catalog";
 import { pool } from "../db";
 import { polygonWkt } from "../geometry";
 import { recalculatePlantingTasks } from "../scheduler";
-import { ActualEventType, FarmRole, PlantingStatus, TaskType } from "../types";
+import { ActualEventType, FarmRole, isCurrentTaskType, isLegacyTaskType, PlantingStatus, TaskType } from "../types";
 import { registerSpreadsheetImportRoutes } from "./spreadsheet-import";
 import {
   actualEventSchema,
@@ -1632,9 +1632,10 @@ app.post("/api/work-events/unplanned", requireRole("worker"), asyncHandler(async
       coordinates = geoJsonPolygonToLatLngs(field.boundary);
     }
 
+    const applicationBedIds = [...new Set(body.applicationBedIds ?? [])];
     const transplantBedIds = [...new Set(body.transplantBedIds ?? [])];
     const cultivationBedIds = [...new Set(body.cultivationBedIds ?? [])];
-    const workBedIds = [...new Set([...transplantBedIds, ...cultivationBedIds])];
+    const workBedIds = [...new Set([...applicationBedIds, ...transplantBedIds, ...cultivationBedIds])];
     if (workBedIds.length > 0) {
       const bedsResult = await client.query<{
         id: number;
@@ -1659,6 +1660,9 @@ app.post("/api/work-events/unplanned", requireRole("worker"), asyncHandler(async
         fieldId = fieldId ?? firstBed.field_id;
       }
     }
+    if (body.plantingId != null) {
+      await ensurePlantingInFarm(client, body.plantingId, auth.farmId);
+    }
     if (body.transplantPlantingId != null) {
       await ensurePlantingInFarm(client, body.transplantPlantingId, auth.farmId);
     }
@@ -1674,6 +1678,7 @@ app.post("/api/work-events/unplanned", requireRole("worker"), asyncHandler(async
       bedMakingBedCount: body.bedMakingBedCount ?? null,
       bedMakingBlockFull: body.bedMakingBlockFull ?? null,
       bedMakingBedCover: body.bedMakingBedCover ?? null,
+      plantingId: body.plantingId ?? null,
       applicationRateUsed: body.applicationRateUsed ?? null,
       applicationAmountUsed: body.applicationAmountUsed ?? null,
       applicationProduct: body.applicationProduct?.trim() || null,
@@ -1686,6 +1691,7 @@ app.post("/api/work-events/unplanned", requireRole("worker"), asyncHandler(async
       transplantTrayCount: body.transplantTrayCount ?? null,
       transplantInRowSpacing: body.transplantInRowSpacing ?? null,
       transplantRowsPerBed: body.transplantRowsPerBed ?? null,
+      applicationBedIds,
       transplantBedIds,
       cultivationBedIds
     };
@@ -1700,6 +1706,7 @@ app.post("/api/work-events/unplanned", requireRole("worker"), asyncHandler(async
       blockId,
       zoneId,
       bedId,
+      plantingId: body.plantingId ?? body.transplantPlantingId ?? null,
       coordinates
     });
 
@@ -2610,6 +2617,11 @@ app.post("/api/tasks/:id/record", requireRole("worker"), asyncHandler(async (req
       res.status(404).json({ error: "Task not found" });
       return;
     }
+    if (!isCurrentTaskType(task.task_type)) {
+      throw new Error(isLegacyTaskType(task.task_type)
+        ? `This task uses the old category "${task.task_type}". Update its task flow to a current category before recording work.`
+        : `This task uses the unknown category "${task.task_type}". Update its task flow to a current category before recording work.`);
+    }
 
     let bedMakingMetadata: Record<string, unknown> | null = null;
     let recordedTaskBedId = task.bed_id;
@@ -2618,7 +2630,7 @@ app.post("/api/tasks/:id/record", requireRole("worker"), asyncHandler(async (req
       if (auth.role !== "planner") {
         throw new Error("Planner access required for bed-making adjustments");
       }
-      if (task.task_type !== "bed_prep" && task.task_type !== "bed_making") {
+      if (task.task_type !== "bed_making") {
         throw new Error("Bed counts can only be recorded on bed-making tasks.");
       }
 
@@ -2706,7 +2718,7 @@ app.post("/api/tasks/:id/record", requireRole("worker"), asyncHandler(async (req
       const plannedReferenceCount = unfinishedPlannedMatch
         ? existingBeds.rows.length + Number(unfinishedPlannedMatch[1])
         : plannedBedCount;
-      const blockFull = requestedBlockFull || (mode === "replace_existing" && bedCount > plannedReferenceCount);
+      const blockFull = requestedBlockFull || (mode === "replace_existing" && bedCount >= plannedReferenceCount);
       const targetBed = mode === "replace_existing" ? existingBeds.rows[0] : existingBeds.rows[existingBeds.rows.length - 1];
       const fallbackPreset = await resolveBedMakingPreset(client, auth.farmId, targetBed);
       const rowPresets = new Map<number, Awaited<ReturnType<typeof loadBedMakingPreset>>>();
@@ -2810,16 +2822,22 @@ app.post("/api/tasks/:id/record", requireRole("worker"), asyncHandler(async (req
           isPermanent: targetBed.is_permanent,
           replaceExisting: true,
           invertSide: false,
-          fillWholeBlock: false,
+          fillWholeBlock: blockFull,
           harvestRoadEveryBeds: harvestRoadPattern?.everyBeds ?? null,
           harvestRoadWidthBeds: harvestRoadPattern?.widthBeds ?? 0,
           pathSpacingOverrideM: stretchedPathSpacingM,
           bedWidthOverrideM: bedWidthScale == null ? null : bedsToGenerate[0].bedWidthM * bedWidthScale
         });
-        if (result.inserted !== generatedBedCount) {
-          throw new Error(`Only ${result.inserted} of ${generatedBedCount} beds fit from the planned bed edge.`);
+        const generatedIds = result.insertedIds ?? [];
+        const keptIds = blockFull ? generatedIds.slice(0, generatedBedCount) : generatedIds;
+        const extraIds = blockFull ? generatedIds.slice(generatedBedCount) : [];
+        if (extraIds.length > 0) {
+          await client.query(`delete from beds where id = any($1::int[])`, [extraIds]);
         }
-        insertedIds.push(...(result.insertedIds ?? []));
+        if (keptIds.length !== generatedBedCount) {
+          throw new Error(`Only ${keptIds.length} of ${generatedBedCount} beds fit from the planned bed edge.`);
+        }
+        insertedIds.push(...keptIds);
       } else {
         let plantableBedsBefore = mode === "replace_existing" ? 0 : existingBeds.rows.length;
         for (const preset of bedsToGenerate) {
@@ -2896,7 +2914,7 @@ app.post("/api/tasks/:id/record", requireRole("worker"), asyncHandler(async (req
               from tasks
               where farm_id = $1
                 and planting_id is null
-                and task_type in ('bed_prep', 'bed_making')
+                and task_type = 'bed_making'
                 and status <> 'done'
                 and title = $3
             )
@@ -2937,7 +2955,7 @@ app.post("/api/tasks/:id/record", requireRole("worker"), asyncHandler(async (req
             left join beds intended_bed on intended_bed.id = planting.intended_bed_id
             where related_task.farm_id = $1
               and related_task.id <> $2
-              and related_task.task_type in ('bed_prep', 'bed_making')
+              and related_task.task_type = 'bed_making'
               and related_task.status <> 'done'
               and related_task.planting_id = planting.id
               and (
@@ -3050,6 +3068,8 @@ app.post("/api/tasks/:id/record", requireRole("worker"), asyncHandler(async (req
         body.intendedBedId !== undefined ||
         body.plantCount !== undefined ||
         body.bedLengthUsedM !== undefined ||
+        body.trayCount !== undefined ||
+        body.cellsPerTray !== undefined ||
         body.spacing !== undefined;
 
       if (hasPlantingAdjustments) {
@@ -3071,6 +3091,8 @@ app.post("/api/tasks/:id/record", requireRole("worker"), asyncHandler(async (req
               plant_count = case when $6::boolean then $7::integer else plant_count end,
               bed_length_used_m = case when $8::boolean then $9::numeric else bed_length_used_m end,
               spacing = case when $10::boolean then $11::text else spacing end,
+              tray_count = case when $12::boolean then $13::numeric else tray_count end,
+              cells_per_tray = case when $14::boolean then $15::integer else cells_per_tray end,
               updated_at = now()
             where id = $1
           `,
@@ -3085,7 +3107,11 @@ app.post("/api/tasks/:id/record", requireRole("worker"), asyncHandler(async (req
             body.bedLengthUsedM !== undefined,
             body.bedLengthUsedM ?? null,
             body.spacing !== undefined,
-            body.spacing ?? null
+            body.spacing ?? null,
+            body.trayCount !== undefined,
+            body.trayCount ?? null,
+            body.cellsPerTray !== undefined,
+            body.cellsPerTray ?? null
           ]
         );
       }
@@ -3188,6 +3214,9 @@ app.post("/api/tasks/:id/record", requireRole("worker"), asyncHandler(async (req
       notes: body.notes ?? null,
       metadata: {
         taskType: task.task_type,
+        plantCount: body.plantCount ?? null,
+        trayCount: body.trayCount ?? null,
+        cellsPerTray: body.cellsPerTray ?? null,
         bedMaking: bedMakingMetadata
       },
       bedId: recordedTaskBedId ?? null,

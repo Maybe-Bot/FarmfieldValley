@@ -1,0 +1,4 @@
+Loam Ledger Beta Follow-ups
+
+Seed bank spacing presets:
+The beta app currently remembers one recent spacing pattern for a seed/crop and uses it to prefill the next linked planting. Later, it may be useful to support multiple named spacing presets for the same crop or seed, such as baby leaf, main crop, high tunnel, or storage.

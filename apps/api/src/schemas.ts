@@ -71,7 +71,7 @@ export const plantingSchema = z
     plantCount: z.number().int().positive().nullable().optional(),
     bedLengthUsedM: z.number().positive().nullable().optional(),
     trayLocation: z.string().nullable().optional(),
-    trayCount: z.number().int().positive().nullable().optional(),
+    trayCount: z.number().positive().nullable().optional(),
     cellsPerTray: z.number().int().positive().nullable().optional(),
     daysToHarvest: z.number().int().positive().nullable().optional(),
     fieldSpacingInRow: z.number().positive().nullable().optional(),
@@ -116,6 +116,8 @@ export const taskRecordSchema = z.object({
   intendedBedId: z.number().nullable().optional(),
   plantCount: z.number().int().positive().nullable().optional(),
   bedLengthUsedM: z.number().positive().nullable().optional(),
+  trayCount: z.number().positive().nullable().optional(),
+  cellsPerTray: z.number().int().positive().nullable().optional(),
   spacing: z.string().nullable().optional(),
   placementBedId: z.number().nullable().optional(),
   placementPlantCount: z.number().int().positive().nullable().optional(),
@@ -123,12 +125,12 @@ export const taskRecordSchema = z.object({
   placementLocationDetail: z.string().nullable().optional(),
   placementCoordinates: z.array(latLngSchema).min(3).max(50).nullable().optional(),
   placementNotes: z.string().nullable().optional(),
-  bedMakingBedCount: z.number().int().positive().max(100).nullable().optional(),
+  bedMakingBedCount: z.number().int().positive().max(500).nullable().optional(),
   bedMakingMode: z.enum(["replace_existing", "add_after_existing"]).nullable().optional(),
   bedMakingBlockFull: z.boolean().nullable().optional(),
   bedMakingRows: z.array(z.object({
     presetId: z.number().int().positive(),
-    count: z.number().int().positive().max(100)
+    count: z.number().int().positive().max(500)
   })).max(20).optional()
 }).refine((value) => {
   if (value.placementBedId == null) {
@@ -153,7 +155,7 @@ export const blockPlacementPlanRowSchema = z.object({
   plantingId: z.number().int().positive().nullable().optional(),
   bedLengthUsedM: z.number().positive(),
   plantCount: z.number().int().positive().nullable().optional(),
-  trayCount: z.number().int().positive().nullable().optional()
+  trayCount: z.number().positive().nullable().optional()
 });
 
 export const blockPlacementPlanSchema = z.object({
@@ -216,6 +218,10 @@ export const feedbackSchema = z.object({
   comment: z.string().max(4000).nullable().optional(),
   context: z.record(z.unknown()).optional(),
   recentActivity: z.array(z.record(z.unknown())).max(50).optional()
+});
+
+export const feedbackReplySchema = z.object({
+  body: z.string().trim().min(1, "Reply message is required").max(4000)
 });
 
 export const fieldPolygonSchema = polygonSchema.extend({
@@ -332,6 +338,7 @@ export const unplannedWorkSchema = z.object({
   bedMakingBedCount: z.number().int().positive().max(500).nullable().optional(),
   bedMakingBlockFull: z.boolean().optional(),
   bedMakingBedCover: z.enum(["bare", "plastic"]).nullable().optional(),
+  plantingId: z.number().int().positive().nullable().optional(),
   applicationRateUsed: z.number().nonnegative().max(100000000).nullable().optional(),
   applicationAmountUsed: z.number().nonnegative().max(100000000).nullable().optional(),
   applicationProduct: z.string().trim().max(120).nullable().optional(),
@@ -344,6 +351,7 @@ export const unplannedWorkSchema = z.object({
   transplantTrayCount: z.number().int().positive().max(100000).nullable().optional(),
   transplantInRowSpacing: z.number().positive().max(10000).nullable().optional(),
   transplantRowsPerBed: z.number().int().positive().max(50).nullable().optional(),
+  applicationBedIds: z.array(z.number().int().positive()).max(500).optional(),
   transplantBedIds: z.array(z.number().int().positive()).max(500).optional(),
   cultivationBedIds: z.array(z.number().int().positive()).max(500).optional()
 }).refine((value) => value.fieldId != null || value.blockId != null || value.zoneId != null || value.bedId != null, {
@@ -374,6 +382,9 @@ export const taskFlowNodeSchema = z.object({
   x: z.number().min(0).max(1),
   y: z.number().min(0).max(1),
   notes: z.string().nullable().optional()
+}).refine((value) => value.anchor === "planned_sow" || value.anchor.startsWith("after:"), {
+  message: "Task flow anchors must use the seeding date or arrows between nodes.",
+  path: ["anchor"]
 });
 
 export const tractorProfileSchema = z.object({
