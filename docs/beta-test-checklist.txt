@@ -60,9 +60,9 @@ Map-to-work workflow:
 [y1] Open Farm Map in Work mode.
 [y1] Select a bed/block/field with a planned task.
 [y1] Record work from the map. Confirm the card is named Record Work Done, shows the specific work type and task name, and bed-making for the whole planned block records without the "Only X of Y beds fit from the planned bed edge" error.
-[ ] Confirm the work appears in the task list and planting history.
-[ ] Confirm vehicles/tractors show on the map when Tasks due this week is checked.
-[ ] Confirm task icons or vehicles move/animate if expected.
+[y] Confirm the work appears in the task list and planting history.
+[y] Confirm vehicles/tractors show on the map when Tasks due this week is checked.
+[y] Confirm task icons or vehicles move/animate if expected.
 
 Spreadsheet backup safety:
 [y4] Export the farm spreadsheet backup.
@@ -79,7 +79,7 @@ Single-user beta safety:
 [y2] Confirm the header/account area only shows the current user and farm name, not worker/planner role labels.
 
 Data-loss checks:
-[y4] Try deleting a planting and confirm the app asks before deleting.
+[y] Try deleting a planting and confirm the app asks before deleting.
 [y5] Try deleting a map item and confirm the app asks before deleting.
 [y4] Confirm Undo is available after important changes.
 [y2] Confirm the app does not offer any spreadsheet option that deletes or replaces existing crop-plan rows.

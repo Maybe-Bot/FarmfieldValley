@@ -1,0 +1,246 @@
+Loam Ledger Current Beta Test Checklist
+
+Created June 17, 2026 from:
+- docs/beta-test-checklist.txt
+- docs/beta-core-workflow-checklist.txt
+- docs/testing tutorial.txt
+- docs/second-tutorial-proposal.txt
+- recent code changes through the task-flow schedule validation work
+
+Use this as the next testing pass.
+
+Mark each item:
+[ ] Not tested, or changed recently and needs retest
+[y] Works in this pass
+[y1], [y2], [y3], etc. Worked before; code has changed that many rounds since it was directly retested
+[n] Broken
+[?] Confusing
+
+How this file was made:
+- Recent changed areas are reset to [ ].
+- Older working checks from beta-test-checklist.txt were carried forward and usually bumped by one stale level.
+- Items already marked [ ] stayed [ ].
+
+
+1. Retest First: Recent Changes
+
+These changed most recently, so test them before doing a broad pass.
+
+Task-flow schedule safety:
+[ ] Create a normal transplant task flow: Seed trays -> Transplant -> Cleanup. Confirm it saves.
+[ ] Try to make a bad flow where seeding is scheduled after transplanting. Press Save flow and confirm the app tells you why it did not save.
+[ ] Try to make a cleanup task scheduled before seeding/transplant/cultivation. Press Save flow and confirm the app tells you why it did not save.
+[ ] Confirm the problem node is selected/opened after the failed Save flow.
+[ ] Confirm a normal existing task flow still opens, edits, saves, copies, and deletes.
+
+Spreadsheet Import/Export card:
+[ ] Open Annual Crop Plan and confirm the card is named "Spreadsheet Import/Export".
+[ ] Confirm the card text says to upload a crop plan spreadsheet and leave the header line alone.
+[ ] Confirm the button says "Download Template".
+[ ] Download the template.
+[ ] Import the unchanged template and confirm the sample row is ignored, not imported.
+[ ] Edit the sample row with real field/block/bed values and confirm it imports.
+[ ] Import dates in YYYY-MM-DD, M/D/YYYY, and M/D/YY formats and confirm they work.
+[ ] Confirm the old Required header row bubble is gone.
+[ ] Confirm Export Farm text appears below the import button.
+[ ] Confirm Export Farm Spreadsheet is below that text and looks like the import button.
+[ ] Export a farm spreadsheet backup and confirm it downloads.
+
+Testing tutorial / guided workflow:
+[ ] Start the full workflow testing tutorial from Settings.
+[ ] Confirm tutorial auto-scroll is slower and does not jump after every field/block drawing point.
+[ ] Confirm drawing a field highlights the name field as soon as enough points are drawn.
+[ ] Confirm drawing a block highlights the name field as soon as enough points are drawn.
+[ ] Confirm tutorial cabbage spacing loads as 12 in-row, 12 between-row, and 3 rows per bed.
+[ ] Confirm the final tutorial export step highlights the Spreadsheet Import/Export card.
+
+Save failure messages:
+[ ] Press Save on a form with a missing required field and confirm the app says why it did not save.
+[ ] Try a backend-blocked save, such as a bad task flow, and confirm the exact backend reason is shown.
+[ ] During this test pass, whenever any Save button silently does nothing or gives a vague error, mark it [n] here and write the card name.
+
+Spacing precision concern:
+[ ] Change distance units to feet.
+[ ] Create a planting with spacing such as 12 in-row, 12 between-row, and 3 rows per bed.
+[ ] Confirm the plant count / bed length preview makes sense.
+[ ] Refresh and reopen the planting.
+[ ] Confirm spacing still displays correctly in feet.
+[ ] Switch to metric and confirm the spacing still makes sense.
+[ ] Switch back to feet and confirm repeated viewing does not visibly drift.
+[ ] If repeated edit/save changes spacing or plant count unexpectedly, mark [n].
+
+
+2. Must-Pass Farm Workflow
+
+Account and app safety:
+[y5] Open the app and log in successfully.
+[y3] Create a new test farm account, or use a fresh demo/test account. If the username is already taken, confirm the app clearly says to choose a new username.
+[y3] Confirm the beta warning appears with the "This software is still being built." text and can be dismissed.
+[y6] Confirm the Suggestion/problem button opens and submits a report.
+[y2] Confirm Settings does not show Team accounts, worker/planner roles, controls for creating another farm login, or a Map Privacy card.
+[y3] Confirm the header/account area only shows the current user and farm name, not worker/planner role labels.
+
+Map setup:
+[y6] Open Farm Map.
+[y6] Draw a Field.
+[y6] Draw a Block inside the Field.
+[y6] Make beds in the Block.
+[y6] Confirm the beds appear in the right place on the map.
+[y2] In map Plan mode, click beds and crop overlays and confirm they do not select a single bed.
+[y2] In map Work mode, select a block and confirm its details look correct.
+[y2] Switch between Planning and Work modes.
+[y2] Confirm the map still works after changing modes.
+[ ] Confirm the block-selection card is gone and only the useful Selection card appears.
+[ ] Confirm first-bed entrance movement drives into the first bed, resets, and drives in again.
+[ ] Confirm the entrance vehicle does not turn around or drive backward during the loop.
+
+Crop plan:
+[y2] Open Annual Crop Plan.
+[y6] Create a planting with crop, variety, date, spacing, plant count or bed length, and location.
+[y6] Confirm the planting appears in the crop plan.
+[y6] Open the planting detail page.
+[ ] Edit a transplant planting from the Edit Planting card and save it. Confirm tray count can use decimals such as 22.22, plant count rounds to the nearest whole plant, cells per tray defaults to 128 if blank, and bed length used changes from tray count, spacing, and rows per bed.
+[ ] Confirm the edit is still there after refreshing the page.
+
+Task flow and planned work:
+[ ] Assign or create a task flow for the planting.
+[ ] Confirm future tasks appear in the task list.
+[ ] Confirm task dates are based on the planting date and task-flow offsets.
+[ ] Confirm later task dates shift when they are supposed to shift after earlier work is recorded.
+[ ] Confirm task flow nodes use current categories, not stale/old categories.
+[ ] Confirm a harvest or cleanup-style task uses the seed record's days to maturity where expected, if that applies to the flow.
+
+Recording planned work:
+[ ] Record a seed-in-tray task and confirm Trays seeded accepts a decimal such as 2.2.
+[ ] In the Record Work Done card for a seed-in-tray task, confirm Trays seeded and Cells per tray can be adjusted before recording.
+[ ] In the Record Work Done card for a seed-in-tray task, confirm Cells seeded can be used for a less-than-full tray.
+[ ] Record one real work task, such as seeding, transplanting, cultivating, or bed making.
+[ ] If a bed-making task is not tied to mapped land, confirm the Record Work Done card shows a visible warning and does not record it.
+[y3] Confirm the task changes to done.
+[y1] Confirm the work appears in the task list and planting history.
+[ ] Confirm the planting history/event history shows the recorded work, and the Tasks-this-week card keeps done tasks visible under unfinished tasks.
+
+Map-to-work workflow:
+[y2] Open Farm Map in Work mode.
+[y2] Select a bed/block/field with a planned task.
+[y2] Record work from the map. Confirm the card is named Record Work Done, shows the specific work type and task name, and bed-making for the whole planned block records without the "Only X of Y beds fit from the planned bed edge" error.
+[y1] Confirm vehicles/tractors show on the map when Tasks due this week is checked.
+[y1] Confirm task icons or vehicles move/animate if expected.
+[ ] Confirm planting-owned task vehicles appear at the planting's first bed or first actual placement.
+[ ] Confirm a planting with only a block and no bed gets a static block marker instead of disappearing.
+
+Undo, redo, and delete safety:
+[y2] Use Undo after a test change.
+[y2] Confirm the change is undone.
+[y2] Use Redo.
+[y2] Confirm the change comes back.
+[y1] Try deleting a planting and confirm the app asks before deleting.
+[y6] Try deleting a map item and confirm the app asks before deleting.
+[y5] Confirm Undo is available after important changes.
+[y3] Confirm the app does not offer any spreadsheet option that deletes or replaces existing crop-plan rows.
+
+Spreadsheet backup safety:
+[ ] Export the farm spreadsheet backup from the new Spreadsheet Import/Export card.
+[ ] Confirm the file downloads with a date in the name.
+[ ] Open the spreadsheet and confirm the main farm data is present.
+[ ] Import the backup into a fresh test farm/account.
+[ ] Confirm map items, beds, plantings, tasks, seed records, vehicles, and events come back.
+[ ] Confirm importing does not delete existing records.
+[ ] Import a simple crop-plan spreadsheet.
+[ ] Confirm incomplete rows are imported with review markers instead of disappearing.
+
+
+3. Secondary But Important Checks
+
+Seed bank:
+[y4] Create a seed record.
+[y4] Edit the seed record.
+[y4] Archive the seed record.
+[y4] Restore the seed record.
+[y4] Confirm seed records can be linked to plantings.
+[y5] Create or choose a seed record with days to maturity filled in.
+[y5] Create a planting linked to that seed record with a clear spacing, such as 12 in-row, 12 between-row, and 3 rows per bed.
+[y5] Save the planting.
+[y5] Create another planting with the same seed record.
+[y5] Confirm the spacing fields auto-fill from the earlier planting.
+[y5] Change the second planting to a different useful spacing for the same crop, such as 18 in-row, 18 between-row, and 2 rows per bed.
+[y5] Save the second planting.
+[y5] Create a third planting with the same seed record.
+[y5] Confirm the app currently remembers one spacing choice for the seed/crop.
+[y1] Confirm the one-spacing limitation is noted in docs/beta-followups.txt, with no new front-end note.
+
+Harvest:
+[ ] Open Harvest Log and confirm it shows the "Feature coming soon, hopefully..." beta-scope message.
+
+Vehicles and map icons:
+[y5] Create a saved vehicle/tractor.
+[y5] Change its colors.
+[y5] Assign it to a task flow node.
+[ ] Confirm it appears correctly on the map.
+[ ] Delete the test vehicle.
+
+Display/settings:
+[y3] Change distance units.
+[y3] Confirm bed lengths and areas still make sense.
+[ ] Change color theme.
+[ ] Confirm text stays readable.
+[ ] Confirm Settings keeps beta account management hidden.
+
+Admin and feedback:
+[y6] Log in as an admin.
+[y6] Open Admin.
+[y6] Confirm user list loads.
+[y6] Confirm recent usage loads.
+[y6] Confirm recent reports load.
+[y5] Send a reply to a report.
+[y5] Log in as that user and confirm the reply appears in Inbox.
+[y5] Mark an inbox message read.
+[ ] Confirm the unread count updates.
+
+Mobile testing:
+[ ] Open the app on a phone-sized screen.
+[ ] Confirm the Menu / tools button opens the top toolbar.
+[ ] Confirm navigation works from the mobile toolbar.
+[ ] Confirm Farm Map fits the screen.
+[ ] Confirm map controls are reachable on mobile.
+[ ] Confirm Annual Crop Plan table can scroll sideways without breaking the page.
+[ ] Confirm Task List table can scroll sideways without breaking the page.
+[ ] Confirm planting forms are readable and usable on mobile.
+[ ] Confirm Record Work is usable on mobile.
+[ ] Confirm Settings is usable on mobile.
+
+Offline map:
+[ ] Check Map imagery settings.
+[ ] Confirm live map source works.
+[ ] If using offline imagery, confirm offline status is shown clearly.
+[ ] If not using offline imagery, confirm the app still works normally.
+
+
+4. Production Hosting Check
+
+[ ] Frontend host has VITE_API_BASE_URL set to the real API address.
+[ ] API host has CORS_ALLOWED_ORIGINS set to the real website address.
+[ ] API host has PUBLIC_WEB_URL set to the real website address.
+[ ] API host has PUBLIC_API_URL set to the real API address.
+[ ] API host has NODE_ENV=production.
+[ ] API host has a real long CSRF_SECRET, not the example value.
+[ ] API host has SESSION_COOKIE_SECURE=true.
+[ ] API host has SESSION_COOKIE_SAMESITE=Lax, unless the website/API setup requires None.
+[ ] If using SESSION_COOKIE_SAMESITE=None, confirm SESSION_COOKIE_SECURE=true.
+[ ] Confirm the production database has automatic backups.
+[ ] Confirm you know how to restore a database backup if something goes wrong.
+[ ] Confirm nobody runs npm run db:seed on real beta data.
+[ ] Confirm migrations run with npm run db:migrate when updating the server.
+
+
+5. Final Beta Decision
+
+[ ] The Retest First section passes or every failure there is understood.
+[ ] The full map-to-planting-to-work-recording workflow passes.
+[ ] Task-flow bad schedule saves give visible reasons instead of silently failing.
+[ ] Export backup works.
+[ ] Import backup works into a fresh test farm.
+[ ] Mobile has no blocker problems.
+[ ] Login works on the hosted site.
+[ ] At least one other person can create/login/use a test account.
+[ ] Remaining broken items are written down and are not data-loss risks.

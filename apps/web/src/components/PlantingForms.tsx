@@ -29,6 +29,7 @@ export type PlantingTutorialDraft = {
   daysToHarvest?: string;
   spacingInRow: string;
   spacingBetweenRows: string;
+  rowsPerBed?: string;
   notes: string;
 };
 
@@ -611,7 +612,7 @@ export function PlantingForm({
     setIntendedBedId(tutorialDraft.intendedBedId == null ? "" : String(tutorialDraft.intendedBedId));
     setSpacingInRow(tutorialDraft.spacingInRow);
     setSpacingBetweenRows(tutorialDraft.spacingBetweenRows);
-    setRowsPerBed("1");
+    setRowsPerBed(tutorialDraft.rowsPerBed ?? "1");
     setPlantCountSource("plant_count");
     setTraySize("128");
     setTrayCount("");

@@ -16,8 +16,21 @@ there is some odd behavior where it switches from work to plan, actuly, mostly f
 
 Part II 22:19
 
-make tutorial spacing better 3 row 12" would work. 
-side note; i'm a little worried that there is too much rounding. It's fine on the front end, but this is build metric native and will be primarily used in  foot mode in the early stages (just who i know) so little things could add up to lots of plants, and i don't want that. again, it looks good in the front end. 
+make tutorial spacing better for cabbage 3 row 12" would work.
+side note; i'm a little worried that there is too much rounding. It's fine on the front end, but this is build metric native and will be primarily used in  foot mode in the early stages (just who i know) so little things could add up to lots of plants, and i don't want that. again, it looks good in the front end, if there is no risk let me know in text.
+
+part III jun 16th 19:44
+don't write code for anything with a ???? in front of it, i don't know exactly what i want yet. Give me a text response to those sections
+
+The scrolling feature is great, I'd like it to go about half the speed, and not work after the draw field and draw block step (as we can't know how many points will choose to use for their block). and also anything with a field which needs to be filled, have the hightlight move right a way.
 
 
+???? recorded tasks with impossible dates, what happens, what should happen. needs to be a visible problem the user can fix intuitively
+
+
+import crop plan spreadsheet card: let's change the name to "Spreadsheet Import/Export". I want the text which reads "upload a farm export...below." to "Upload your crop plan spread sheet, you'll need to format it into the template. Leave the header line alone, it won't import the sample line unless you change it." let's make sure the sample is ignored but not the top line, it's been good in testing, but i forget which variables i've used.
+
+I want the download csv template button to be shortened to just "Download Template"  I want the Export Farm button moved, more on that later.
+
+Let's remove the Required header row bubble. Can we make the importer more flexible with dates? The i want the import spreashet button (no change) then under it I want a text bubble which reads: "Export Farm, download all your farm's data, as a backup, or for whatever you want to do with it. If you Import a backup on new account, you will clone all you data. Beta Warning: a few things might be missing." And under that i want the Export Farm Spreadsheet button, and i want it to look the same as the import spreadsheet button.
 

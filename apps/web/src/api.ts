@@ -5,7 +5,7 @@
  * shared request helper attaches cookies, sends JSON, and turns backend error
  * responses into normal JavaScript Error objects for the UI to display.
  */
-import { AdminUser, DashboardData, FarmAccount, FeedbackReport, OfflineImageryStatus, SessionInfo, UndoState, UsageEvent, UserMessage } from "./types";
+import { AdminUser, DashboardData, FarmAccount, FeedbackReport, OfflineImageryStatus, SessionInfo, TractorProfile, UndoState, UsageEvent, UserMessage } from "./types";
 
 // Vite exposes only variables prefixed with VITE_ to browser code. Local dev
 // keeps the old localhost default, while hosted builds can point at a deployed API.
@@ -130,8 +130,9 @@ export const api = {
   updateTaskFlow: (id: number, body: unknown) => request(`/api/task-flows/${id}`, { method: "PUT", body: JSON.stringify(body) }),
   copyTaskFlow: (id: number) => request(`/api/task-flows/${id}/copy`, { method: "POST" }),
   deleteTaskFlow: (id: number) => request(`/api/task-flows/${id}`, { method: "DELETE" }),
-  createTractorProfile: (body: unknown) => request<{ id: number }>("/api/tractor-profiles", { method: "POST", body: JSON.stringify(body) }),
-  updateTractorProfile: (id: number, body: unknown) => request<{ ok: boolean }>(`/api/tractor-profiles/${id}`, { method: "PUT", body: JSON.stringify(body) }),
+  getTractorProfiles: () => request<TractorProfile[]>("/api/tractor-profiles"),
+  createTractorProfile: (body: unknown) => request<TractorProfile>("/api/tractor-profiles", { method: "POST", body: JSON.stringify(body) }),
+  updateTractorProfile: (id: number, body: unknown) => request<TractorProfile>(`/api/tractor-profiles/${id}`, { method: "PUT", body: JSON.stringify(body) }),
   deleteTractorProfile: (id: number) => request<{ ok: boolean }>(`/api/tractor-profiles/${id}`, { method: "DELETE" }),
   createBedPreset: (body: unknown) => request("/api/bed-presets", { method: "POST", body: JSON.stringify(body) }),
   deleteBedPreset: (id: number) => request(`/api/bed-presets/${id}`, { method: "DELETE" }),

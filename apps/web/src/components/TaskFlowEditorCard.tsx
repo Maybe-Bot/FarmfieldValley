@@ -14,7 +14,8 @@ import {
   FlowEdgeDraft,
   FlowNodeDraft,
   newTaskFlowNode,
-  taskFlowHasCycle
+  taskFlowHasCycle,
+  taskFlowScheduleProblem
 } from "../task-flow-utils";
 import { isTractorTask, tractorModelForTask } from "../tractor-icons";
 import { TaskFlowEdge, TaskFlowNode, TaskFlowTemplate, TractorProfile } from "../types";
@@ -60,13 +61,21 @@ function afterAnchor(nodeKeys: string[]) {
   return `after:${Array.from(new Set(nodeKeys)).join(",")}`;
 }
 
-function addAfterAnchor(anchor: string, nodeKey: string) {
-  return afterAnchor([...afterNodeKeys(anchor), nodeKey]);
+function edgeKey(edge: Pick<FlowEdgeDraft, "fromNodeKey" | "toNodeKey">) {
+  return `${edge.fromNodeKey}->${edge.toNodeKey}`;
 }
 
-function removeAfterAnchor(anchor: string, nodeKey: string) {
-  const remaining = afterNodeKeys(anchor).filter((item) => item !== nodeKey);
-  return remaining.length > 0 ? afterAnchor(remaining) : "planned_sow";
+function nodesWithEdgeAnchors(nodes: FlowNodeDraft[], edges: FlowEdgeDraft[]) {
+  return nodes.map((node) => {
+    const incomingNodeKeys = edges
+      .filter((edge) => edge.toNodeKey === node.nodeKey)
+      .map((edge) => edge.fromNodeKey);
+    return {
+      ...node,
+      anchor: incomingNodeKeys.length > 0 ? afterAnchor(incomingNodeKeys) : "planned_sow",
+      offsetDays: 0
+    };
+  });
 }
 
 function uniqueTaskTypeOptions(options: string[]) {
@@ -109,7 +118,7 @@ export function TaskFlowEditorCard({
         taskType: node.taskType,
         label: node.label,
         anchor: node.anchor,
-        offsetDays: node.offsetDays,
+        offsetDays: 0,
         iconColor: node.iconColor ?? taskIconColor(node.taskType),
         iconSecondaryColor: node.iconSecondaryColor ?? "#f4c430",
         tractorModel: node.tractorModel ?? defaultModelForTask(node.taskType),
@@ -119,27 +128,35 @@ export function TaskFlowEditorCard({
         notes: node.notes ?? ""
       }))
     : [
-        { ...newTaskFlowNode(0), nodeKey: "shape_beds", label: "Shape beds", taskType: "bed_making", iconColor: defaultProfileForTask("bed_making")?.iconColor ?? taskIconColor("bed_making"), iconSecondaryColor: defaultProfileForTask("bed_making")?.iconSecondaryColor ?? "#f4c430", tractorModel: defaultProfileForTask("bed_making")?.tractorModel ?? defaultModelForTask("bed_making"), tractorProfileId: defaultProfileForTask("bed_making")?.id ?? null, anchor: "planned_sow", offsetDays: 23 },
-        { ...newTaskFlowNode(1), nodeKey: "transplant", label: "Transplant", taskType: "transplant", iconColor: defaultProfileForTask("transplant")?.iconColor ?? taskIconColor("transplant"), iconSecondaryColor: defaultProfileForTask("transplant")?.iconSecondaryColor ?? "#f4c430", tractorModel: defaultProfileForTask("transplant")?.tractorModel ?? defaultModelForTask("transplant"), tractorProfileId: defaultProfileForTask("transplant")?.id ?? null, anchor: "after:shape_beds", offsetDays: 5 },
-        { ...newTaskFlowNode(2), nodeKey: "cultivation", label: "Cultivate", taskType: "cultivation", iconColor: defaultProfileForTask("cultivation")?.iconColor ?? taskIconColor("cultivation"), iconSecondaryColor: defaultProfileForTask("cultivation")?.iconSecondaryColor ?? "#f4c430", tractorModel: defaultProfileForTask("cultivation")?.tractorModel ?? defaultModelForTask("cultivation"), tractorProfileId: defaultProfileForTask("cultivation")?.id ?? null, anchor: "after:transplant", offsetDays: 7 }
+        { ...newTaskFlowNode(0), nodeKey: "shape_beds", label: "Shape beds", taskType: "bed_making", iconColor: defaultProfileForTask("bed_making")?.iconColor ?? taskIconColor("bed_making"), iconSecondaryColor: defaultProfileForTask("bed_making")?.iconSecondaryColor ?? "#f4c430", tractorModel: defaultProfileForTask("bed_making")?.tractorModel ?? defaultModelForTask("bed_making"), tractorProfileId: defaultProfileForTask("bed_making")?.id ?? null },
+        { ...newTaskFlowNode(1), nodeKey: "transplant", label: "Transplant", taskType: "transplant", iconColor: defaultProfileForTask("transplant")?.iconColor ?? taskIconColor("transplant"), iconSecondaryColor: defaultProfileForTask("transplant")?.iconSecondaryColor ?? "#f4c430", tractorModel: defaultProfileForTask("transplant")?.tractorModel ?? defaultModelForTask("transplant"), tractorProfileId: defaultProfileForTask("transplant")?.id ?? null, anchor: "after:shape_beds" },
+        { ...newTaskFlowNode(2), nodeKey: "cultivation", label: "Cultivate", taskType: "cultivation", iconColor: defaultProfileForTask("cultivation")?.iconColor ?? taskIconColor("cultivation"), iconSecondaryColor: defaultProfileForTask("cultivation")?.iconSecondaryColor ?? "#f4c430", tractorModel: defaultProfileForTask("cultivation")?.tractorModel ?? defaultModelForTask("cultivation"), tractorProfileId: defaultProfileForTask("cultivation")?.id ?? null, anchor: "after:transplant" }
       ];
   const initialEdges = edges.length > 0
     ? edges.map((edge) => ({
         fromNodeKey: edge.fromNodeKey,
-        toNodeKey: edge.toNodeKey
+        toNodeKey: edge.toNodeKey,
+        delayDays: Math.max(0, Math.min(9999, edge.delayDays ?? nodes.find((node) => node.nodeKey === edge.toNodeKey)?.offsetDays ?? 0))
       }))
     : [
-        { fromNodeKey: initialNodes[0].nodeKey, toNodeKey: initialNodes[1].nodeKey },
-        { fromNodeKey: initialNodes[1].nodeKey, toNodeKey: initialNodes[2].nodeKey }
+        { fromNodeKey: initialNodes[0].nodeKey, toNodeKey: initialNodes[1].nodeKey, delayDays: 5 },
+        { fromNodeKey: initialNodes[1].nodeKey, toNodeKey: initialNodes[2].nodeKey, delayDays: 7 }
       ];
 
   const [name, setName] = useState(template?.name ?? "");
   const [cropId, setCropId] = useState(template?.cropId != null ? String(template.cropId) : "");
   const [notes, setNotes] = useState(template?.notes ?? "");
   const [isDefault, setIsDefault] = useState(template?.isDefault ?? !template);
-  const [localNodes, setLocalNodes] = useState<FlowNodeDraft[]>(initialNodes);
+  const [localNodes, setLocalNodes] = useState<FlowNodeDraft[]>(() => nodesWithEdgeAnchors(initialNodes, initialEdges));
   const [localEdges, setLocalEdges] = useState<FlowEdgeDraft[]>(initialEdges);
   const [selectedNodeKey, setSelectedNodeKey] = useState<string | null>(initialNodes[0]?.nodeKey ?? null);
+  const [selectedEdgeKey, setSelectedEdgeKey] = useState<string | null>(null);
+  const [edgeReconnectDraft, setEdgeReconnectDraft] = useState<{
+    edgeKey: string;
+    end: "from" | "to";
+    pointerX: number;
+    pointerY: number;
+  } | null>(null);
   const [openNodeMenuKey, setOpenNodeMenuKey] = useState<string | null>(null);
   const [openNodeEditorKey, setOpenNodeEditorKey] = useState<string | null>(null);
   const [connectionDraft, setConnectionDraft] = useState<{ sourceNodeKey: string; direction: "upstream" | "downstream" } | null>(null);
@@ -261,6 +278,41 @@ export function TaskFlowEditorCard({
     };
   }, [dragNodeKey]);
 
+  useEffect(() => {
+    if (!edgeReconnectDraft) {
+      return;
+    }
+
+    function handleMove(event: MouseEvent) {
+      const canvas = canvasRef.current;
+      if (!canvas) {
+        return;
+      }
+      const rect = canvas.getBoundingClientRect();
+      setEdgeReconnectDraft((current) => current ? {
+        ...current,
+        pointerX: clampFlowCoordinate((event.clientX - rect.left) / rect.width),
+        pointerY: clampFlowCoordinate((event.clientY - rect.top) / rect.height)
+      } : null);
+    }
+
+    function handleUp(event: MouseEvent) {
+      const target = event.target;
+      if (target instanceof Element && target.closest(".flow-node-card")) {
+        return;
+      }
+      setEdgeReconnectDraft(null);
+      setStatus("Connection end was not changed.");
+    }
+
+    window.addEventListener("mousemove", handleMove);
+    window.addEventListener("mouseup", handleUp);
+    return () => {
+      window.removeEventListener("mousemove", handleMove);
+      window.removeEventListener("mouseup", handleUp);
+    };
+  }, [edgeReconnectDraft]);
+
   function updateNode(nodeKey: string, patch: Partial<FlowNodeDraft>) {
     setLocalNodes((current) => current.map((node) => node.nodeKey === nodeKey ? { ...node, ...patch } : node));
   }
@@ -273,19 +325,10 @@ export function TaskFlowEditorCard({
     return { left: `${left}%`, top: `${top}%` };
   }
 
-    function nodeCardStyle(node: FlowNodeDraft) {
-    if (openNodeEditorKey !== node.nodeKey) {
-      return { left: `${node.x * 100}%`, top: `${node.y * 100}%` };
-    }
-
-    const left = node.x < 0.28 ? 2 : node.x > 0.72 ? 98 : node.x * 100;
-    const top = node.y < 0.38 ? 2 : node.y > 0.62 ? 98 : 50;
-    const translateX = node.x < 0.28 ? "0" : node.x > 0.72 ? "-100%" : "-50%";
-    const translateY = node.y < 0.38 ? "0" : node.y > 0.62 ? "-100%" : "-50%";
+  function nodeCardStyle(node: FlowNodeDraft) {
     return {
-      left: `${left}%`,
-      top: `${top}%`,
-      transform: `translate(${translateX}, ${translateY})`
+      left: `${node.x * 100}%`,
+      top: `${node.y * 100}%`
     };
   }
 
@@ -297,10 +340,6 @@ export function TaskFlowEditorCard({
     }
 
     return formatTaskAnchorLabel(node.anchor);
-  }
-
-  function timingSummaryLabel(node: FlowNodeDraft) {
-    return `${scheduleSourceLabel(node)} ${node.offsetDays >= 0 ? "+" : ""}${node.offsetDays}d`;
   }
 
   function addNode() {
@@ -350,6 +389,7 @@ export function TaskFlowEditorCard({
       return;
     }
 
+    setSelectedEdgeKey(null);
     setSelectedNodeKey(node.nodeKey);
     setOpenNodeMenuKey(null);
     setConnectionDraft(null);
@@ -371,17 +411,21 @@ export function TaskFlowEditorCard({
   }
 
   function removeNode(nodeKey: string) {
-    setLocalNodes((current) => {
-      const remaining = current.filter((node) => node.nodeKey !== nodeKey);
-      setSelectedNodeKey(remaining[0]?.nodeKey ?? null);
-      setOpenNodeMenuKey(null);
-      setOpenNodeEditorKey(null);
-      setConnectionDraft(null);
-      return remaining;
-    });
-    setLocalEdges((current) =>
-      current.filter((edge) => edge.fromNodeKey !== nodeKey && edge.toNodeKey !== nodeKey)
+    const remainingEdges = localEdges.filter(
+      (edge) => edge.fromNodeKey !== nodeKey && edge.toNodeKey !== nodeKey
     );
+    const remainingNodes = nodesWithEdgeAnchors(
+      localNodes.filter((node) => node.nodeKey !== nodeKey),
+      remainingEdges
+    );
+    setLocalNodes(remainingNodes);
+    setLocalEdges(remainingEdges);
+    setSelectedNodeKey(null);
+    setOpenNodeMenuKey(null);
+    setOpenNodeEditorKey(null);
+    setConnectionDraft(null);
+    setSelectedEdgeKey(null);
+    setEdgeReconnectDraft(null);
     setEditNodeSnapshots((current) => {
       const next = { ...current };
       delete next[nodeKey];
@@ -391,6 +435,14 @@ export function TaskFlowEditorCard({
   }
 
   function removeSelectedNode() {
+    if (selectedEdgeKey) {
+      const selectedEdge = localEdges.find((edge) => edgeKey(edge) === selectedEdgeKey);
+      if (selectedEdge) {
+        removeEdge(selectedEdge.fromNodeKey, selectedEdge.toNodeKey);
+      }
+      return;
+    }
+
     if (!selectedNode) {
       return;
     }
@@ -398,18 +450,27 @@ export function TaskFlowEditorCard({
     removeNode(selectedNode.nodeKey);
   }
 
-    function removeEdge(fromNodeKey: string, toNodeKey: string) {
-      setLocalEdges((current) =>
-        current.filter((edge) => !(edge.fromNodeKey === fromNodeKey && edge.toNodeKey === toNodeKey))
-      );
-      setLocalNodes((current) =>
-        current.map((node) => node.nodeKey === toNodeKey
-          ? { ...node, anchor: removeAfterAnchor(node.anchor, fromNodeKey) }
-          : node
-        )
-      );
-      setStatus("Connection removed. Save the flow to keep this change.");
-    }
+  function replaceEdges(nextEdges: FlowEdgeDraft[]) {
+    setLocalEdges(nextEdges);
+    setLocalNodes((current) => nodesWithEdgeAnchors(current, nextEdges));
+  }
+
+  function removeEdge(fromNodeKey: string, toNodeKey: string) {
+    const nextEdges = localEdges.filter(
+      (edge) => !(edge.fromNodeKey === fromNodeKey && edge.toNodeKey === toNodeKey)
+    );
+    replaceEdges(nextEdges);
+    setSelectedEdgeKey(null);
+    setEdgeReconnectDraft(null);
+    setStatus("Connection removed. Save the flow to keep this change.");
+  }
+
+  function updateEdgeDelay(targetEdgeKey: string, value: number) {
+    const delayDays = Math.max(0, Math.min(9999, Number.isFinite(value) ? Math.round(value * 100) / 100 : 0));
+    setLocalEdges((current) => current.map((edge) =>
+      edgeKey(edge) === targetEdgeKey ? { ...edge, delayDays } : edge
+    ));
+  }
 
   function connectNodes(sourceNodeKey: string, targetNodeKey: string, direction: "upstream" | "downstream") {
     if (!sourceNodeKey || !targetNodeKey) {
@@ -433,25 +494,63 @@ export function TaskFlowEditorCard({
       return;
     }
 
-    const nextEdges = [...localEdges, { fromNodeKey, toNodeKey }];
+    const nextEdges = [...localEdges, { fromNodeKey, toNodeKey, delayDays: 0 }];
     if (taskFlowHasCycle(localNodes, nextEdges)) {
       setStatus("That link would create a dependency loop. Task flows must move one direction.");
       return;
     }
 
-      setLocalEdges(nextEdges);
-      setLocalNodes((current) =>
-        current.map((node) => node.nodeKey === toNodeKey
-          ? { ...node, anchor: addAfterAnchor(node.anchor, fromNodeKey) }
-          : node
-        )
-      );
-      setConnectionDraft(null);
+    replaceEdges(nextEdges);
+    setSelectedEdgeKey(edgeKey({ fromNodeKey, toNodeKey }));
+    setSelectedNodeKey(null);
+    setConnectionDraft(null);
     setOpenNodeMenuKey(null);
     setStatus("Connection added.");
   }
 
+  function reconnectEdgeEnd(nodeKey: string) {
+    if (!edgeReconnectDraft) {
+      return;
+    }
+    const edge = localEdges.find((item) => edgeKey(item) === edgeReconnectDraft.edgeKey);
+    if (!edge) {
+      setEdgeReconnectDraft(null);
+      return;
+    }
+
+    const replacement = edgeReconnectDraft.end === "from"
+      ? { ...edge, fromNodeKey: nodeKey }
+      : { ...edge, toNodeKey: nodeKey };
+    if (replacement.fromNodeKey === replacement.toNodeKey) {
+      setStatus("A connection cannot start and end on the same task.");
+      setEdgeReconnectDraft(null);
+      return;
+    }
+
+    const nextEdges = localEdges.map((item) => edgeKey(item) === edgeReconnectDraft.edgeKey ? replacement : item);
+    const hasDuplicate = nextEdges.some((item, index) =>
+      nextEdges.findIndex((candidate) => edgeKey(candidate) === edgeKey(item)) !== index
+    );
+    if (hasDuplicate) {
+      setStatus("That connection already exists.");
+      setEdgeReconnectDraft(null);
+      return;
+    }
+    if (taskFlowHasCycle(localNodes, nextEdges)) {
+      setStatus("That change would create a dependency loop.");
+      setEdgeReconnectDraft(null);
+      return;
+    }
+
+    replaceEdges(nextEdges);
+    setSelectedEdgeKey(edgeKey(replacement));
+    setSelectedNodeKey(null);
+    setEdgeReconnectDraft(null);
+    setStatus("Connection moved. Save the flow to keep this change.");
+  }
+
   function beginConnection(sourceNodeKey: string, direction: "upstream" | "downstream") {
+    setSelectedEdgeKey(null);
     setConnectionDraft({ sourceNodeKey, direction });
     setSelectedNodeKey(sourceNodeKey);
     setOpenNodeMenuKey(null);
@@ -469,9 +568,19 @@ export function TaskFlowEditorCard({
       return;
     }
 
+    setSelectedEdgeKey(null);
     setSelectedNodeKey(nodeKey);
     setOpenNodeMenuKey(null);
     setStatus(null);
+  }
+
+  function clearGraphSelection() {
+    setSelectedNodeKey(null);
+    setSelectedEdgeKey(null);
+    setOpenNodeMenuKey(null);
+    setOpenNodeEditorKey(null);
+    setConnectionDraft(null);
+    setEdgeReconnectDraft(null);
   }
 
   async function saveFlow() {
@@ -507,6 +616,19 @@ export function TaskFlowEditorCard({
       setOpenNodeEditorKey(staleAnchorNode.nodeKey);
       return;
     }
+    let scheduleProblem: ReturnType<typeof taskFlowScheduleProblem>;
+    try {
+      scheduleProblem = taskFlowScheduleProblem(localNodes, localEdges);
+    } catch (error) {
+      setStatus(error instanceof Error ? error.message : "Task flow schedule problem. Reconnect the arrows before saving.");
+      return;
+    }
+    if (scheduleProblem) {
+      setStatus(scheduleProblem.message);
+      setSelectedNodeKey(scheduleProblem.nodeKey);
+      setOpenNodeEditorKey(scheduleProblem.nodeKey);
+      return;
+    }
 
     try {
       setSaving(true);
@@ -517,12 +639,12 @@ export function TaskFlowEditorCard({
         name: name.trim(),
         notes: notes.trim() || null,
         isDefault,
-        nodes: localNodes.map((node) => ({
+        nodes: nodesWithEdgeAnchors(localNodes, localEdges).map((node) => ({
           nodeKey: node.nodeKey,
           taskType: node.taskType,
           label: node.label.trim(),
           anchor: node.anchor,
-          offsetDays: Number(node.offsetDays),
+          offsetDays: 0,
           iconColor: node.iconColor,
           iconSecondaryColor: node.iconSecondaryColor,
           tractorModel: node.tractorModel,
@@ -557,7 +679,7 @@ export function TaskFlowEditorCard({
     <div className="card">
       <h2>{template ? "Edit task flow" : "New task flow"}</h2>
       {status && <p className="muted"><strong>{status}</strong></p>}
-      <p className="muted">Build a work recipe for a crop. Each card is one job. Unlinked jobs count from the seeding date; linked jobs count from the earlier linked job.</p>
+      <p className="muted">Build a work recipe for a crop. Each card is one job. The days between jobs are stored on the connecting arrows.</p>
       {tutorialHint && (
         <div className="tutorial-helper-bubble">
           <strong>Tutorial next:</strong> {tutorialHint}
@@ -609,7 +731,7 @@ export function TaskFlowEditorCard({
                   type="button"
                   className="secondary-button compact-button"
                   onClick={removeSelectedNode}
-                  disabled={selectedNode == null}
+                  disabled={selectedNode == null && selectedEdgeKey == null}
                 >
                   Remove selected
                 </button>
@@ -630,16 +752,35 @@ export function TaskFlowEditorCard({
                 </div>
               </div>
             </div>
-            <p className="muted">Use arrows when one job should follow another job. Without an arrow, the job counts from the seeding date.</p>
+            <p className="muted">Click an arrow's day label to edit it. Click an arrow to show grips, then drag either grip to reconnect that end.</p>
           </div>
-          <div ref={canvasRef} className={`flow-canvas flow-canvas-${canvasSize}`}>
-          <svg className="flow-edge-layer" viewBox="0 0 100 100" preserveAspectRatio="none">
+          <div
+            ref={canvasRef}
+            className={`flow-canvas flow-canvas-${canvasSize}`}
+            onClick={(event) => {
+              if (event.target !== event.currentTarget) {
+                return;
+              }
+              clearGraphSelection();
+            }}
+          >
+          <svg
+            className="flow-edge-layer"
+            viewBox="0 0 100 100"
+            preserveAspectRatio="none"
+            onClick={(event) => {
+              if (event.target === event.currentTarget) {
+                event.stopPropagation();
+                clearGraphSelection();
+              }
+            }}
+          >
             <defs>
-              <marker id="flow-arrowhead" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto" markerUnits="strokeWidth">
-                <path d="M0,0 L8,4 L0,8 z" fill="#6b7a58" />
+              <marker id="flow-arrowhead" markerWidth="12" markerHeight="12" refX="10.5" refY="6" orient="auto" markerUnits="strokeWidth">
+                <path d="M0,0 L12,6 L0,12 z" fill="#6b7a58" />
               </marker>
-              <marker id="flow-arrowhead-mid" markerWidth="7" markerHeight="7" refX="3.5" refY="3.5" orient="auto" markerUnits="strokeWidth">
-                <path d="M0,0 L7,3.5 L0,7 z" fill="#6b7a58" />
+              <marker id="flow-arrowhead-mid" markerWidth="11" markerHeight="11" refX="5.5" refY="5.5" orient="auto" markerUnits="strokeWidth">
+                <path d="M0,0 L11,5.5 L0,11 z" fill="#6b7a58" />
               </marker>
             </defs>
             {localEdges.map((edge) => {
@@ -652,6 +793,7 @@ export function TaskFlowEditorCard({
               return (
                 <polyline
                   key={`${edge.fromNodeKey}-${edge.toNodeKey}`}
+                  className={selectedEdgeKey === edgeKey(edge) ? "selected" : ""}
                   points={[
                     `${fromNode.x * 100},${fromNode.y * 100}`,
                     `${((fromNode.x + toNode.x) / 2) * 100},${((fromNode.y + toNode.y) / 2) * 100}`,
@@ -659,10 +801,108 @@ export function TaskFlowEditorCard({
                   ].join(" ")}
                   markerMid="url(#flow-arrowhead-mid)"
                   markerEnd="url(#flow-arrowhead)"
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    setConnectionDraft(null);
+                    setSelectedEdgeKey(edgeKey(edge));
+                    setSelectedNodeKey(null);
+                    setOpenNodeEditorKey(null);
+                    setOpenNodeMenuKey(null);
+                  }}
                 />
               );
             })}
+            {edgeReconnectDraft && (() => {
+              const edge = localEdges.find((item) => edgeKey(item) === edgeReconnectDraft.edgeKey);
+              if (!edge) return null;
+              const fixedNode = nodeMap.get(edgeReconnectDraft.end === "from" ? edge.toNodeKey : edge.fromNodeKey);
+              if (!fixedNode) return null;
+              const fromPoint = edgeReconnectDraft.end === "from"
+                ? `${edgeReconnectDraft.pointerX * 100},${edgeReconnectDraft.pointerY * 100}`
+                : `${fixedNode.x * 100},${fixedNode.y * 100}`;
+              const toPoint = edgeReconnectDraft.end === "to"
+                ? `${edgeReconnectDraft.pointerX * 100},${edgeReconnectDraft.pointerY * 100}`
+                : `${fixedNode.x * 100},${fixedNode.y * 100}`;
+              return <line className="flow-edge-reconnect-preview" x1={fromPoint.split(",")[0]} y1={fromPoint.split(",")[1]} x2={toPoint.split(",")[0]} y2={toPoint.split(",")[1]} />;
+            })()}
           </svg>
+          {localEdges.map((edge) => {
+            const fromNode = nodeMap.get(edge.fromNodeKey);
+            const toNode = nodeMap.get(edge.toNodeKey);
+            if (!fromNode || !toNode) {
+              return null;
+            }
+            const key = edgeKey(edge);
+            const selected = selectedEdgeKey === key;
+            const midpointStyle = {
+              left: `${((fromNode.x + toNode.x) / 2) * 100}%`,
+              top: `${((fromNode.y + toNode.y) / 2) * 100}%`,
+              marginTop: "-24px"
+            };
+            return (
+              <div key={`controls-${key}`}>
+                <div
+                  className={`flow-edge-delay${selected ? " selected" : ""}`}
+                  style={midpointStyle}
+                  onMouseDown={(event) => event.stopPropagation()}
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    setConnectionDraft(null);
+                    setSelectedEdgeKey(key);
+                    setSelectedNodeKey(null);
+                    setOpenNodeEditorKey(null);
+                    setOpenNodeMenuKey(null);
+                  }}
+                >
+                  {selected ? (
+                    <label>
+                      <input
+                        type="number"
+                        min={0}
+                        max={9999}
+                        step={0.01}
+                        value={edge.delayDays}
+                        aria-label={`Days from ${fromNode.label} to ${toNode.label}`}
+                        onChange={(event) => updateEdgeDelay(key, Number(event.target.value))}
+                        autoFocus
+                      />
+                      <span>days</span>
+                    </label>
+                  ) : (
+                    <button type="button">{edge.delayDays}d</button>
+                  )}
+                </div>
+                {selected && (
+                  <>
+                    <button
+                      type="button"
+                      className="flow-edge-grip"
+                      style={{ left: `${fromNode.x * 100}%`, top: `${fromNode.y * 100}%` }}
+                      aria-label="Move the start of this connection"
+                      title="Drag to another task"
+                      onMouseDown={(event) => {
+                        event.preventDefault();
+                        event.stopPropagation();
+                        setEdgeReconnectDraft({ edgeKey: key, end: "from", pointerX: fromNode.x, pointerY: fromNode.y });
+                      }}
+                    />
+                    <button
+                      type="button"
+                      className="flow-edge-grip"
+                      style={{ left: `${toNode.x * 100}%`, top: `${toNode.y * 100}%` }}
+                      aria-label="Move the end of this connection"
+                      title="Drag to another task"
+                      onMouseDown={(event) => {
+                        event.preventDefault();
+                        event.stopPropagation();
+                        setEdgeReconnectDraft({ edgeKey: key, end: "to", pointerX: toNode.x, pointerY: toNode.y });
+                      }}
+                    />
+                  </>
+                )}
+              </div>
+            );
+          })}
           {localNodes.map((node) => {
             const nodeIsTutorialTarget = tutorialHighlightMowNodeClick && tutorialCleanupNode?.nodeKey === node.nodeKey;
             const editIsTutorialTarget = tutorialHighlightMowEdit && tutorialTargetNode?.nodeKey === node.nodeKey;
@@ -675,11 +915,13 @@ export function TaskFlowEditorCard({
                 className={`flow-node-card${selectedNodeKey === node.nodeKey ? " selected" : ""}${connectionDraft?.sourceNodeKey === node.nodeKey ? " connection-source" : ""}${openNodeEditorKey === node.nodeKey ? " expanded" : ""}${nodeIsTutorialTarget ? " tutorial-target" : ""}${nodeHasStaleCategory || nodeHasStaleAnchor ? " stale-flow-node" : ""}`}
                 data-tutorial-label={nodeIsTutorialTarget ? "Click Cleanup" : undefined}
                   style={nodeCardStyle(node)}
+                onMouseUp={() => reconnectEdgeEnd(node.nodeKey)}
                 onMouseDown={(event) => {
-                  if (connectionDraft || openNodeEditorKey === node.nodeKey) {
+                  if (connectionDraft || edgeReconnectDraft) {
                     return;
                   }
                   event.preventDefault();
+                  setSelectedEdgeKey(null);
                   setSelectedNodeKey(node.nodeKey);
                   setDragNodeKey(node.nodeKey);
                 }}
@@ -692,7 +934,7 @@ export function TaskFlowEditorCard({
                   </span>
                   <span className="small-chip">{formatTaskTypeLabel(node.taskType)}</span>
                   {(nodeHasStaleCategory || nodeHasStaleAnchor) && <span className="status-pill danger-pill">Update</span>}
-                    <span className="table-subtle">{timingSummaryLabel(node)}</span>
+                    <span className="table-subtle">{scheduleSourceLabel(node)}</span>
                 </div>
                 <div className="flow-node-card-actions">
                   <button
@@ -721,6 +963,7 @@ export function TaskFlowEditorCard({
                     onClick={(event) => {
                       event.preventDefault();
                       event.stopPropagation();
+                      setSelectedEdgeKey(null);
                       setSelectedNodeKey(node.nodeKey);
                       setOpenNodeMenuKey((current) => current === node.nodeKey ? null : node.nodeKey);
                       setOpenNodeEditorKey(null);
@@ -776,16 +1019,6 @@ export function TaskFlowEditorCard({
                         <p className="muted flow-node-menu-note">Add an arrow if this job should count from another job instead.</p>
                       </div>
                     )}
-                  <label>
-                    <span>Days before/after</span>
-                    <input
-                      type="number"
-                      value={node.offsetDays}
-                      onChange={(event) => updateNode(node.nodeKey, {
-                        offsetDays: Number.isFinite(Number(event.target.value)) ? Number(event.target.value) : 0
-                      })}
-                    />
-                  </label>
                   <label className="full-span">
                     <span>Notes</span>
                     <textarea rows={3} value={node.notes} onChange={(event) => updateNode(node.nodeKey, { notes: event.target.value })} />
@@ -893,7 +1126,6 @@ export function TaskFlowEditorCard({
               {selectedNode.anchor !== "planned_sow" && !selectedNode.anchor.startsWith("after:") && <div><dt>Needs update</dt><dd>Old scheduling anchor. Reconnect this node with arrows or set it back to the seeding date.</dd></div>}
               <div><dt>Saved vehicle</dt><dd>{tractorProfiles.find((profile) => profile.id === selectedNode.tractorProfileId)?.name ?? "Default vehicle"}</dd></div>
                 <div><dt>Counts from</dt><dd>{scheduleSourceLabel(selectedNode)}</dd></div>
-              <div><dt>Days before/after</dt><dd>{selectedNode.offsetDays >= 0 ? "+" : ""}{selectedNode.offsetDays} days</dd></div>
               <div><dt>Notes</dt><dd>{selectedNode.notes || "—"}</dd></div>
               <div><dt>Edit</dt><dd>Use the node card controls to save or cancel inline edits.</dd></div>
             </dl>
@@ -907,14 +1139,14 @@ export function TaskFlowEditorCard({
             <strong>Dependencies</strong>
             <span className="small-chip">{localEdges.length} links</span>
           </div>
-          <p className="muted">Open a node's `Link` menu, choose upstream or downstream, then click the other node in the chart.</p>
+          <p className="muted">Click a line to edit its days or drag either end grip to another task.</p>
           <div className="flow-edge-list">
             {localEdges.length === 0 ? (
               <p className="muted">No dependencies yet. Start by connecting two nodes.</p>
             ) : (
               localEdges.map((edge) => (
                 <div key={`${edge.fromNodeKey}-${edge.toNodeKey}`} className="flow-edge-row">
-                  <span>{nodeMap.get(edge.fromNodeKey)?.label ?? edge.fromNodeKey} {"->"} {nodeMap.get(edge.toNodeKey)?.label ?? edge.toNodeKey}</span>
+                  <span>{nodeMap.get(edge.fromNodeKey)?.label ?? edge.fromNodeKey} {"->"} {nodeMap.get(edge.toNodeKey)?.label ?? edge.toNodeKey} ({edge.delayDays} days)</span>
                   <button
                     type="button"
                     className="secondary-button compact-button"

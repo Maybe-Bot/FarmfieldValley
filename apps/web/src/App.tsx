@@ -317,12 +317,11 @@ function GaragePreview({
 }
 
 function GarageCard({
-  tractorProfiles,
-  onChanged
+  tractorProfiles
 }: {
   tractorProfiles: TractorProfile[];
-  onChanged: () => Promise<void>;
 }) {
+  const [savedProfiles, setSavedProfiles] = useState<TractorProfile[]>(tractorProfiles);
   const [draft, setDraft] = useState(emptyGarageDraft);
   const [editingId, setEditingId] = useState<number | null>(null);
   const [status, setStatus] = useState<string | null>(null);
@@ -332,6 +331,28 @@ function GarageCard({
     iconColor: draft.iconColor,
     iconSecondaryColor: draft.iconSecondaryColor
   };
+
+  useEffect(() => {
+    setSavedProfiles(tractorProfiles);
+  }, [tractorProfiles]);
+
+  useEffect(() => {
+    let cancelled = false;
+    void api.getTractorProfiles()
+      .then((profiles) => {
+        if (!cancelled) {
+          setSavedProfiles(profiles);
+        }
+      })
+      .catch((error) => {
+        if (!cancelled) {
+          setStatus(error instanceof Error ? `Could not load saved vehicles: ${error.message}` : "Could not load saved vehicles.");
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   function editProfile(profile: TractorProfile) {
     setEditingId(profile.id);
@@ -364,13 +385,30 @@ function GarageCard({
         iconSecondaryColor: draft.iconSecondaryColor
       };
       if (editingId == null) {
-        await api.createTractorProfile(payload);
+        const response = await api.createTractorProfile(payload);
+        const savedProfile: TractorProfile = {
+          id: response.id,
+          farmId: response.farmId ?? 0,
+          name: response.name ?? payload.name,
+          tractorModel: response.tractorModel ?? payload.tractorModel,
+          iconColor: response.iconColor ?? payload.iconColor,
+          iconSecondaryColor: response.iconSecondaryColor ?? payload.iconSecondaryColor
+        };
+        setSavedProfiles((current) => [...current.filter((profile) => profile.id !== savedProfile.id), savedProfile]);
       } else {
-        await api.updateTractorProfile(editingId, payload);
+        const response = await api.updateTractorProfile(editingId, payload);
+        const savedProfile: TractorProfile = {
+          id: response.id ?? editingId,
+          farmId: response.farmId ?? savedProfiles.find((profile) => profile.id === editingId)?.farmId ?? 0,
+          name: response.name ?? payload.name,
+          tractorModel: response.tractorModel ?? payload.tractorModel,
+          iconColor: response.iconColor ?? payload.iconColor,
+          iconSecondaryColor: response.iconSecondaryColor ?? payload.iconSecondaryColor
+        };
+        setSavedProfiles((current) => current.map((profile) => profile.id === savedProfile.id ? savedProfile : profile));
       }
       resetGarageForm();
       setStatus("Saved.");
-      await onChanged();
     } catch (error) {
       setStatus(error instanceof Error ? error.message : "Vehicle save failed.");
     } finally {
@@ -383,11 +421,11 @@ function GarageCard({
       setSaving(true);
       setStatus(`Deleting ${profile.name}...`);
       await api.deleteTractorProfile(profile.id);
+      setSavedProfiles((current) => current.filter((item) => item.id !== profile.id));
       if (editingId === profile.id) {
         resetGarageForm();
       }
       setStatus("Deleted.");
-      await onChanged();
     } catch (error) {
       setStatus(error instanceof Error ? error.message : "Vehicle delete failed.");
     } finally {
@@ -440,7 +478,7 @@ function GarageCard({
                   className="danger-button"
                   disabled={saving}
                   onClick={() => {
-                    const profile = tractorProfiles.find((item) => item.id === editingId);
+                    const profile = savedProfiles.find((item) => item.id === editingId);
                     if (profile) void deleteProfile(profile);
                   }}
                 >
@@ -451,8 +489,15 @@ function GarageCard({
           </div>
         </div>
       </div>
+      <div className="task-flow-step-header">
+        <strong>Saved vehicles</strong>
+        <span className="small-chip">{savedProfiles.length}</span>
+      </div>
       <div className="garage-grid">
-        {tractorProfiles.map((profile) => (
+        {savedProfiles.length === 0 && (
+          <p className="muted">No saved vehicles were returned for this farm.</p>
+        )}
+        {savedProfiles.map((profile) => (
           <div key={profile.id} className="garage-tile">
             <div className="garage-tile-preview">
               <GaragePreview profile={profile} scale={0.68} spinning={false} />
@@ -4900,11 +4945,11 @@ function App() {
       if (flowId == null) {
                 const nodes = [
                   { nodeKey: "seed", taskType: "seed_in_tray", label: "Seed", anchor: "planned_sow", offsetDays: 0, iconColor: taskIconColor("seed_in_tray"), iconSecondaryColor: "#f4c430", tractorModel: null, tractorProfileId: null, x: 0.1, y: 0.52, notes: "Start cabbage in trays." },
-                  { nodeKey: "transplant", taskType: "transplant", label: "Transplant", anchor: "after:seed", offsetDays: 28, iconColor: taskIconColor("transplant"), iconSecondaryColor: "#f4c430", tractorModel: null, tractorProfileId: null, x: 0.28, y: 0.52, notes: "Move plants into the selected bed." },
-                          { nodeKey: "cultivation_1", taskType: "cultivation", label: "First cultivation", anchor: "after:transplant", offsetDays: 7, iconColor: taskIconColor("cultivation"), iconSecondaryColor: "#f4c430", tractorModel: "canopy", tractorProfileId: null, x: 0.46, y: 0.32, notes: "First cultivation after transplanting." },
-                          { nodeKey: "cultivation_2", taskType: "cultivation", label: "Second cultivation", anchor: "after:cultivation_1", offsetDays: 7, iconColor: taskIconColor("cultivation"), iconSecondaryColor: "#f4c430", tractorModel: "canopy", tractorProfileId: null, x: 0.62, y: 0.52, notes: "This tutorial dates this task into the current week." },
-                          { nodeKey: "cultivation_3", taskType: "cultivation", label: "Third cultivation", anchor: "after:cultivation_2", offsetDays: 7, iconColor: taskIconColor("cultivation"), iconSecondaryColor: "#f4c430", tractorModel: "canopy", tractorProfileId: null, x: 0.78, y: 0.32, notes: "Final cultivation pass before canopy closes." },
-                          { nodeKey: "cleanup", taskType: "cleanup", label: "Cleanup", anchor: "after:cultivation_3", offsetDays: 49, iconColor: taskIconColor("cleanup"), iconSecondaryColor: "#f4c430", tractorModel: "open", tractorProfileId: null, x: 0.9, y: 0.52, notes: "Cleanup after the crop window." }
+                  { nodeKey: "transplant", taskType: "transplant", label: "Transplant", anchor: "after:seed", offsetDays: 0, iconColor: taskIconColor("transplant"), iconSecondaryColor: "#f4c430", tractorModel: null, tractorProfileId: null, x: 0.28, y: 0.52, notes: "Move plants into the selected bed." },
+                          { nodeKey: "cultivation_1", taskType: "cultivation", label: "First cultivation", anchor: "after:transplant", offsetDays: 0, iconColor: taskIconColor("cultivation"), iconSecondaryColor: "#f4c430", tractorModel: "canopy", tractorProfileId: null, x: 0.46, y: 0.32, notes: "First cultivation after transplanting." },
+                          { nodeKey: "cultivation_2", taskType: "cultivation", label: "Second cultivation", anchor: "after:cultivation_1", offsetDays: 0, iconColor: taskIconColor("cultivation"), iconSecondaryColor: "#f4c430", tractorModel: "canopy", tractorProfileId: null, x: 0.62, y: 0.52, notes: "This tutorial dates this task into the current week." },
+                          { nodeKey: "cultivation_3", taskType: "cultivation", label: "Third cultivation", anchor: "after:cultivation_2", offsetDays: 0, iconColor: taskIconColor("cultivation"), iconSecondaryColor: "#f4c430", tractorModel: "canopy", tractorProfileId: null, x: 0.78, y: 0.32, notes: "Final cultivation pass before canopy closes." },
+                          { nodeKey: "cleanup", taskType: "cleanup", label: "Cleanup", anchor: "after:cultivation_3", offsetDays: 0, iconColor: taskIconColor("cleanup"), iconSecondaryColor: "#f4c430", tractorModel: "open", tractorProfileId: null, x: 0.9, y: 0.52, notes: "Cleanup after the crop window." }
                 ];
         const result = await api.createTaskFlow({
           farmId: data.farm.id,
@@ -4914,11 +4959,11 @@ function App() {
           isDefault: true,
           nodes,
           edges: [
-            { fromNodeKey: "seed", toNodeKey: "transplant" },
-            { fromNodeKey: "transplant", toNodeKey: "cultivation_1" },
-            { fromNodeKey: "cultivation_1", toNodeKey: "cultivation_2" },
-            { fromNodeKey: "cultivation_2", toNodeKey: "cultivation_3" },
-                    { fromNodeKey: "cultivation_3", toNodeKey: "cleanup" }
+            { fromNodeKey: "seed", toNodeKey: "transplant", delayDays: 28 },
+            { fromNodeKey: "transplant", toNodeKey: "cultivation_1", delayDays: 7 },
+            { fromNodeKey: "cultivation_1", toNodeKey: "cultivation_2", delayDays: 7 },
+            { fromNodeKey: "cultivation_2", toNodeKey: "cultivation_3", delayDays: 7 },
+                    { fromNodeKey: "cultivation_3", toNodeKey: "cleanup", delayDays: 49 }
           ]
         }) as { id?: number };
         flowId = result.id ?? null;
@@ -4953,8 +4998,9 @@ function App() {
         expectedHarvestStart: harvestStart,
         expectedHarvestEnd: harvestEnd,
         daysToHarvest: "70",
-        spacingInRow: distanceUnit === "ft" ? "18" : "46",
-        spacingBetweenRows: distanceUnit === "ft" ? "18" : "46",
+        spacingInRow: distanceUnit === "ft" ? "12" : "30",
+        spacingBetweenRows: distanceUnit === "ft" ? "12" : "30",
+        rowsPerBed: "3",
         notes: `Tutorial sample. Dates put second cultivation in the week of ${formatWeekRange(tutorialWeekStart)}.`
       });
       setTaskListWeekStart(tutorialWeekStart);
@@ -5290,6 +5336,17 @@ function App() {
     && view === "flows"
     && tutorialFlowId != null
     && selectedFlowId !== tutorialFlowId;
+  const tutorialDrawPhase = tutorialMapPlanningReady
+    && (
+      (activeTutorialStep === tutorialDrawFieldStep && mapMode === "draw_field")
+      || (activeTutorialStep === tutorialDrawBlockStep && mapMode === "draw_block")
+    )
+    ? draftCoordinates.length < 3
+      ? "draw-points"
+      : draftName.trim()
+        ? "save"
+        : "name"
+    : "none";
   const currentTutorialClickTarget = () => {
     if (tutorialTargetView != null && view !== tutorialTargetView) {
       const navLabel = tutorialTargetView === "map" ? "Map" : viewLabels.get(tutorialTargetView) ?? tutorialTargetView;
@@ -5443,8 +5500,7 @@ function App() {
   const tutorialScrollTriggerKey = [
     activeTutorialStep,
     bedLineCoordinates.length,
-    draftCoordinates.length,
-    draftName,
+    tutorialDrawPhase,
     mapMode,
     mapPlantingBeds.length,
     mapWorkflowMode,
@@ -7175,7 +7231,7 @@ function App() {
                     setTutorialPlantingDraft(null);
                   }}
                 />
-                <SpreadsheetImportCard tutorialActive={activeTutorialStep === tutorialSpreadsheetStep && view === "plan" && tutorialKind === "first_account"} onImported={load} />
+                <SpreadsheetImportCard tutorialActive={activeTutorialStep === tutorialSpreadsheetStep && view === "plan"} onImported={load} />
               </div>
             ) : (
               <div className="card"><h2>Planning access</h2><p className="muted">Worker accounts can review the crop plan but cannot create or change plantings.</p></div>
@@ -7489,7 +7545,7 @@ function App() {
                   }
                 }}
               />
-              <GarageCard tractorProfiles={data.tractorProfiles} onChanged={load} />
+              <GarageCard tractorProfiles={data.tractorProfiles} />
             </div>
           </section>
         )}
@@ -8440,12 +8496,40 @@ function TutorialAutoScroll({ active, triggerKey }: { active: boolean; triggerKe
       return;
     }
 
+    let animationFrame = 0;
     const timeout = window.setTimeout(() => {
       const target = document.querySelector<HTMLElement>(".tutorial-target");
-      target?.scrollIntoView({ behavior: "smooth", block: "center", inline: "center" });
+      if (!target) {
+        return;
+      }
+      const rect = target.getBoundingClientRect();
+      const startY = window.scrollY;
+      const targetY = Math.max(0, startY + rect.top - ((window.innerHeight - rect.height) / 2));
+      const distance = targetY - startY;
+      if (Math.abs(distance) < 2) {
+        return;
+      }
+      const durationMs = 1100;
+      const startTime = window.performance.now();
+      const easeInOutCubic = (value: number) => value < 0.5
+        ? 4 * value * value * value
+        : 1 - Math.pow(-2 * value + 2, 3) / 2;
+      const step = (time: number) => {
+        const progress = Math.min(1, (time - startTime) / durationMs);
+        window.scrollTo(0, startY + distance * easeInOutCubic(progress));
+        if (progress < 1) {
+          animationFrame = window.requestAnimationFrame(step);
+        }
+      };
+      animationFrame = window.requestAnimationFrame(step);
     }, 180);
 
-    return () => window.clearTimeout(timeout);
+    return () => {
+      window.clearTimeout(timeout);
+      if (animationFrame) {
+        window.cancelAnimationFrame(animationFrame);
+      }
+    };
   }, [active, triggerKey]);
 
   return null;

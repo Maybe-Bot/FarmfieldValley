@@ -403,6 +403,7 @@ export type TaskFlowEdge = {
   flowTemplateId: number;
   fromNodeKey: string;
   toNodeKey: string;
+  delayDays: number;
 };
 
 export type DashboardData = {

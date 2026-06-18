@@ -80,6 +80,28 @@ export const plantingImportHeaders = [
   "Notes"
 ] as const;
 
+const unchangedTemplateExampleRow = [
+  "Johnny's",
+  "Lettuce",
+  "Salanova Green",
+  "2712G",
+  "2026-03-15",
+  "256",
+  "",
+  "2026-04-20",
+  "2",
+  "128",
+  "55",
+  "10",
+  "12",
+  "4",
+  "plastic mulch",
+  "East Field",
+  "B1",
+  "Bed 1",
+  "Example row: replace field, block, and bed names with names already on your map."
+];
+
 // Dependency-free spreadsheet reader. Python stdlib reads xlsx/ods zip/xml
 // contents and returns raw cell strings; TypeScript does the template checks.
 const genericSpreadsheetParser = String.raw`
@@ -239,6 +261,10 @@ function cleanCell(value: string | undefined) {
   return (value ?? "").trim();
 }
 
+function isUnchangedTemplateExampleRow(cells: string[]) {
+  return unchangedTemplateExampleRow.every((value, index) => cleanCell(cells[index]) === value);
+}
+
 function parseIsoDate(value: string, rowNumber: number, columnName: string) {
   const clean = value.trim();
   if (!clean) {
@@ -254,15 +280,29 @@ function parseIsoDate(value: string, rowNumber: number, columnName: string) {
       return date.toISOString().slice(0, 10);
     }
   }
-  const match = clean.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  const ymdMatch = clean.match(/^(\d{4})[-/](\d{1,2})[-/](\d{1,2})$/);
+  const mdyMatch = clean.match(/^(\d{1,2})[-/](\d{1,2})[-/](\d{2}|\d{4})$/);
+  const match = ymdMatch ?? mdyMatch;
   if (!match) {
-    throw new Error(`Row ${rowNumber}: ${columnName} must use YYYY-MM-DD format`);
+    throw new Error(`Row ${rowNumber}: ${columnName} must use YYYY-MM-DD or M/D/YYYY format`);
   }
-  const date = new Date(`${clean}T00:00:00Z`);
-  if (Number.isNaN(date.getTime()) || date.toISOString().slice(0, 10) !== clean) {
+  const year = ymdMatch
+    ? Number(match[1])
+    : match[3].length === 2
+      ? Number(match[3]) + (Number(match[3]) < 70 ? 2000 : 1900)
+      : Number(match[3]);
+  const month = Number(ymdMatch ? match[2] : match[1]);
+  const day = Number(ymdMatch ? match[3] : match[2]);
+  const date = new Date(Date.UTC(year, month - 1, day));
+  if (
+    Number.isNaN(date.getTime())
+    || date.getUTCFullYear() !== year
+    || date.getUTCMonth() !== month - 1
+    || date.getUTCDate() !== day
+  ) {
     throw new Error(`Row ${rowNumber}: ${columnName} is not a valid date`);
   }
-  return clean;
+  return date.toISOString().slice(0, 10);
 }
 
 function parseRequiredInteger(value: string, rowNumber: number, columnName: string) {
@@ -355,6 +395,7 @@ export function parsePlantingTemplateRows(rows: SpreadsheetRow[]) {
   }
 
   const templateRows: ImportRow[] = [];
+  let skippedTemplateExampleRows = 0;
   for (const row of rows) {
     if (row.sheet !== headerRow.sheet || row.rowIndex <= headerRow.rowIndex) {
       continue;
@@ -362,6 +403,10 @@ export function parsePlantingTemplateRows(rows: SpreadsheetRow[]) {
     const cells = row.cells;
     const isEmpty = cells.every((cell) => !cell.trim());
     if (isEmpty) {
+      continue;
+    }
+    if (isUnchangedTemplateExampleRow(cells)) {
+      skippedTemplateExampleRows += 1;
       continue;
     }
 
@@ -441,6 +486,9 @@ export function parsePlantingTemplateRows(rows: SpreadsheetRow[]) {
   }
 
   if (templateRows.length === 0) {
+    if (skippedTemplateExampleRows > 0) {
+      throw new Error("Spreadsheet only contained the unchanged example row. Add or edit a row before importing.");
+    }
     throw new Error("Spreadsheet did not contain any planting rows under the header");
   }
 
@@ -1276,18 +1324,23 @@ async function importFullBackupSpreadsheetRowsForFarm(client: DbClient, rows: Sp
       `select id from task_flow_nodes where flow_template_id = $1 and node_key = $2`,
       [flowTemplateId, textOrNull(row.fromNodeKey) ?? ""]
     );
-    const toNode = await client.query<{ id: number }>(
-      `select id from task_flow_nodes where flow_template_id = $1 and node_key = $2`,
+    const toNode = await client.query<{ id: number; offset_days: number }>(
+      `select id, offset_days from task_flow_nodes where flow_template_id = $1 and node_key = $2`,
       [flowTemplateId, textOrNull(row.toNodeKey) ?? ""]
     );
     if (!fromNode.rows[0] || !toNode.rows[0]) continue;
     await client.query(
       `
-        insert into task_flow_edges (flow_template_id, from_node_id, to_node_id)
-        values ($1, $2, $3)
+        insert into task_flow_edges (flow_template_id, from_node_id, to_node_id, delay_days)
+        values ($1, $2, $3, $4)
         on conflict (flow_template_id, from_node_id, to_node_id) do nothing
       `,
-      [flowTemplateId, fromNode.rows[0].id, toNode.rows[0].id]
+      [
+        flowTemplateId,
+        fromNode.rows[0].id,
+        toNode.rows[0].id,
+        Math.max(0, Math.min(9999, numberOrNull(row.delayDays) ?? toNode.rows[0].offset_days ?? 0))
+      ]
     );
     counts.importedRecords += 1;
   }

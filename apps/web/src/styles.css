@@ -1326,6 +1326,78 @@ textarea {
   stroke: #6b7a58;
   stroke-width: 0.45;
   opacity: 0.9;
+  pointer-events: stroke;
+  cursor: pointer;
+}
+
+.flow-edge-layer polyline:hover,
+.flow-edge-layer polyline.selected {
+  stroke: #9a6429;
+  stroke-width: 0.75;
+  opacity: 1;
+}
+
+.flow-edge-layer .flow-edge-reconnect-preview {
+  stroke: #9a6429;
+  stroke-width: 0.7;
+  stroke-dasharray: 2 1.2;
+  pointer-events: none;
+}
+
+.flow-edge-delay {
+  position: absolute;
+  z-index: 12;
+  transform: translate(-50%, -50%);
+}
+
+.flow-edge-delay button,
+.flow-edge-delay label {
+  min-width: 42px;
+  min-height: 30px;
+  border: 1px solid #6b7a58;
+  border-radius: 999px;
+  background: var(--card-bg);
+  color: var(--text-main);
+  box-shadow: 0 4px 12px rgba(38, 51, 31, 0.16);
+}
+
+.flow-edge-delay button {
+  padding: 0.25rem 0.55rem;
+  cursor: pointer;
+}
+
+.flow-edge-delay label {
+  display: flex;
+  align-items: center;
+  gap: 0.2rem;
+  padding: 0.2rem 0.45rem;
+}
+
+.flow-edge-delay input {
+  width: 72px;
+  padding: 0.25rem 0.35rem;
+}
+
+.flow-edge-delay.selected label {
+  border-color: #9a6429;
+  box-shadow: 0 5px 16px rgba(154, 100, 41, 0.25);
+}
+
+.flow-edge-grip {
+  position: absolute;
+  z-index: 19;
+  width: 22px;
+  height: 22px;
+  transform: translate(-50%, -50%);
+  border: 3px solid var(--card-bg);
+  border-radius: 50%;
+  background: #9a6429;
+  box-shadow: 0 0 0 2px #9a6429, 0 4px 10px rgba(38, 51, 31, 0.25);
+  cursor: grab;
+}
+
+.flow-edge-grip:active {
+  cursor: grabbing;
 }
 
 .flow-node-card,

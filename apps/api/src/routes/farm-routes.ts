@@ -701,7 +701,8 @@ app.get("/api/dashboard", requireRole("worker"), asyncHandler(async (req, res) =
         e.id,
         e.flow_template_id as "flowTemplateId",
         from_node.node_key as "fromNodeKey",
-        to_node.node_key as "toNodeKey"
+        to_node.node_key as "toNodeKey",
+        e.delay_days::float8 as "delayDays"
       from task_flow_edges e
       join task_flow_nodes from_node on from_node.id = e.from_node_id
       join task_flow_nodes to_node on to_node.id = e.to_node_id
@@ -968,30 +969,70 @@ app.delete("/api/bed-presets/:id", requireRole("planner"), asyncHandler(async (r
   res.json({ ok: true });
 }));
 
+app.get("/api/tractor-profiles", requireRole("worker"), asyncHandler(async (req, res) => {
+  const auth = currentAuth(req) as AuthContext;
+  const result = await pool.query(
+    `
+      select
+        id,
+        farm_id as "farmId",
+        name,
+        tractor_model as "tractorModel",
+        icon_color as "iconColor",
+        icon_secondary_color as "iconSecondaryColor"
+      from tractor_profiles
+      where farm_id = $1
+      order by name, id
+    `,
+    [auth.farmId]
+  );
+  res.json(result.rows);
+}));
+
 app.post("/api/tractor-profiles", requireRole("planner"), asyncHandler(async (req, res) => {
   const body = tractorProfileSchema.parse(req.body);
   const auth = currentAuth(req) as AuthContext;
   const result = await runWithUndoSnapshot(auth, "Create vehicle", async (client) => {
-    const insert = await client.query<{ id: number }>(
+    const insert = await client.query<{
+      id: number;
+      farmId: number;
+      name: string;
+      tractorModel: string;
+      iconColor: string;
+      iconSecondaryColor: string;
+    }>(
       `
         insert into tractor_profiles (farm_id, name, tractor_model, icon_color, icon_secondary_color)
         values ($1, $2, $3, $4, $5)
-        returning id
+        returning
+          id,
+          farm_id as "farmId",
+          name,
+          tractor_model as "tractorModel",
+          icon_color as "iconColor",
+          icon_secondary_color as "iconSecondaryColor"
       `,
       [auth.farmId, body.name.trim(), body.tractorModel, body.iconColor, body.iconSecondaryColor]
     );
     return insert.rows[0];
   });
-  res.status(201).json({ id: result.id });
+  res.status(201).json(result);
 }));
 
 app.put("/api/tractor-profiles/:id", requireRole("planner"), asyncHandler(async (req, res) => {
   const id = Number(req.params.id);
   const body = tractorProfileSchema.parse(req.body);
   const auth = currentAuth(req) as AuthContext;
-  await runWithUndoSnapshot(auth, "Update vehicle", async (client) => {
+  const result = await runWithUndoSnapshot(auth, "Update vehicle", async (client) => {
     await ensureTractorProfileInFarm(client, id, auth.farmId);
-    await client.query(
+    const result = await client.query<{
+      id: number;
+      farmId: number;
+      name: string;
+      tractorModel: string;
+      iconColor: string;
+      iconSecondaryColor: string;
+    }>(
       `
         update tractor_profiles
         set
@@ -1000,6 +1041,13 @@ app.put("/api/tractor-profiles/:id", requireRole("planner"), asyncHandler(async 
           icon_color = $5,
           icon_secondary_color = $6
         where id = $1 and farm_id = $2
+        returning
+          id,
+          farm_id as "farmId",
+          name,
+          tractor_model as "tractorModel",
+          icon_color as "iconColor",
+          icon_secondary_color as "iconSecondaryColor"
       `,
       [id, auth.farmId, body.name.trim(), body.tractorModel, body.iconColor, body.iconSecondaryColor]
     );
@@ -1026,8 +1074,9 @@ app.put("/api/tractor-profiles/:id", requireRole("planner"), asyncHandler(async 
       `,
       [id, body.tractorModel, body.iconColor, body.iconSecondaryColor]
     );
+    return result.rows[0];
   });
-  res.json({ ok: true });
+  res.json(result);
 }));
 
 app.delete("/api/tractor-profiles/:id", requireRole("planner"), asyncHandler(async (req, res) => {
@@ -1854,9 +1903,10 @@ app.post("/api/task-flows/:id/copy", requireRole("planner"), asyncHandler(async 
     const edgesResult = await client.query<{
       from_node_key: string;
       to_node_key: string;
+      delay_days: number;
     }>(
       `
-        select from_node.node_key as from_node_key, to_node.node_key as to_node_key
+        select from_node.node_key as from_node_key, to_node.node_key as to_node_key, e.delay_days::float8 as delay_days
         from task_flow_edges e
         join task_flow_nodes from_node on from_node.id = e.from_node_id
         join task_flow_nodes to_node on to_node.id = e.to_node_id
@@ -1899,9 +1949,10 @@ app.post("/api/task-flows/:id/copy", requireRole("planner"), asyncHandler(async 
         y: Number(node.y_pos),
         notes: node.notes
       })),
-      edges: edgesResult.rows.map((edge: { from_node_key: string; to_node_key: string }) => ({
+      edges: edgesResult.rows.map((edge: { from_node_key: string; to_node_key: string; delay_days: number }) => ({
         fromNodeKey: edge.from_node_key,
-        toNodeKey: edge.to_node_key
+        toNodeKey: edge.to_node_key,
+        delayDays: Number(edge.delay_days)
       }))
     });
 

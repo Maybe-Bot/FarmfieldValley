@@ -250,6 +250,7 @@ async function insertTaskFlowTemplate(
     edges?: Array<{
       fromNodeKey: string;
       toNodeKey: string;
+      delayDays?: number;
     }>;
   }
 ) {
@@ -278,7 +279,7 @@ async function insertTaskFlowTemplate(
         node.taskType,
         node.label,
         node.anchor,
-        node.offsetDays,
+        0,
         node.x,
         node.y,
         node.notes ?? null
@@ -288,15 +289,18 @@ async function insertTaskFlowTemplate(
   }
 
   for (const edge of options.edges ?? []) {
+    const targetNode = options.nodes.find((node) => node.nodeKey === edge.toNodeKey);
+    const delayDays = Math.max(0, Math.min(9999, edge.delayDays ?? targetNode?.offsetDays ?? 0));
     await client.query(
       `
-        insert into task_flow_edges (flow_template_id, from_node_id, to_node_id)
-        values ($1, $2, $3)
+        insert into task_flow_edges (flow_template_id, from_node_id, to_node_id, delay_days)
+        values ($1, $2, $3, $4)
       `,
       [
         template.rows[0].id,
         nodeIdsByKey.get(edge.fromNodeKey),
-        nodeIdsByKey.get(edge.toNodeKey)
+        nodeIdsByKey.get(edge.toNodeKey),
+        delayDays
       ]
     );
   }

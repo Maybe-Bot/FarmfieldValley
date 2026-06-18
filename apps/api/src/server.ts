@@ -57,6 +57,7 @@ import {
   ZoneActualStateInput
 } from "./schemas";
 import { ActualEventType, FarmRole, isCurrentTaskType, isLegacyTaskType, PlantingStatus, TaskType } from "./types";
+import { taskFlowScheduleProblem } from "./task-flow-validation";
 import { assertUndoRestoreIsAccountSafe } from "./undo-safety";
 
 const app = express();
@@ -2788,6 +2789,7 @@ async function saveTaskFlowTemplate(
     edges: Array<{
       fromNodeKey: string;
       toNodeKey: string;
+      delayDays: number;
     }>;
   }
 ) {
@@ -2801,6 +2803,10 @@ async function saveTaskFlowTemplate(
     if (node.anchor !== "planned_sow" && !node.anchor.startsWith("after:")) {
       throw new Error(`The task "${node.label}" uses an old scheduling anchor. Reconnect it with arrows or set it back to the seeding date before saving.`);
     }
+  }
+  const scheduleProblem = taskFlowScheduleProblem(options.nodes, options.edges);
+  if (scheduleProblem) {
+    throw new Error(scheduleProblem);
   }
 
   let flowTemplateId = options.id;
@@ -2867,7 +2873,13 @@ async function saveTaskFlowTemplate(
   }
 
   const nodeIdsByKey = new Map<string, number>();
+  const incomingNodeKeysByKey = new Map(options.nodes.map((node) => [node.nodeKey, [] as string[]]));
+  for (const edge of options.edges) {
+    incomingNodeKeysByKey.get(edge.toNodeKey)?.push(edge.fromNodeKey);
+  }
   for (const node of options.nodes) {
+    const incomingNodeKeys = incomingNodeKeysByKey.get(node.nodeKey) ?? [];
+    const anchor = incomingNodeKeys.length > 0 ? `after:${incomingNodeKeys.join(",")}` : "planned_sow";
     const result = await client.query<{ id: number }>(
       `
         insert into task_flow_nodes (
@@ -2893,8 +2905,8 @@ async function saveTaskFlowTemplate(
 	      node.nodeKey,
 	      node.taskType,
 	      node.label,
-	      node.anchor,
-	      node.offsetDays,
+	      anchor,
+	      0,
         node.iconColor,
         node.iconSecondaryColor,
         node.tractorModel ?? null,
@@ -2913,14 +2925,16 @@ async function saveTaskFlowTemplate(
         insert into task_flow_edges (
           flow_template_id,
           from_node_id,
-          to_node_id
+          to_node_id,
+          delay_days
         )
-        values ($1, $2, $3)
+        values ($1, $2, $3, $4)
       `,
       [
         flowTemplateId,
         nodeIdsByKey.get(edge.fromNodeKey),
-        nodeIdsByKey.get(edge.toNodeKey)
+        nodeIdsByKey.get(edge.toNodeKey),
+        edge.delayDays
       ]
     );
   }
@@ -4048,6 +4062,7 @@ app.use((error: unknown, _req: express.Request, res: express.Response, _next: ex
       error.message === "Task flow edge cannot point to the same node" ||
       error.message === "Task flow edges must be unique" ||
       error.message === "Task flow dependencies cannot contain a loop" ||
+      error.message.startsWith("Task flow schedule problem:") ||
       error.message === "Farm id is required to create a task flow" ||
       error.message === "Spreadsheet upload must be an .xlsx, .ods, or .csv file" ||
       error.message === "Spreadsheet upload was empty" ||
@@ -4055,6 +4070,7 @@ app.use((error: unknown, _req: express.Request, res: express.Response, _next: ex
       error.message === "Spreadsheet did not contain any readable rows" ||
       error.message === "Spreadsheet is empty" ||
       error.message === "Spreadsheet did not contain any planting rows under the header" ||
+      error.message === "Spreadsheet only contained the unchanged example row. Add or edit a row before importing." ||
       error.message.startsWith("Spreadsheet headers must exactly match:") ||
       error.message.startsWith("Row ") ||
       error.message.startsWith("No existing B1/B2/B3/H2/H3/H4/H5/H6 blocks were found")

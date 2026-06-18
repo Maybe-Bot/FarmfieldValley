@@ -135,9 +135,9 @@ class FakeBackupImportClient {
       this.nodesByFlowAndKey.set(`${params[0]}:${params[1]}`, this.next.node);
       return { rows: [{ id: this.next.node }] };
     }
-    if (normalized.startsWith("select id from task_flow_nodes")) {
+    if (normalized.startsWith("select id") && normalized.includes("from task_flow_nodes")) {
       const id = this.nodesByFlowAndKey.get(`${params[0]}:${params[1]}`);
-      return { rows: id == null ? [] : [{ id }] };
+      return { rows: id == null ? [] : [{ id, offset_days: 0 }] };
     }
     if (normalized.includes("insert into task_flow_edges")) {
       this.insertedTaskFlowEdges.push(params);
@@ -217,6 +217,108 @@ test("parsePlantingTemplateRows reads strict planting import rows", () => {
   assert.equal(rows[0].plantCount, 288);
   assert.equal(rows[0].bedCover, "plastic");
   assert.equal(rows[0].fieldSpacingInRow, 18);
+});
+
+test("parsePlantingTemplateRows accepts common date formats", () => {
+  const rows = parsePlantingTemplateRows([
+    { sheet: "Plantings", rowIndex: 1, cells: [...plantingImportHeaders] },
+    {
+      sheet: "Plantings",
+      rowIndex: 2,
+      cells: [
+        "High Mowing",
+        "Pepper",
+        "Jalfago",
+        "HM-123",
+        "3/15/26",
+        "288",
+        "",
+        "5/20/2026",
+        "3",
+        "128",
+        "75",
+        "18",
+        "24",
+        "2",
+        "plastic mulch",
+        "East Field",
+        "B1",
+        "Bed 4",
+        "Greenhouse round one"
+      ]
+    }
+  ]);
+
+  assert.equal(rows[0].startDate, "2026-03-15");
+  assert.equal(rows[0].transplantDate, "2026-05-20");
+});
+
+test("parsePlantingTemplateRows skips the unchanged template example row", () => {
+  assert.throws(
+    () => parsePlantingTemplateRows([
+      { sheet: "Plantings", rowIndex: 1, cells: [...plantingImportHeaders] },
+      {
+        sheet: "Plantings",
+        rowIndex: 2,
+        cells: [
+          "Johnny's",
+          "Lettuce",
+          "Salanova Green",
+          "2712G",
+          "2026-03-15",
+          "256",
+          "",
+          "2026-04-20",
+          "2",
+          "128",
+          "55",
+          "10",
+          "12",
+          "4",
+          "plastic mulch",
+          "East Field",
+          "B1",
+          "Bed 1",
+          "Example row: replace field, block, and bed names with names already on your map."
+        ]
+      }
+    ]),
+    /Spreadsheet only contained the unchanged example row/
+  );
+});
+
+test("parsePlantingTemplateRows imports the template example row after it is edited", () => {
+  const rows = parsePlantingTemplateRows([
+    { sheet: "Plantings", rowIndex: 1, cells: [...plantingImportHeaders] },
+    {
+      sheet: "Plantings",
+      rowIndex: 2,
+      cells: [
+        "Johnny's",
+        "Lettuce",
+        "Salanova Green",
+        "2712G",
+        "2026-03-15",
+        "256",
+        "",
+        "2026-04-20",
+        "2",
+        "128",
+        "55",
+        "10",
+        "12",
+        "4",
+        "plastic mulch",
+        "Home Field",
+        "B1",
+        "Bed 1",
+        "Example row: replace field, block, and bed names with names already on your map."
+      ]
+    }
+  ]);
+
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0].field, "Home Field");
 });
 
 test("parsePlantingTemplateRows rejects wrong headers", () => {
@@ -492,8 +594,8 @@ test("importPlantingSpreadsheetRowsForFarm imports full backup sheets by exporte
       { id: "811", flowTemplateId: "801", nodeKey: "seed", taskType: "seed_in_tray", label: "Seed trays", anchor: "planned_sow", offsetDays: "0", x: "0.2", y: "0.3", tractorProfileId: "701" },
       { id: "812", flowTemplateId: "801", nodeKey: "transplant", taskType: "transplant", label: "Transplant", anchor: "after:seed", offsetDays: "0", x: "0.6", y: "0.5", tractorProfileId: "701" }
     ]),
-    ...sheetRows("Task Flow Edges", ["id", "flowTemplateId", "fromNodeKey", "toNodeKey"], [
-      { id: "821", flowTemplateId: "801", fromNodeKey: "seed", toNodeKey: "transplant" }
+    ...sheetRows("Task Flow Edges", ["id", "flowTemplateId", "fromNodeKey", "toNodeKey", "delayDays"], [
+      { id: "821", flowTemplateId: "801", fromNodeKey: "seed", toNodeKey: "transplant", delayDays: "28" }
     ]),
     ...sheetRows("Planting Details", [
       "id",
@@ -585,6 +687,7 @@ test("importPlantingSpreadsheetRowsForFarm imports full backup sheets by exporte
   assert.equal(client.insertedSeedLots.length, 1);
   assert.equal(client.insertedTaskFlows.length, 1);
   assert.equal(client.insertedTaskFlowEdges.length, 1);
+  assert.equal(client.insertedTaskFlowEdges[0][3], 28);
   assert.equal(client.insertedPlacements.length, 1);
   assert.equal(client.insertedGaps.length, 1);
   assert.equal(client.insertedOverflows.length, 1);

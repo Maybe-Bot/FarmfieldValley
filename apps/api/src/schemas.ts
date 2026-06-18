@@ -396,7 +396,8 @@ export const tractorProfileSchema = z.object({
 
 export const taskFlowEdgeSchema = z.object({
   fromNodeKey: z.string().min(1),
-  toNodeKey: z.string().min(1)
+  toNodeKey: z.string().min(1),
+  delayDays: z.number().min(0).max(9999).multipleOf(0.01).default(0)
 });
 
 export const taskFlowSchema = z.object({

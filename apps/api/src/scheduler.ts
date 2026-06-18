@@ -1,11 +1,11 @@
 /**
  * Task scheduler for planting work.
  *
- * A planting points at a task-flow template. Starter nodes schedule from the
- * planting's seeding date; nodes with an `after:<node_key>` anchor schedule
- * from the linked task's completed date, falling back to that task's planned
- * date until work is recorded. This module updates generated tasks in place so
- * task IDs, farm_events.task_id links, and user-visible history survive.
+ * A planting points at a task-flow template. Starter nodes schedule on the
+ * planting's seeding date. Every arrow stores its own elapsed-day delay, based
+ * on the linked task's completed date and falling back to its planned date
+ * until work is recorded. This module updates generated tasks in place so task
+ * IDs, farm_events.task_id links, and user-visible history survive.
  */
 import { PoolClient } from "pg";
 import { titleCase } from "./utils";
@@ -40,6 +40,7 @@ type FlowNodeRow = {
 type FlowEdgeRow = {
   from_node_key: string;
   to_node_key: string;
+  delay_days: number;
 };
 
 type ExistingGeneratedTaskRow = {
@@ -82,26 +83,14 @@ function toDateOnlyString(value: string | Date) {
 }
 
 function addDays(dateValue: string | Date, offsetDays: number) {
-  const dateString = toDateOnlyString(dateValue);
-  const next = new Date(`${dateString}T00:00:00Z`);
-  next.setUTCDate(next.getUTCDate() + offsetDays);
-  return next.toISOString().slice(0, 10);
-}
-
-function afterNodeKeys(anchor: string) {
-  if (!anchor.startsWith("after:")) {
-    return [];
+  const next = dateValue instanceof Date
+    ? new Date(dateValue.getTime())
+    : new Date(String(dateValue).includes("T") ? String(dateValue) : `${toDateOnlyString(dateValue)}T00:00:00Z`);
+  if (Number.isNaN(next.getTime())) {
+    throw new Error(`Invalid date value: ${String(dateValue)}`);
   }
-
-  return anchor
-    .slice("after:".length)
-    .split(",")
-    .map((nodeKey) => nodeKey.trim())
-    .filter(Boolean);
-}
-
-function latestDate(dates: string[]) {
-  return dates.reduce((latest, date) => date > latest ? date : latest, dates[0]);
+  next.setTime(next.getTime() + offsetDays * 24 * 60 * 60 * 1000);
+  return next.toISOString();
 }
 
 function orderNodesByEdges(nodes: FlowNodeRow[], edges: FlowEdgeRow[]) {
@@ -208,7 +197,10 @@ export async function recalculatePlantingTasks(client: PoolClient, plantingId: n
     ),
     client.query<FlowEdgeRow>(
       `
-        select from_node.node_key as from_node_key, to_node.node_key as to_node_key
+        select
+          from_node.node_key as from_node_key,
+          to_node.node_key as to_node_key,
+          edge.delay_days
         from task_flow_edges edge
         join task_flow_nodes from_node on from_node.id = edge.from_node_id
         join task_flow_nodes to_node on to_node.id = edge.to_node_id
@@ -252,20 +244,31 @@ export async function recalculatePlantingTasks(client: PoolClient, plantingId: n
   }
 
   for (const node of orderedNodes) {
-    const sourceNodeKeys = afterNodeKeys(node.anchor);
-    const sourceDates = sourceNodeKeys
-      .map((nodeKey) => taskTimingByNodeKey.get(nodeKey)?.sourceDate)
-      .filter((value: string | undefined): value is string => value != null);
-    const baseDate = sourceNodeKeys.length > 0
-      ? sourceDates.length === sourceNodeKeys.length ? latestDate(sourceDates) : null
-      : resolvePlantingStartDate(planting);
-    if (!baseDate) {
+    const incomingEdges = edgesResult.rows.filter((edge) => edge.to_node_key === node.node_key);
+    const sourceCandidates = incomingEdges
+      .map((edge) => {
+        const sourceDate = taskTimingByNodeKey.get(edge.from_node_key)?.sourceDate;
+        return sourceDate ? {
+          date: addDays(sourceDate, Number(edge.delay_days)),
+          delayDays: Number(edge.delay_days)
+        } : null;
+      })
+      .filter((value): value is { date: string; delayDays: number } => value != null);
+    const startDate = resolvePlantingStartDate(planting);
+    if ((incomingEdges.length > 0 && sourceCandidates.length !== incomingEdges.length) || (incomingEdges.length === 0 && !startDate)) {
       continue;
     }
 
-    const effectiveOffsetDays = node.offset_days;
-    const scheduledDate = addDays(baseDate, effectiveOffsetDays);
-    const taskAnchor = node.anchor;
+    const latestCandidate = sourceCandidates.reduce<{ date: string; delayDays: number } | null>(
+      (latest, candidate) => !latest || candidate.date > latest.date ? candidate : latest,
+      null
+    );
+    const effectiveOffsetDays = latestCandidate?.delayDays ?? 0;
+    const scheduledDateTime = latestCandidate?.date ?? `${startDate as string}T00:00:00.000Z`;
+    const scheduledDate = toDateOnlyString(scheduledDateTime);
+    const taskAnchor = incomingEdges.length > 0
+      ? `after:${incomingEdges.map((edge) => edge.from_node_key).join(",")}`
+      : "planned_sow";
     const fallbackLabel = `${titleCase(node.task_type)} ${planting.crop_name}`;
     const taskLabel = `${node.label || fallbackLabel} - ${planting.crop_name}${planting.variety_name ? ` (${planting.variety_name})` : ""}`;
     const existingTask = existingTasksByFlowNodeId.get(node.id);
@@ -307,7 +310,9 @@ export async function recalculatePlantingTasks(client: PoolClient, plantingId: n
       taskIdsByNodeKey.set(node.node_key, existingTask.id);
       taskTimingByNodeKey.set(node.node_key, {
         id: existingTask.id,
-        sourceDate: existingTask.completed_date ? toDateOnlyString(existingTask.completed_date) : scheduledDate
+        sourceDate: existingTask.completed_date
+          ? `${toDateOnlyString(existingTask.completed_date)}T00:00:00.000Z`
+          : scheduledDateTime
       });
       activeTaskIds.add(existingTask.id);
     } else {
@@ -352,7 +357,7 @@ export async function recalculatePlantingTasks(client: PoolClient, plantingId: n
       taskIdsByNodeKey.set(node.node_key, result.rows[0].id);
       taskTimingByNodeKey.set(node.node_key, {
         id: result.rows[0].id,
-        sourceDate: scheduledDate
+        sourceDate: scheduledDateTime
       });
       activeTaskIds.add(result.rows[0].id);
     }

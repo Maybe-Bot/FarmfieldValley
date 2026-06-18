@@ -138,23 +138,20 @@ export function SpreadsheetImportCard({ tutorialActive = false, onImported }: { 
   }
 
   return (
-    <div className={`card${tutorialActive ? " tutorial-target" : ""}`} data-tutorial-label={tutorialActive ? "Spreadsheet uploader" : undefined}>
-      <h2>Import crop plan spreadsheet</h2>
+    <div className={`card${tutorialActive ? " tutorial-target" : ""}`} data-tutorial-label={tutorialActive ? "Spreadsheet Import/Export" : undefined}>
+      <h2>Spreadsheet Import/Export</h2>
       {tutorialActive && (
         <div className="tutorial-helper-bubble">
-          <strong>Tutorial next:</strong> This is the spreadsheet uploader. You do not need to use it now; it is here for importing a prepared crop plan or farm backup later.
+          <strong>Tutorial next:</strong> This is the spreadsheet import and export area. You do not need to use it now; it is here for importing a prepared crop plan or downloading a farm backup later.
         </div>
       )}
       <p className="muted">
-        Upload a farm export to bring in map data, vehicles, seed records, crop plans, tasks, harvests, and event history. You can also use the smaller crop-plan template below.
+        Upload your crop plan spread sheet, you'll need to format it into the template. Leave the header line alone, it won't import the sample line unless you change it.
       </p>
       <form className="form-grid" onSubmit={(event) => void importSpreadsheet(event)}>
         <div className="button-row full-span">
           <button type="button" className="secondary-button" onClick={downloadTemplate}>
-            Download CSV template
-          </button>
-          <button type="button" className="secondary-button" onClick={() => void exportSpreadsheet()} disabled={exporting || importing}>
-            {exporting ? "Exporting..." : "Export farm spreadsheet"}
+            Download Template
           </button>
         </div>
         <label className="full-span">
@@ -168,14 +165,15 @@ export function SpreadsheetImportCard({ tutorialActive = false, onImported }: { 
             }}
           />
         </label>
-        <div className="instruction-box full-span">
-          <strong>Required header row:</strong>
-          <code className="template-header-line">{templateHeaders.join(",")}</code>
-          Dates must be YYYY-MM-DD. Spacing numbers are inches. Bed length is feet. Bed cover may be blank, plastic mulch, or bare. For direct-seeded crops, you can leave Plant count blank and fill in Bed length instead. Leave Transplant date, Tray count, and Cells per tray blank for direct-seeded crops. If important cells are blank, the row still imports with a red review marker so you can edit it later.
-        </div>
         {status && <p className="muted full-span"><strong>{status}</strong></p>}
         <button className="primary-button full-span" disabled={importing || !selectedFile}>
           {importing ? "Importing..." : "Import spreadsheet"}
+        </button>
+        <div className="instruction-box full-span">
+          Export Farm, download all your farm's data, as a backup, or for whatever you want to do with it. If you Import a backup on new account, you will clone all you data. Beta Warning: a few things might be missing.
+        </div>
+        <button type="button" className="primary-button full-span" onClick={() => void exportSpreadsheet()} disabled={exporting || importing}>
+          {exporting ? "Exporting..." : "Export Farm Spreadsheet"}
         </button>
       </form>
     </div>

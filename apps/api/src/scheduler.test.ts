@@ -63,9 +63,9 @@ function makeSchedulerClient(options?: {
         if (compactSql.includes("from task_flow_edges")) {
           return {
             rows: [
-              { from_node_key: "seed", to_node_key: "transplant" },
-              { from_node_key: "transplant", to_node_key: "cultivation" },
-              { from_node_key: "cultivation", to_node_key: "cleanup" }
+              { from_node_key: "seed", to_node_key: "transplant", delay_days: 33 },
+              { from_node_key: "transplant", to_node_key: "cultivation", delay_days: 7 },
+              { from_node_key: "cultivation", to_node_key: "cleanup", delay_days: 49 }
             ]
           };
         }
@@ -145,4 +145,31 @@ test("recalculatePlantingTasks updates existing generated tasks instead of repla
 
   const deletedObsoleteTask = calls.find((call) => call.sql.includes("delete from tasks where id = $1") && call.params?.[0] === 504);
   assert.ok(deletedObsoleteTask);
+});
+
+test("recalculatePlantingTasks accumulates fractional arrow delays", async () => {
+  const { client, calls } = makeSchedulerClient();
+  const originalQuery = client.query.bind(client);
+  client.query = async (sql: string, params?: unknown[]) => {
+    const compactSql = sql.replace(/\s+/g, " ").trim();
+    if (compactSql.includes("from task_flow_edges")) {
+      calls.push({ sql, params });
+      return {
+        rows: [
+          { from_node_key: "seed", to_node_key: "transplant", delay_days: 0.5 },
+          { from_node_key: "transplant", to_node_key: "cultivation", delay_days: 0.5 },
+          { from_node_key: "cultivation", to_node_key: "cleanup", delay_days: 0.01 }
+        ]
+      };
+    }
+    return originalQuery(sql, params);
+  };
+
+  await recalculatePlantingTasks(client as never, 44);
+
+  const taskInserts = calls.filter((call) => call.sql.includes("insert into tasks"));
+  assert.equal(taskInserts[0].params?.[12], "2026-03-08");
+  assert.equal(taskInserts[1].params?.[12], "2026-03-08");
+  assert.equal(taskInserts[2].params?.[12], "2026-03-09");
+  assert.equal(taskInserts[3].params?.[11], 0.01);
 });
