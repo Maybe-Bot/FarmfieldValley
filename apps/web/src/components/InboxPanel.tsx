@@ -2,6 +2,7 @@ import { useState } from "react";
 import { api } from "../api";
 import { formatDate } from "../display-utils";
 import { UserMessage } from "../types";
+import { MobileListLimiter } from "./MobileListLimiter";
 
 type InboxPanelProps = {
   messages: UserMessage[];
@@ -57,9 +58,10 @@ export function InboxPanel({ messages, onMessageRead, onRefresh }: InboxPanelPro
         {messages.length === 0 ? (
           <p className="muted">No messages yet.</p>
         ) : (
-          <div className="inbox-list">
-            {messages.map((message) => (
-              <article key={message.id} className={`inbox-message${message.readAt ? "" : " unread"}`}>
+          <MobileListLimiter itemCount={messages.length} itemLabel="messages">
+            <div className="inbox-list">
+              {messages.map((message) => (
+                <article key={message.id} className={`inbox-message${message.readAt ? "" : " unread"}`}>
                 <div className="inbox-message-header">
                   <div>
                     <h3>{message.subject}</h3>
@@ -83,9 +85,10 @@ export function InboxPanel({ messages, onMessageRead, onRefresh }: InboxPanelPro
                     {savingId === message.id ? "Saving..." : message.readAt ? "Read" : "Mark read"}
                   </button>
                 </div>
-              </article>
-            ))}
-          </div>
+                </article>
+              ))}
+            </div>
+          </MobileListLimiter>
         )}
       </div>
     </section>

@@ -1,6 +1,7 @@
 import { FormEvent, useMemo, useState } from "react";
 import { api } from "../api";
 import { DashboardData, SeedItem } from "../types";
+import { MobileListLimiter } from "./MobileListLimiter";
 
 type SeedLotDraft = {
   lotNumber: string;
@@ -334,7 +335,8 @@ export function SeedBankCard({
         {visibleSeeds.length === 0 ? (
           <p className="muted">No seed records yet.</p>
         ) : (
-          <table className="data-table seed-bank-table">
+          <MobileListLimiter itemCount={visibleSeeds.length} itemLabel="seed records" forceExpanded={editingSeedId != null}>
+            <table className="data-table seed-bank-table">
             <thead>
               <tr>
                 <th>Seed</th>
@@ -427,7 +429,8 @@ export function SeedBankCard({
                 )
               ))}
             </tbody>
-          </table>
+            </table>
+          </MobileListLimiter>
         )}
       </div>
       <div className="card">

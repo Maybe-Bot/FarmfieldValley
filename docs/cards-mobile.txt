@@ -1,108 +1,115 @@
 Loam Ledger mobile card map
-Purpose: Edit this file with small mobile-specific change requests. Mobile now has the same essential cards and functions as desktop; the main difference is layout.
+Last checked against the current web app: June 19, 2026
 
+Purpose: Edit this file with small mobile-specific change requests. It lists the cards that are currently rendered by the mobile site, what is inside them, and where they appear.
+[Notes/prompts to change things can be written in brackets. Completed prompts are kept and marked COMPLETE.]
 Global mobile layout
-- Top toolbar is collapsed by default. It shows "Loam Ledger", the current page name, and a Menu / tools button.
-- When Menu / tools is opened, it shows navigation, Undo, Redo, Settings/Admin, user/farm chip, and map tools if on Farm Map.
-- Most page layouts become one column. Cards stack vertically in page order.
-- Tables keep all desktop columns and scroll sideways inside the card when too wide.
-- Form grids become one column so fields are easier to read.
-- Week buttons put "This week" first, then Previous week and Next week below.
+- At 760 px wide or less, page grids become one column and cards stack in page order.
+- The small sticky top toolbar shows a four-line menu icon, "Loam Ledger", the current page name, Undo, and Redo only when a redo is available. Plan/Work is kept in the side menu rather than taking a second row in the main toolbar. [COMPLETE]
+- Pressing the menu icon opens a fully opaque left-side drawer covering 80% of the phone screen. On Farm Map, the labeled Map mode Plan/Work toggle is directly beneath the drawer heading. Switching between Plan and Work keeps the menu open. In Plan mode, Select, Draw field, Draw block, Edit field/block, and Make beds appear immediately beneath the toggle; navigation and account links follow them. The page behind it is locked in place. The drawer itself scrolls only when its contents are taller than the screen. Clicking the shaded area outside, pressing Close, pressing Escape, choosing a page, or choosing a map drawing/editing tool closes it without clicking through to the page underneath. The drawer and its buttons stay above all map labels. [COMPLETE]
+- Planner navigation includes Map, Tasks, Annual Crop Plan, Task Flows, and Seed Bank. Worker navigation includes Map and Tasks.
+- Tables keep their columns and scroll sideways when they are wider than the phone.
+- Cards with more than five list/table records start as a short mobile preview. A compact bordered row shows "N total items" and Show full list. The open view provides Show shorter list. Desktop continues showing complete lists. Editors automatically stay open when an item is actively being changed. [COMPLETE]
+- Form grids and detail lists become one column.
+- Most button rows become two columns. A single button or a full-width button spans both columns.
+- Week controls put This week first, with Previous week and Next week below it.
+- A Suggestion/problem button remains at the bottom of the page.
 
-Global modal cards
-- Loading card: same content as desktop.
-- Login card: same content as desktop.
-- Suggestion/problem card: modal. Same as desktop, stacked for phone width.
-- Beta warning card: modal. Same as desktop.
-- Active tutorial card: same tutorial content as desktop, stacked above page content when open.
+Signed-out and global cards
+- Loading card: contains "Loading" and the session-check message.
+- Farm login / Create farm account card: contains account explanation, error/status text, username, password, and Log in. Create-account mode also contains farm name, name, email, password guidance, and Create farm account. Seeded demo account details are no longer shown on either desktop or mobile; the underlying demo accounts were not removed. [COMPLETE]
+- Suggestion/problem card: modal available while signed in or signed out. Contains an optional comment, status text, Submit suggestion/problem, and Cancel. When signed in it also saves the current page, selected item, map date, and recent activity.
+- Beta warning card: modal with the beta/data-loss warning and I understand.
+- Active tutorial card: appears above page content. Contains tutorial kind, step title and number, instructions, the current click target, status text, Back, Next/Done, and Close tutorial.
 
 Farm Map page
-Layout: one column. Map appears first, then map controls, then the map-side cards stacked below. Map tools live in the collapsed top toolbar and appear after opening Menu / tools.
+Layout: one column. The map is first, map controls are below it, and context cards stack afterward. Plan/Work and the map drawing/editing buttons are in the scrollable side menu.
 
-- Farm Map card: full-width map. Same map layers and editing/selection behavior as desktop.
-- Map controls card: below map. Contains Use phone GPS, map week controls, week slider, map layer checkboxes.
-- Map status notice: small instruction box above relevant map cards.
-- New field / New block / New mapped area / New cover crop area card: stacked below map controls while drawing. Same fields as desktop, one-column form.
-- Edit field/block/area card: stacked below map controls while editing. Same fields/actions as desktop, one-column form.
-- Generate beds in block card: stacked below map controls. Same bed generator controls as desktop. Buttons wrap into phone-width rows.
-- Manage bed presets foldout: inside Generate beds. Same as desktop, stacked.
-- New Planting card: appears after selecting beds or on Annual Crop Plan. Same fields as desktop, one-column form.
-- Record Work Done card: stacked where selected-task work is available. Same fields as desktop.
-- Bed records card: stacked after selecting a bed in Work mode. Same chips and sections as desktop.
-- Bed Maker card: stacked after selecting a block with no plantable beds.
-- Block placement plan card: stacked after selecting a block/bed. Full table scrolls sideways. Inline New planting/Edit planting forms stack one column.
-- Cover crop work card: stacked after selecting cover-crop area in Work mode.
-- Record Work (unplanned) card: stacked after selecting a map item in Work mode. Same work categories and conditional fields as desktop.
-- Selection card: stacked near bottom of map-side cards. Same details and Edit/Delete/Switch to Planning controls as desktop.
-- Block tools card: shown to worker accounts when tools are planner-only.
-- Weekly tasks card: stacked in Work-only map context. Same task rows and actions as desktop.
+- Farm Map card: phone-width interactive map. Contains fields, blocks, sections, beds and roads, planned and actual crop overlays, crop labels, task vehicles/icons, GPS location and accuracy, drawing/edit handles, split-line previews, bed previews, and the first-bed entrance marker.
+- Map controls card: on mobile, contains three compact buttons—GPS, Week, and Layers—sized to 80% of their grid-column width and half as tall as they are wide. The card has reduced padding and spacing below the buttons. Pressing one opens its panel; pressing it again closes it, and opening another replaces the current panel. GPS contains Use phone GPS and location accuracy. Week contains the current date range, Previous/This/Next week, slider, and overlay-date explanation. Layers contains Planned crops in ground, Actual crops in ground, Tasks due this week, and Show other farms for authorized admins. Desktop keeps the expanded controls. [COMPLETE]
+- Map status notice: instruction box above context cards. Shows save errors, selection instructions, task status, and other map feedback.
+- New field / New block / New mapped area / New cover crop area card: shown while drawing. Contains parent location when relevant, name or crop/group name, area, future use, current state, cover-crop choice and dates when relevant, notes, Cancel, and Save. Forms stack to one column.
+- Edit field/block/area card: shown while editing a selected map shape. Contains name, area, future use/current state for sections, cover-crop fields when relevant, notes, Delete selected vertex, Cancel, and Save changes.
+- Generate beds in block card: shown from Make beds. Contains starter-preset setup when no presets exist, beginning-of-first-bed selection, map preview guidance, preset, first-bed entrance side, Make one bed/road, count, name prefix, start number, keep/replace existing beds, Fill whole block, Harvest roads foldout, existing bed chips, Generate count, Fill block, and preset management. Controls stack or wrap for phone width.
+- Manage bed presets foldout: inside Generate beds. Contains existing preset chips and Delete, bed/road choice, name, bed or road width, path spacing, notes, and Save preset.
+- New Planting card: shown after selecting planting beds or within a block crop plan. Contains crop, variety, seed record, planned dates, location, bed cover, spacing, rows, plant count, bed length, tray details, task flow, notes, preview/fill helpers, and Create planting.
+- Record Work Done card: shown after selecting a scheduled task. Contains task and planting details, scheduled date, record date, notes, and task-specific fields such as actual planting values, bed-making details, selected beds, plant counts, or completion-only text. Ends with Record task.
+- Bed records card: shown after selecting a bed in Work mode. Contains Work to record, Plantings, Placement history, Gaps, and Completed tasks chips. Task and planting chips open their related records.
+- Bed Maker card: shown when a selected block has no plantable beds. Contains the block name and Make beds.
+- Block crop plan card: shown after selecting a block, or a bed within a block. Contains crop/gap rows, bed length, tray count, plant count, move-up/down controls, Add gap row, inline Edit planting, inline New planting, overflow notice, and Save placement plan. The table scrolls sideways and embedded forms stack.
+- Cover crop work card: shown for a selected cover-crop area in Work mode. Contains planned and actual seed/termination dates, current state, Seeded today, Terminated today, notes, and Save cover crop work.
+- Record Work (unplanned) card: shown for a selected field, block, section, or bed in Work mode. Contains date, optional crop target, work category, category detail or Add new, product/seed and rate/amount fields when relevant, section tools, bed-making controls, transplant controls, map bed picking for applications/transplanting/cultivation, notes, and Record work.
+- Block tools card: shown to workers when selected block tools require planner access.
+- Tasks-this-week card: shown in the map's task-focused Work view. Contains week/context, Past undone for the current week, Work to do rows, Done this week rows, task icon/title/date/location, Record or Mark done, and Undo for the most recently completed task.
 
 Annual Crop Plan page
-Layout: one column. Crop plan card first, then New Planting, then Spreadsheet Import.
+Layout: one column. Annual crop plan is first, followed by New Planting and Spreadsheet Import/Export for planners.
 
-- Annual crop plan card: full desktop table appears on mobile, with sideways scrolling if needed. Contains Pick, Planting, Status, Planned sow, Planned transplant, Harvest window, Intended bed, Actions/Delete, Delete selected, and Unscheduled tasks.
-- New Planting card: below the plan table. Same desktop fields, one-column form.
-- Import crop plan spreadsheet card: below New Planting. Same template/export/upload/import controls.
-- Planning access card: replaces planning tools for worker accounts.
+- Annual crop plan card: grouped yearly crop-plan table with Pick, Planting, review marker/crop, Status, Planned sow, Planned transplant, Harvest window, Intended bed, Actions, Delete, and Delete selected. Unscheduled task chips appear below the table. The table scrolls sideways.
+- New Planting card: same planting form described under Farm Map, stacked to one column.
+- Spreadsheet Import/Export card: contains Download Template, spreadsheet file picker for .xlsx/.ods/.csv, import status, Import spreadsheet, backup explanation, and Export Farm Spreadsheet.
+- Planning access card: replaces the planning forms for worker accounts and explains that workers can review but cannot create or change plantings.
 
 Planting Detail page
-Layout: one column. Detail/history cards appear first, then edit/placement/actuals tools.
+Layout: one column. Details and history appear first, followed by edit/actual-work tools.
 
-- Planting detail card: same content as desktop. Milestones and Planning detail stack vertically.
-- Bed placement history card: read-only full table scrolls sideways.
-- Event history card: full table scrolls sideways.
-- Edit planting card: appears after the detail/history cards while editing.
-- Record actual work card: appears below history when not editing. Bed/location placement is handled from the map workflow, not from a separate Planting Detail form.
-- Planning access card: shown to worker accounts.
+- Planting detail card: contains planting title, spreadsheet review marker, crop/seed name, status, Edit planting, Delete planting, Milestones, and Planning detail. Milestones and planning details stack vertically.
+- Bed placement history card: read-only table with Date, Bed, Plant count, Bed length used, Exact location, and Notes. Scrolls sideways.
+- Event history card: table with Date, Type, Event, Bed, and Notes. Scrolls sideways.
+- Edit planting card: shown while editing. Contains crop, variety, status, planned dates, intended location, spacing, count, tray, task-flow, and notes fields, plus Save planting and Close.
+- Record actual work card: shown when not editing. Contains event type, date, notes, and Record actual and recalculate tasks.
+- Planning access card: shown to workers instead of edit/actual-work tools.
 
 Task List page
-Layout: one column. Task table first, then selected-task recording, then explanation.
+Layout: one column. The selected-week task table is first, followed by task recording and the explanation card.
 
-- This week / selected week task card: full desktop task table appears on mobile and scrolls sideways. Contains week controls, Past undone, Date, Task, Planting, Bed, Status, Depends on, Rule, Done.
-- Record from task card: below the task table.
-- How shifting works card: below Record from task.
+- This week / selected week task card: contains week title/range, This week/Previous/Next controls, Past undone for the current week, and a task table with Date, Task, Planting, Bed, Status, Depends on, Rule, and Done. Record or Mark done appears in each unfinished row. The table scrolls sideways.
+- Record Work Done card: below the task table for the selected task. Same task-recording card described under Farm Map.
+- How shifting works card: explains that later connected task dates recalculate from recorded actual work and that task recording can include planting adjustments.
 
 Record Work page
 Layout: one column.
 
-- Record from task card: first.
-- Log harvest by bed card: below it.
+- Record Work Done card: contains the selected or first available task and its task-specific recording form. If no task is selected, it asks the user to select a task first.
 
 Task Flows page
-Layout: one column. The flow list appears above the editor.
+Layout: one column. Reusable task flows appears first, followed by the flow editor and Garage.
 
-- Reusable task flows card: first. Same New flow, Copy selected, Delete, and list controls.
-- Task flow editor card: below flow list. Full editor, node cards, and canvas; wide flow controls may scroll/wrap.
-- Flow node cards: inside Task flow editor. Same node content and inline edit controls.
-- Garage card: below task flow editor.
+- Reusable task flows card: contains description, New flow, Copy selected, Delete, and the flow list with crop/default labels.
+- New task flow / Edit task flow card: contains flow name, crop, default-for-crop setting, notes, Add node, Remove selected, canvas size, dependency canvas and arrows, node cards, connection controls, scheduling details, and Save flow.
+- Flow node cards: inside the flow editor. Each shows task type, label, schedule source/offset, vehicle appearance, status warnings, and edit/link controls. Inline editing expands within the node.
+- Garage card: contains vehicle preview, name, vehicle type, primary/secondary colors, Save/update/delete controls, and saved vehicle profiles.
 
 Seed Bank page
-Layout: one column.
+Layout: one column. Seed Bank appears first, then Add seed.
 
-- Seed Bank card: first. Full table scrolls sideways. Filters and inline editor remain available.
-- Add seed card: below Seed Bank. Form is one column. Workers see access text.
+- Seed Bank card: contains active record count, In stock and Show archived filters, and a table with Seed, Supplier, Stock, Maturity, Plan links, Status, and Actions for planners. Edit opens a full inline seed/lot editor. The table scrolls sideways.
+- Add seed card: contains crop, variety, family, breed/type, supplier, catalog number, days to maturity, seed-lot fields, and Add seed. Worker accounts see view-only access text instead of the form.
 
 Harvest Log page
 Layout: one column.
 
-- Harvest log card: first. Full table scrolls sideways.
-- Summary card: below Harvest log.
+- Harvest log card: contains an out-of-beta-scope warning and a table with Date, Bed, Planting, Quantity, and Notes. The table scrolls sideways.
+- Summary card: contains totals grouped by harvest unit.
+
+Inbox page
+Layout: one column.
+
+- Inbox card: contains the Inbox heading, description, Refresh, status text, and message list. Each message shows subject, sender, date, unread status, body, optional related report number, and Mark read/Read.
 
 Admin page
-Layout: one column.
+Layout: one column. Admin control panel and Users appear first, followed by Recent usage and Recent reports.
 
-- Admin control panel card: first. Buttons stack/wrap.
-- Users card: below control panel. Full table scrolls sideways.
-- Recent usage card: below Users. Full table scrolls sideways.
-- Recent reports card: below Recent usage. Report context expands inline.
+- Admin control panel card: contains the prototype-admin description, Suggestion/problem, Refresh, and status text.
+- Users card: table with User, display/admin label, Status, Farms and roles, Created, Last login, Feedback count, and Delete. Scrolls sideways.
+- Recent usage card: table with When, User/farm, Page/path, Activity, and Time. Includes page views, time records, clicks, and frontend errors. Scrolls sideways.
+- Recent reports card: problem/suggestion list with comment, date, user, page, reply count, last reply date, expandable context/activity, and an inbox reply form for signed-in reporters. Anonymous reports show that inbox replies are unavailable.
 
 Settings page
-Layout: one column.
+Layout: one column. Display/account cards appear first, followed by Map imagery.
 
-- Display settings card: first. Selectors stack one column.
-- Preview card: below Display settings.
-- Tutorials card: below Preview for planner accounts.
-- Account card: below tutorial.
-- Team accounts card: below Account for planner accounts. Workers see access text.
-- Map imagery card: below Team accounts/access text.
-- Map privacy card: below Map imagery.
+- Display settings card: contains Distance units and Color theme selectors plus the note that data entry still uses meters.
+- Preview card: shows sample Bed length, Area, and Theme using the current settings.
+- Tutorials card: shown to planner accounts. Contains Start first account tutorial and Start full workflow tutorial.
+- Account card: shows User and Farm, plus Log out.
+- Map imagery card: explains that the current prototype uses the live web basemap and that offline caching is disabled.

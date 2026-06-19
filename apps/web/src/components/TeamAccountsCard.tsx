@@ -3,6 +3,7 @@ import { api } from "../api";
 import { EMAIL_VERIFICATION_BYPASS_ADDRESS, roleLabel, validateAccountInputs } from "../account-utils";
 import { formatDate } from "../display-utils";
 import { FarmAccount, FarmRole } from "../types";
+import { MobileListLimiter } from "./MobileListLimiter";
 
 type TeamAccountsCardProps = {
   farmName: string;
@@ -28,7 +29,8 @@ export function TeamAccountsCard({ farmName, accounts, onCreated }: TeamAccounts
       <h2>Team accounts</h2>
       <p className="muted">Create logins for {farmName}. Planner accounts can edit plans. Worker accounts can record completed work.</p>
       {status && <p className="muted"><strong>{status}</strong></p>}
-      <table className="data-table">
+      <MobileListLimiter itemCount={accounts.length} itemLabel="team accounts">
+        <table className="data-table">
         <thead>
           <tr>
             <th>Name</th>
@@ -47,7 +49,8 @@ export function TeamAccountsCard({ farmName, accounts, onCreated }: TeamAccounts
             </tr>
           ))}
         </tbody>
-      </table>
+        </table>
+      </MobileListLimiter>
       <form
         className="form-grid"
         onSubmit={(event) => {

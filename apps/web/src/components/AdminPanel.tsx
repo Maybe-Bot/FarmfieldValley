@@ -3,6 +3,7 @@ import { api } from "../api";
 import { roleLabel } from "../account-utils";
 import { formatDate } from "../display-utils";
 import { AdminUser, FeedbackReport, UsageEvent } from "../types";
+import { MobileListLimiter } from "./MobileListLimiter";
 
 type AdminPanelProps = {
   reports: FeedbackReport[];
@@ -98,8 +99,9 @@ export function AdminPanel({ reports, onRefresh, onOpenFeedback }: AdminPanelPro
         </div>
         <div className="card">
           <h2>Users</h2>
-          <div className="table-wrap">
-            <table className="data-table">
+          <MobileListLimiter itemCount={users.length} itemLabel="users">
+            <div className="table-wrap">
+              <table className="data-table">
               <thead>
                 <tr>
                   <th>User</th>
@@ -139,8 +141,9 @@ export function AdminPanel({ reports, onRefresh, onOpenFeedback }: AdminPanelPro
                   <tr><td colSpan={7}>{loadingUsers ? "Loading users..." : "No users found."}</td></tr>
                 )}
               </tbody>
-            </table>
-          </div>
+              </table>
+            </div>
+          </MobileListLimiter>
         </div>
       </div>
       <div className="stack">
@@ -191,8 +194,9 @@ function UsageEventsCard({ events, loading }: { events: UsageEvent[]; loading: b
       {events.length === 0 ? (
         <p className="muted">{loading ? "Loading usage activity..." : "No usage activity yet."}</p>
       ) : (
-        <div className="table-wrap">
-          <table className="data-table">
+        <MobileListLimiter itemCount={events.length} itemLabel="usage records">
+          <div className="table-wrap">
+            <table className="data-table">
             <thead>
               <tr>
                 <th>When</th>
@@ -203,7 +207,7 @@ function UsageEventsCard({ events, loading }: { events: UsageEvent[]; loading: b
               </tr>
             </thead>
             <tbody>
-              {events.slice(0, 25).map((event) => (
+              {events.map((event) => (
                 <tr key={event.id}>
                   <td>{formatDate(event.occurredAt)}</td>
                   <td>
@@ -219,8 +223,9 @@ function UsageEventsCard({ events, loading }: { events: UsageEvent[]; loading: b
                 </tr>
               ))}
             </tbody>
-          </table>
-        </div>
+            </table>
+          </div>
+        </MobileListLimiter>
       )}
     </div>
   );
@@ -262,9 +267,10 @@ function FeedbackReportsCard({ reports, onRefresh }: { reports: FeedbackReport[]
       {reports.length === 0 ? (
         <p className="muted">No reports yet.</p>
       ) : (
-        <div className="feedback-list">
-          {reports.slice(0, 12).map((report) => (
-            <article key={report.id} className="feedback-item">
+        <MobileListLimiter itemCount={reports.length} itemLabel="reports" forceExpanded={savingReportId != null}>
+          <div className="feedback-list">
+            {reports.map((report) => (
+              <article key={report.id} className="feedback-item">
               <strong>{report.comment?.trim() || "No comment"}</strong>
               <p className="muted">
                 {formatDate(report.createdAt)} • {report.displayName ?? report.username} • {report.page}
@@ -303,9 +309,10 @@ function FeedbackReportsCard({ reports, onRefresh }: { reports: FeedbackReport[]
                   </button>
                 </form>
               )}
-            </article>
-          ))}
-        </div>
+              </article>
+            ))}
+          </div>
+        </MobileListLimiter>
       )}
     </div>
   );

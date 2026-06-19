@@ -372,6 +372,20 @@ textarea {
   display: none;
 }
 
+.mobile-toolbar-drawer {
+  display: contents;
+}
+
+.mobile-drawer-header,
+.mobile-menu-backdrop,
+.mobile-history-actions {
+  display: none;
+}
+
+.mobile-list-limiter-notice {
+  display: none;
+}
+
 .content-grid {
   display: grid;
   gap: 1rem;
@@ -2805,13 +2819,11 @@ textarea {
   }
 
   .mobile-shell .topbar {
-    flex-direction: column;
-    align-items: stretch;
-    gap: 0.55rem;
     position: sticky;
     top: 0;
-    z-index: 30;
-    padding: 0.45rem;
+    z-index: 2000;
+    display: block;
+    padding: 0.35rem 0.5rem;
     border: 1px solid var(--card-border);
     border-radius: 12px;
     background: var(--card-bg);
@@ -2821,14 +2833,16 @@ textarea {
   .mobile-shell .mobile-toolbar-summary {
     display: flex;
     align-items: center;
-    justify-content: space-between;
-    gap: 0.65rem;
+    justify-content: flex-start;
+    gap: 0.55rem;
     min-width: 0;
   }
 
   .mobile-shell .mobile-toolbar-summary .title-block {
     display: grid;
     gap: 0.12rem;
+    flex: 1 1 auto;
+    min-width: 0;
   }
 
   .mobile-shell .mobile-toolbar-summary .eyebrow {
@@ -2836,15 +2850,111 @@ textarea {
     font-size: 0.68rem;
   }
 
-  .mobile-shell .mobile-toolbar-summary button {
-    flex: 0 0 auto;
-    min-width: 6.5rem;
+  .mobile-shell .mobile-toolbar-summary .title-block strong {
+    overflow: hidden;
+    text-overflow: ellipsis;
     white-space: nowrap;
   }
 
-  .mobile-shell .topbar:not(.mobile-toolbar-open) .header-actions,
-  .mobile-shell .topbar:not(.mobile-toolbar-open) .toolbar-map-tools {
+  .mobile-shell .mobile-menu-button {
+    display: grid;
+    flex: 0 0 2.4rem;
+    width: 2.4rem;
+    height: 2.4rem;
+    align-content: center;
+    gap: 0.22rem;
+    padding: 0.45rem;
+    border: 0;
+    border-radius: 9px;
+    background: var(--nav-bg);
+    color: inherit;
+    cursor: pointer;
+  }
+
+  .mobile-shell .mobile-menu-button span {
+    display: block;
+    width: 100%;
+    height: 2px;
+    border-radius: 999px;
+    background: currentColor;
+  }
+
+  .mobile-shell .mobile-history-actions {
+    display: flex;
+    flex: 0 0 auto;
+    gap: 0.35rem;
+  }
+
+  .mobile-shell .mobile-history-actions button {
+    width: auto;
+    min-width: 0;
+    padding: 0.55rem 0.65rem;
+  }
+
+  .mobile-shell .mobile-menu-backdrop {
+    display: block;
+    position: fixed;
+    inset: 0;
+    z-index: 2001;
+    width: 100%;
+    height: 100%;
+    padding: 0;
+    border: 0;
+    background: rgba(15, 25, 20, 0.58);
+    cursor: default;
+  }
+
+  .mobile-shell .mobile-toolbar-drawer {
     display: none;
+  }
+
+  .mobile-shell .topbar.mobile-toolbar-open .mobile-toolbar-drawer {
+    display: flex;
+    position: fixed;
+    inset: 0 auto 0 0;
+    z-index: 2002;
+    flex-direction: column;
+    gap: 0.85rem;
+    width: 80vw;
+    height: 100dvh;
+    min-height: 0;
+    padding: 1rem;
+    overflow-x: hidden;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    -webkit-overflow-scrolling: touch;
+    touch-action: pan-y;
+    scrollbar-gutter: stable;
+    border-right: 1px solid var(--card-border);
+    background: var(--surface-panel);
+    box-shadow: 12px 0 28px rgba(0, 0, 0, 0.24);
+    isolation: isolate;
+  }
+
+  .mobile-shell .mobile-drawer-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.75rem;
+  }
+
+  .mobile-shell .mobile-drawer-header > div {
+    display: grid;
+    gap: 0.15rem;
+  }
+
+  .mobile-shell .mobile-drawer-header .eyebrow {
+    margin: 0;
+  }
+
+  .mobile-shell .drawer-workflow-section {
+    display: grid;
+    order: 1;
+    gap: 0.45rem;
+    padding: 0.75rem;
+    border: 1px solid var(--card-border);
+    border-radius: 12px;
+    background: var(--surface-soft);
   }
 
   .mobile-shell .topbar > div,
@@ -2874,6 +2984,7 @@ textarea {
 
   .mobile-shell .header-actions {
     display: grid;
+    order: 3;
     grid-template-columns: 1fr;
     width: 100%;
     gap: 0.65rem;
@@ -2894,13 +3005,17 @@ textarea {
 
   .mobile-shell .toolbar-nav {
     display: grid;
-    grid-template-columns: repeat(2, minmax(0, 1fr));
+    grid-template-columns: 1fr;
     gap: 0.5rem;
     width: 100%;
   }
 
   .mobile-shell .toolbar-right > button {
     flex: 1 1 calc(50% - 0.25rem);
+  }
+
+  .mobile-shell .desktop-history-and-utility-actions > button {
+    display: none;
   }
 
   .mobile-shell .toolbar-right > .toolbar-nav,
@@ -2935,16 +3050,20 @@ textarea {
 
   .mobile-shell .toolbar-map-tools {
     display: grid;
-    grid-template-columns: repeat(2, minmax(0, 1fr));
+    order: 2;
+    grid-template-columns: 1fr;
     gap: 0.5rem;
     width: 100%;
   }
 
   .mobile-shell .toolbar-workflow-toggle {
-    grid-column: 1 / -1;
     gap: 0;
     width: 100%;
     justify-content: center;
+  }
+
+  .mobile-shell .drawer-map-workflow-toggle {
+    display: flex;
   }
 
   .mobile-shell .toolbar-workflow-toggle button {
@@ -2968,6 +3087,69 @@ textarea {
     font-size: 0.5rem;
     line-height: 1.05;
     opacity: 0.82;
+  }
+
+  .mobile-shell .map-controls-card {
+    gap: 0.4rem;
+    padding: 0.45rem 0.55rem 0.3rem;
+  }
+
+  .mobile-shell .mobile-map-control-buttons {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 0.55rem;
+    justify-items: center;
+  }
+
+  .mobile-shell .mobile-map-control-buttons button {
+    aspect-ratio: 2 / 1;
+    width: 80%;
+    min-width: 0;
+    padding: 0.2rem;
+  }
+
+  .mobile-shell .mobile-map-control-panel {
+    margin-top: 0.35rem;
+    padding-top: 0.5rem;
+    border-top: 1px solid var(--card-border);
+  }
+
+  .mobile-shell .mobile-list-limiter {
+    display: grid;
+    gap: 0.55rem;
+    min-width: 0;
+  }
+
+  .mobile-shell .mobile-list-limiter.collapsed .mobile-list-limiter-content {
+    position: relative;
+    max-height: 21rem;
+    overflow: hidden;
+  }
+
+  .mobile-shell .mobile-list-limiter.collapsed .mobile-list-limiter-content::after {
+    content: "";
+    position: absolute;
+    inset: auto 0 0;
+    height: 4rem;
+    pointer-events: none;
+    background: linear-gradient(transparent, var(--card-bg));
+  }
+
+  .mobile-shell .mobile-list-limiter-notice {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.65rem;
+    padding: 0.65rem;
+    border: 2px solid var(--button-primary);
+    border-radius: 12px;
+    background: var(--surface-soft);
+  }
+
+  .mobile-shell .mobile-list-limiter-notice button {
+    flex: 0 0 auto;
+    width: auto;
+    min-width: 7.5rem;
   }
 
   .data-table {

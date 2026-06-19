@@ -15,6 +15,7 @@ import { buildBedAllocationPreview, estimatePlantCountFromPlan } from "./bed-all
 import { AdminPanel } from "./components/AdminPanel";
 import { InboxPanel } from "./components/InboxPanel";
 import { LoginScreen } from "./components/LoginScreen";
+import { MobileListLimiter } from "./components/MobileListLimiter";
 import { PlantingForm, PlantingMapPreviewItem, PlantingTutorialDraft } from "./components/PlantingForms";
 import { SeedBankCard } from "./components/SeedBankCard";
 import { SpreadsheetImportCard } from "./components/SpreadsheetImportCard";
@@ -48,6 +49,7 @@ function isPointSelectionMapMode(mode: MapMode) {
 }
 type DistanceUnit = "m" | "ft";
 type ThemeMode = "light" | "dark";
+type MobileMapPanel = "gps" | "week" | "layers" | null;
 type ZoneDraftMethod = "whole_block" | "split_line" | "polygon" | null;
 type MapSelection =
   | { type: "field"; id: number }
@@ -493,21 +495,23 @@ function GarageCard({
         <strong>Saved vehicles</strong>
         <span className="small-chip">{savedProfiles.length}</span>
       </div>
-      <div className="garage-grid">
-        {savedProfiles.length === 0 && (
-          <p className="muted">No saved vehicles were returned for this farm.</p>
-        )}
-        {savedProfiles.map((profile) => (
-          <div key={profile.id} className="garage-tile">
-            <div className="garage-tile-preview">
-              <GaragePreview profile={profile} scale={0.68} spinning={false} />
+      <MobileListLimiter itemCount={savedProfiles.length} itemLabel="saved vehicles" forceExpanded={editingId != null}>
+        <div className="garage-grid">
+          {savedProfiles.length === 0 && (
+            <p className="muted">No saved vehicles were returned for this farm.</p>
+          )}
+          {savedProfiles.map((profile) => (
+            <div key={profile.id} className="garage-tile">
+              <div className="garage-tile-preview">
+                <GaragePreview profile={profile} scale={0.68} spinning={false} />
+              </div>
+              <strong>{profile.name}</strong>
+              <span className="table-subtle">{garageOptionForModel(profile.tractorModel).label}</span>
+              <button type="button" className="secondary-button compact-button" disabled={saving} onClick={() => editProfile(profile)}>Edit</button>
             </div>
-            <strong>{profile.name}</strong>
-            <span className="table-subtle">{garageOptionForModel(profile.tractorModel).label}</span>
-            <button type="button" className="secondary-button compact-button" disabled={saving} onClick={() => editProfile(profile)}>Edit</button>
-          </div>
-        ))}
-      </div>
+          ))}
+        </div>
+      </MobileListLimiter>
     </div>
   );
 }
@@ -2148,6 +2152,7 @@ function App() {
   const [feedbackStatus, setFeedbackStatus] = useState<string | null>(null);
   const [isSavingFeedback, setIsSavingFeedback] = useState(false);
   const [mobileToolbarOpen, setMobileToolbarOpen] = useState(false);
+  const [mobileMapPanel, setMobileMapPanel] = useState<MobileMapPanel>(null);
 
   useEffect(() => {
     if (typeof document === "undefined") {
@@ -2257,12 +2262,50 @@ function App() {
     const mediaQuery = window.matchMedia(MOBILE_MEDIA_QUERY);
     const onChange = (event: MediaQueryListEvent) => {
       setIsMobileViewport(event.matches);
+      if (!event.matches) {
+        setMobileToolbarOpen(false);
+        setMobileMapPanel(null);
+      }
     };
 
     setIsMobileViewport(mediaQuery.matches);
     mediaQuery.addEventListener("change", onChange);
     return () => mediaQuery.removeEventListener("change", onChange);
   }, []);
+
+  useEffect(() => {
+    if (!isMobileViewport || !mobileToolbarOpen || typeof document === "undefined") {
+      return;
+    }
+    const scrollY = window.scrollY;
+    const previousBodyStyles = {
+      overflow: document.body.style.overflow,
+      position: document.body.style.position,
+      top: document.body.style.top,
+      width: document.body.style.width
+    };
+    const previousHtmlOverflow = document.documentElement.style.overflow;
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        setMobileToolbarOpen(false);
+      }
+    };
+    document.body.style.overflow = "hidden";
+    document.body.style.position = "fixed";
+    document.body.style.top = `-${scrollY}px`;
+    document.body.style.width = "100%";
+    document.documentElement.style.overflow = "hidden";
+    document.addEventListener("keydown", closeOnEscape);
+    return () => {
+      document.body.style.overflow = previousBodyStyles.overflow;
+      document.body.style.position = previousBodyStyles.position;
+      document.body.style.top = previousBodyStyles.top;
+      document.body.style.width = previousBodyStyles.width;
+      document.documentElement.style.overflow = previousHtmlOverflow;
+      document.removeEventListener("keydown", closeOnEscape);
+      window.scrollTo(0, scrollY);
+    };
+  }, [isMobileViewport, mobileToolbarOpen]);
 
   useEffect(() => {
     if (!session?.authenticated || typeof window === "undefined") {
@@ -5519,114 +5562,167 @@ function App() {
       <main className="main-panel">
         <header className={`topbar${mobileToolbarOpen ? " mobile-toolbar-open" : ""}`}>
           <div className="mobile-toolbar-summary">
+            <button
+              type="button"
+              className="mobile-menu-button"
+              aria-label="Open navigation and tools"
+              aria-expanded={mobileToolbarOpen}
+              onClick={() => setMobileToolbarOpen(true)}
+            >
+              <span aria-hidden="true" />
+              <span aria-hidden="true" />
+              <span aria-hidden="true" />
+              <span aria-hidden="true" />
+            </button>
             <div className="title-block">
               <span className="eyebrow">Loam Ledger</span>
               <strong>{viewTitle}</strong>
             </div>
-            <button
-              type="button"
-              className="secondary-button compact-button"
-              aria-expanded={mobileToolbarOpen}
-              onClick={() => setMobileToolbarOpen((current) => !current)}
-            >
-              {mobileToolbarOpen ? "Hide tools" : "Menu / tools"}
-            </button>
-          </div>
-          <div className="header-actions">
-            <div className="toolbar-left">
-              {mainToolbarNavItems.length > 0 && (
-                <div className="toolbar-nav" aria-label="Main navigation">
-                  {mainToolbarNavItems.map(([value, label]) => (
-                    <button
-                      key={value}
-                      type="button"
-                      className={`${view === value ? "primary-button" : "secondary-button"} compact-button${tutorialTargetClass(tutorialHighlightNav(value))}`}
-                      onClick={() => {
-                        setView(value);
-                        setMobileToolbarOpen(false);
-                      }}
-                    >
-                      {label}
-                    </button>
-                  ))}
-                </div>
-              )}
-            </div>
-            <div className="toolbar-right">
+            <div className="mobile-history-actions">
               <button
-                className="secondary-button"
+                type="button"
+                className="secondary-button compact-button"
                 disabled={undoSnapshots.length === 0}
                 title={undoSnapshots[0] ? `Undo: ${undoSnapshots[0].label}` : "Nothing to undo yet"}
                 onClick={() => void undoLastChange()}
               >
                 Undo
               </button>
-              <button
-                className="secondary-button"
-                disabled={redoSnapshots.length === 0}
-                title={redoSnapshots[0] ? `Redo: ${redoSnapshots[0].label}` : "Nothing to redo yet"}
-                onClick={() => void redoLastChange()}
-              >
-                Redo
-              </button>
-              {utilityToolbarNavItems.length > 0 && (
-                <div className="toolbar-nav" aria-label="Settings navigation">
-                  {utilityToolbarNavItems.map(([value, label]) => (
-                    <button
-                      key={value}
-                      type="button"
-                      className={`${view === value ? "primary-button" : "secondary-button"} compact-button${tutorialTargetClass(tutorialHighlightNav(value))}`}
-                      onClick={() => {
-                        setView(value);
-                        setMobileToolbarOpen(false);
-                      }}
-                    >
-                      {label}
-                    </button>
-                  ))}
-                </div>
+              {redoSnapshots.length > 0 && (
+                <button
+                  type="button"
+                  className="secondary-button compact-button"
+                  title={`Redo: ${redoSnapshots[0].label}`}
+                  onClick={() => void redoLastChange()}
+                >
+                  Redo
+                </button>
               )}
-              <span className="small-chip">
-                {session.user.displayName ?? session.user.username} • {session.user.farmName}
-              </span>
             </div>
           </div>
-          {view === "map" && (
-            <div className="map-tools-actions toolbar-map-tools" aria-label="Map tools">
-              <div className="map-workflow-toggle toolbar-workflow-toggle" aria-label="Map workflow">
-                <button
-                  type="button"
-                  className={`${mapWorkflowMode === "planning" ? "primary-button" : "secondary-button"} compact-button${tutorialTargetClass(tutorialHighlightPlanningMode)}`}
-                  onClick={() => changeMapWorkflowMode("planning")}
-                  disabled={!canPlan}
-                >
-                  Plan
-                </button>
-                <button
-                  type="button"
-                  className={`${mapWorkflowMode === "field_work" ? "primary-button" : "secondary-button"} compact-button${tutorialTargetClass(tutorialHighlightWorkMode)}`}
-                  onClick={() => changeMapWorkflowMode("field_work")}
-                >
-                  Work
-                </button>
-              </div>
-              {mapWorkflowMode === "planning" && (
-                <>
-                  <button className={`${mapMode === "select" ? "primary-button" : "secondary-button"} compact-button${tutorialTargetClass(tutorialHighlightMapSelect)}`} onClick={() => resetMapDrafts("select")}>Select</button>
-                  <button className={`${mapMode === "draw_field" ? "primary-button" : "secondary-button"} compact-button${tutorialTargetClass(tutorialHighlightDrawField)}`} onClick={startDrawField} disabled={!canPlan}>Draw field</button>
-                  <button className={`${mapMode === "draw_block" ? "primary-button" : "secondary-button"} compact-button${tutorialTargetClass(tutorialHighlightDrawBlock)}`} onClick={startDrawBlock} disabled={!canPlan || !selectedField || !selectedFieldIsOwnFarm}>Draw block</button>
-                  <button className={`${mapMode === "edit" ? "primary-button" : "secondary-button"} compact-button`} onClick={startEditSelection} disabled={!canEditSelectedMapItem}>Edit field/block</button>
-                  <button
-                    className={`${mapMode === "bed_tools" || mapMode === "pick_bed_edge" || mapMode === "draw_bed_line" ? "primary-button" : "secondary-button"} compact-button${tutorialTargetClass(tutorialHighlightGenerateBeds)}`}
-                    onClick={openSelectedBlockBedMaker}
-                    disabled={!selectedBlockContext || !canEditSelectedBlockContext}
-                  >
-                    Make beds
-                  </button>
-                </>
-              )}
-            </div>
+          {mobileToolbarOpen && (
+            <button
+              type="button"
+              className="mobile-menu-backdrop"
+              aria-label="Close navigation and tools"
+              onClick={() => setMobileToolbarOpen(false)}
+            />
           )}
+          <div className="mobile-toolbar-drawer">
+            <div className="mobile-drawer-header">
+              <div>
+                <span className="eyebrow">Loam Ledger</span>
+                <strong>Navigation and tools</strong>
+              </div>
+              <button type="button" className="secondary-button compact-button" onClick={() => setMobileToolbarOpen(false)}>
+                Close
+              </button>
+            </div>
+            {view === "map" && (
+              <div className="drawer-workflow-section">
+                <strong>Map mode</strong>
+                <div className="drawer-map-workflow-toggle map-workflow-toggle toolbar-workflow-toggle" aria-label="Map workflow">
+                  <button
+                    type="button"
+                    className={`${mapWorkflowMode === "planning" ? "primary-button" : "secondary-button"} compact-button${tutorialTargetClass(tutorialHighlightPlanningMode)}`}
+                    onClick={() => changeMapWorkflowMode("planning")}
+                    disabled={!canPlan}
+                  >
+                    Plan
+                  </button>
+                  <button
+                    type="button"
+                    className={`${mapWorkflowMode === "field_work" ? "primary-button" : "secondary-button"} compact-button${tutorialTargetClass(tutorialHighlightWorkMode)}`}
+                    onClick={() => changeMapWorkflowMode("field_work")}
+                  >
+                    Work
+                  </button>
+                </div>
+              </div>
+            )}
+            <div className="header-actions">
+              <div className="toolbar-left">
+                {mainToolbarNavItems.length > 0 && (
+                  <div className="toolbar-nav" aria-label="Main navigation">
+                    {mainToolbarNavItems.map(([value, label]) => (
+                      <button
+                        key={value}
+                        type="button"
+                        className={`${view === value ? "primary-button" : "secondary-button"} compact-button${tutorialTargetClass(tutorialHighlightNav(value))}`}
+                        onClick={() => {
+                          setView(value);
+                          setMobileToolbarOpen(false);
+                        }}
+                      >
+                        {label}
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
+              <div className="toolbar-right desktop-history-and-utility-actions">
+                <button
+                  className="secondary-button"
+                  disabled={undoSnapshots.length === 0}
+                  title={undoSnapshots[0] ? `Undo: ${undoSnapshots[0].label}` : "Nothing to undo yet"}
+                  onClick={() => void undoLastChange()}
+                >
+                  Undo
+                </button>
+                {redoSnapshots.length > 0 && (
+                  <button
+                    className="secondary-button"
+                    title={`Redo: ${redoSnapshots[0].label}`}
+                    onClick={() => void redoLastChange()}
+                  >
+                    Redo
+                  </button>
+                )}
+                {utilityToolbarNavItems.length > 0 && (
+                  <div className="toolbar-nav" aria-label="Settings navigation">
+                    {utilityToolbarNavItems.map(([value, label]) => (
+                      <button
+                        key={value}
+                        type="button"
+                        className={`${view === value ? "primary-button" : "secondary-button"} compact-button${tutorialTargetClass(tutorialHighlightNav(value))}`}
+                        onClick={() => {
+                          setView(value);
+                          setMobileToolbarOpen(false);
+                        }}
+                      >
+                        {label}
+                      </button>
+                    ))}
+                  </div>
+                )}
+                <span className="small-chip">
+                  {session.user.displayName ?? session.user.username} • {session.user.farmName}
+                </span>
+              </div>
+            </div>
+            {view === "map" && (
+              <div className="map-tools-actions toolbar-map-tools" aria-label="Map tools">
+                {mapWorkflowMode === "planning" && (
+                  <>
+                    <button className={`${mapMode === "select" ? "primary-button" : "secondary-button"} compact-button${tutorialTargetClass(tutorialHighlightMapSelect)}`} onClick={() => { resetMapDrafts("select"); setMobileToolbarOpen(false); }}>Select</button>
+                    <button className={`${mapMode === "draw_field" ? "primary-button" : "secondary-button"} compact-button${tutorialTargetClass(tutorialHighlightDrawField)}`} onClick={() => { startDrawField(); setMobileToolbarOpen(false); }} disabled={!canPlan}>Draw field</button>
+                    <button className={`${mapMode === "draw_block" ? "primary-button" : "secondary-button"} compact-button${tutorialTargetClass(tutorialHighlightDrawBlock)}`} onClick={() => { startDrawBlock(); setMobileToolbarOpen(false); }} disabled={!canPlan || !selectedField || !selectedFieldIsOwnFarm}>Draw block</button>
+                    <button className={`${mapMode === "edit" ? "primary-button" : "secondary-button"} compact-button`} onClick={() => { startEditSelection(); setMobileToolbarOpen(false); }} disabled={!canEditSelectedMapItem}>Edit field/block</button>
+                    <button
+                      className={`${mapMode === "bed_tools" || mapMode === "pick_bed_edge" || mapMode === "draw_bed_line" ? "primary-button" : "secondary-button"} compact-button${tutorialTargetClass(tutorialHighlightGenerateBeds)}`}
+                      onClick={() => {
+                        openSelectedBlockBedMaker();
+                        setMobileToolbarOpen(false);
+                      }}
+                      disabled={!selectedBlockContext || !canEditSelectedBlockContext}
+                    >
+                      Make beds
+                    </button>
+                  </>
+                )}
+              </div>
+            )}
+          </div>
         </header>
 
         {feedbackOpen && (
@@ -6474,7 +6570,22 @@ function App() {
               </MapContainer>
               </div>
               <div className="card map-controls-card">
-                <div className="map-location-panel">
+                {isMobileViewport && (
+                  <div className="mobile-map-control-buttons" aria-label="Map controls">
+                    {(["gps", "week", "layers"] as const).map((panel) => (
+                      <button
+                        key={panel}
+                        type="button"
+                        className={mobileMapPanel === panel ? "primary-button" : "secondary-button"}
+                        aria-expanded={mobileMapPanel === panel}
+                        onClick={() => setMobileMapPanel((current) => current === panel ? null : panel)}
+                      >
+                        {panel === "gps" ? "GPS" : panel === "week" ? "Week" : "Layers"}
+                      </button>
+                    ))}
+                  </div>
+                )}
+                {(!isMobileViewport || mobileMapPanel === "gps") && <div className="map-location-panel mobile-map-control-panel">
                   <button type="button" className="primary-button" onClick={locateUserOnMap}>
                     Use phone GPS
                   </button>
@@ -6483,8 +6594,8 @@ function App() {
                       Location shown{userLocation.accuracyM != null ? `, accuracy about ${Math.round(userLocation.accuracyM)} m` : ""}.
                     </p>
                   )}
-                </div>
-                <div className="timeline-panel">
+                </div>}
+                {(!isMobileViewport || mobileMapPanel === "week") && <div className="timeline-panel mobile-map-control-panel">
                   <div className="timeline-header">
                     <strong>Map week</strong>
                     <span>{formatWeekRange(selectedMapWeekStart)}</span>
@@ -6506,10 +6617,10 @@ function App() {
                   <p className="muted">
                     The map uses this week for planned crop overlays, actual crop overlays, and tasks due through {selectedMapWeekEnd}.
                   </p>
-                </div>
-                <div className="layer-panel map-layer-options">
+                </div>}
+                {(!isMobileViewport || mobileMapPanel === "layers") && <div className="layer-panel map-layer-options mobile-map-control-panel">
                   <h3>Map layers</h3>
-                  <p className="muted">Basemap: Online imagery. Crop and task overlays are off by default to keep Firefox responsive.</p>
+                  <p className="muted">Basemap: online imagery. Your crop and task layer choices are saved on this device.</p>
                   <label className="layer-toggle">
                     <input
                       type="checkbox"
@@ -6544,7 +6655,7 @@ function App() {
                       <span>Show other farms</span>
                     </label>
                   )}
-                </div>
+                </div>}
               </div>
             </div>
 
@@ -7107,7 +7218,11 @@ function App() {
                   </button>
                 )}
               </div>
-              <table className="data-table">
+              <MobileListLimiter
+                itemCount={planGroups.reduce((total, [, plantings]) => total + plantings.length, 0)}
+                itemLabel="plantings"
+              >
+                <table className="data-table">
                   <thead>
                     <tr>
                       {canPlan && <th>Pick</th>}
@@ -7182,28 +7297,31 @@ function App() {
                       </tr>
                     ))}
                   </tbody>
-              </table>
+                </table>
+              </MobileListLimiter>
               {unscheduledTaskList.length > 0 && (
                 <div className="instruction-box">
                   <strong>Unscheduled tasks</strong>
                   <p className="muted">These exist but do not have a due date yet. Bed-making tasks will get a date once plantings in that block have planned dates.</p>
-                  <div className="generated-bed-list">
-                    {unscheduledTaskList.map((task) => (
-                      <button
-                        key={task.id}
-                        type="button"
-                        className="small-chip chip-button"
-                        onClick={() => {
-                          setSelectedTaskId(task.id);
-                          if (task.plantingId != null) {
-                            setSelectedPlantingId(task.plantingId);
-                          }
-                        }}
-                      >
-                        {task.title}
-                      </button>
-                    ))}
-                  </div>
+                  <MobileListLimiter itemCount={unscheduledTaskList.length} itemLabel="unscheduled tasks">
+                    <div className="generated-bed-list">
+                      {unscheduledTaskList.map((task) => (
+                        <button
+                          key={task.id}
+                          type="button"
+                          className="small-chip chip-button"
+                          onClick={() => {
+                            setSelectedTaskId(task.id);
+                            if (task.plantingId != null) {
+                              setSelectedPlantingId(task.plantingId);
+                            }
+                          }}
+                        >
+                          {task.title}
+                        </button>
+                      ))}
+                    </div>
+                  </MobileListLimiter>
                 </div>
               )}
             </div>
@@ -7313,7 +7431,8 @@ function App() {
 
               <div className="card">
                 <h2>Bed placement history</h2>
-                <table className="data-table">
+                <MobileListLimiter itemCount={selectedPlacements.length} itemLabel="placement records">
+                  <table className="data-table">
                   <thead>
                     <tr>
                       <th>Date</th>
@@ -7336,12 +7455,14 @@ function App() {
                       </tr>
                     ))}
                   </tbody>
-                </table>
+                  </table>
+                </MobileListLimiter>
               </div>
 
               <div className="card">
                 <h2>Event history</h2>
-                <table className="data-table">
+                <MobileListLimiter itemCount={selectedEvents.length} itemLabel="events">
+                  <table className="data-table">
                   <thead>
                     <tr>
                       <th>Date</th>
@@ -7367,7 +7488,8 @@ function App() {
                       </tr>
                     )}
                   </tbody>
-                </table>
+                  </table>
+                </MobileListLimiter>
               </div>
             </div>
 
@@ -7422,7 +7544,8 @@ function App() {
                   </label>
                 </div>
               )}
-              <table className="data-table">
+              <MobileListLimiter itemCount={visibleTaskList.length} itemLabel="tasks">
+                <table className="data-table">
                   <thead>
                     <tr>
                       <th>Date</th>
@@ -7470,7 +7593,8 @@ function App() {
                       <tr><td colSpan={8}>No tasks scheduled for this week.</td></tr>
                     )}
                   </tbody>
-              </table>
+                </table>
+              </MobileListLimiter>
             </div>
             <div className="stack">
               {renderTaskRecordCard(selectedTask)}
@@ -7504,25 +7628,27 @@ function App() {
                     <button type="button" className="danger-button" onClick={() => void deleteSelectedTaskFlow()} disabled={selectedFlowTemplate == null}>Delete</button>
                   </div>
                 </div>
-                <div className="search-results">
-                  {data.taskFlowTemplates.map((flow) => {
-                    const tutorialFlowTarget = tutorialFlowNeedsSelection && flow.id === tutorialFlowId;
-                    return (
-                      <button
-                        key={flow.id}
-                        className={`list-link${selectedFlowId === flow.id ? " active-list-link" : ""}${tutorialTargetClass(tutorialFlowTarget)}`}
-                        data-tutorial-label={tutorialFlowTarget ? "Select this flow" : undefined}
-                        onClick={() => {
-                          setSelectedFlowId(flow.id);
-                          setFlowEditorKey((current) => current + 1);
-                        }}
-                      >
-                        <strong>{flow.name}</strong>
-                        <div className="table-subtle">{flow.cropName ?? "General"}{flow.isDefault ? " • default" : ""}</div>
-                      </button>
-                    );
-                  })}
-                </div>
+                <MobileListLimiter itemCount={data.taskFlowTemplates.length} itemLabel="task flows">
+                  <div className="search-results">
+                    {data.taskFlowTemplates.map((flow) => {
+                      const tutorialFlowTarget = tutorialFlowNeedsSelection && flow.id === tutorialFlowId;
+                      return (
+                        <button
+                          key={flow.id}
+                          className={`list-link${selectedFlowId === flow.id ? " active-list-link" : ""}${tutorialTargetClass(tutorialFlowTarget)}`}
+                          data-tutorial-label={tutorialFlowTarget ? "Select this flow" : undefined}
+                          onClick={() => {
+                            setSelectedFlowId(flow.id);
+                            setFlowEditorKey((current) => current + 1);
+                          }}
+                        >
+                          <strong>{flow.name}</strong>
+                          <div className="table-subtle">{flow.cropName ?? "General"}{flow.isDefault ? " • default" : ""}</div>
+                        </button>
+                      );
+                    })}
+                  </div>
+                </MobileListLimiter>
               </div>
             </div>
             <div className="flow-main">
@@ -7561,7 +7687,8 @@ function App() {
               <div className="instruction-box warning-box">
                 Feature coming soon, hopefully... Harvest is out of beta scope for now.
               </div>
-              <table className="data-table">
+              <MobileListLimiter itemCount={data.harvests.length} itemLabel="harvest records">
+                <table className="data-table">
                 <thead>
                   <tr>
                     <th>Date</th>
@@ -7582,7 +7709,8 @@ function App() {
                     </tr>
                   ))}
                 </tbody>
-              </table>
+                </table>
+              </MobileListLimiter>
             </div>
             <div className="card">
               <h2>Summary</h2>
@@ -8809,7 +8937,11 @@ function BedRecordsCard({
           {canCreatePlanting ? "No planting is assigned to this bed yet. Use the placement plan below to start one here." : "No planting records are assigned to this bed yet."}
         </p>
       ) : (
-        <div className="stack compact-stack">
+        <MobileListLimiter
+          itemCount={activeTasks.length + plantings.length + placements.length + gaps.length + doneTasks.length}
+          itemLabel="bed records"
+        >
+          <div className="stack compact-stack">
           {activeTasks.length > 0 && (
             <div>
               <strong>Work to record</strong>
@@ -8838,7 +8970,7 @@ function BedRecordsCard({
             <div>
               <strong>Placement history</strong>
               <div className="generated-bed-list">
-                {placements.slice(0, 8).map((placement) => (
+                {placements.map((placement) => (
                   <span key={placement.id} className="small-chip">
                     {formatDate(placement.placedOn)}: {placement.plantCount?.toLocaleString() ?? "unknown"} plants
                   </span>
@@ -8850,7 +8982,7 @@ function BedRecordsCard({
             <div>
               <strong>Gaps</strong>
               <div className="generated-bed-list">
-                {gaps.slice(0, 8).map((gap) => (
+                {gaps.map((gap) => (
                   <span key={gap.id} className="small-chip">
                     Gap: {formatLength(gap.bedLengthUsedM, distanceUnit)}
                   </span>
@@ -8862,7 +8994,7 @@ function BedRecordsCard({
             <div>
               <strong>Completed tasks</strong>
               <div className="generated-bed-list">
-                {doneTasks.slice(0, 8).map((task) => (
+                {doneTasks.map((task) => (
                   <button key={task.id} type="button" className="small-chip chip-button" onClick={() => onSelectTask(task)}>
                     Done: {task.title}
                   </button>
@@ -8870,7 +9002,8 @@ function BedRecordsCard({
               </div>
             </div>
           )}
-        </div>
+          </div>
+        </MobileListLimiter>
       )}
     </div>
   );
@@ -8927,7 +9060,8 @@ function TaskWeekCard({
       {tasks.length === 0 ? (
         <p className="muted">No tasks scheduled for this selection.</p>
       ) : (
-        <div className="stack compact-stack">
+        <MobileListLimiter itemCount={tasks.length} itemLabel="tasks">
+          <div className="stack compact-stack">
           {activeTasks.length > 0 && (
             <div>
               <strong>Work to do</strong>
@@ -8978,7 +9112,8 @@ function TaskWeekCard({
               </div>
             </div>
           )}
-        </div>
+          </div>
+        </MobileListLimiter>
       )}
     </div>
   );
@@ -9290,7 +9425,8 @@ function BlockPlacementPlanCard({
           Add gap row
         </button>
       </div>
-      <table className="data-table compact-table">
+      <MobileListLimiter itemCount={visibleRows.length} itemLabel="crop-plan rows" forceExpanded={expandedEditor != null}>
+        <table className="data-table compact-table">
         <thead>
           <tr>
             <th>Variety</th>
@@ -9409,7 +9545,8 @@ function BlockPlacementPlanCard({
             </tr>
           )}
         </tbody>
-      </table>
+        </table>
+      </MobileListLimiter>
       {overflowLengthM > 0 && <p className="muted">Overflow for this block: {formatLength(overflowLengthM, distanceUnit)} beyond mapped beds.</p>}
       {status && <p className="muted"><strong>{status}</strong></p>}
       <button type="button" className="primary-button" disabled={saving || rows.length === 0} onClick={() => void savePlan()}>
@@ -11488,24 +11625,26 @@ function WorkBedPicker({
       </div>
       <p className="muted">{selectedBedIds.length} bed{selectedBedIds.length === 1 ? "" : "s"} selected.</p>
       {beds.length > 0 && (
-        <div className="checkbox-grid">
-          {beds.map((item) => (
-            <label className="inline-checkbox" key={item.id}>
-              <input
-                type="checkbox"
-                checked={selectedBedIdSet.has(item.id)}
-                onChange={(event) => {
-                  if (event.target.checked) {
-                    onSelectedBedIdsChange([...selectedBedIds, item.id]);
-                  } else {
-                    onSelectedBedIdsChange(selectedBedIds.filter((bedId) => bedId !== item.id));
-                  }
-                }}
-              />
-              <span>{item.name}{item.bedPresetName ? ` (${item.bedPresetName})` : ""}</span>
-            </label>
-          ))}
-        </div>
+        <MobileListLimiter itemCount={beds.length} itemLabel="beds">
+          <div className="checkbox-grid">
+            {beds.map((item) => (
+              <label className="inline-checkbox" key={item.id}>
+                <input
+                  type="checkbox"
+                  checked={selectedBedIdSet.has(item.id)}
+                  onChange={(event) => {
+                    if (event.target.checked) {
+                      onSelectedBedIdsChange([...selectedBedIds, item.id]);
+                    } else {
+                      onSelectedBedIdsChange(selectedBedIds.filter((bedId) => bedId !== item.id));
+                    }
+                  }}
+                />
+                <span>{item.name}{item.bedPresetName ? ` (${item.bedPresetName})` : ""}</span>
+              </label>
+            ))}
+          </div>
+        </MobileListLimiter>
       )}
     </div>
   );
@@ -11713,16 +11852,18 @@ function BedPresetCard({
       <p className="muted">Store each farm bed system once, then reuse it when filling blocks. Bed width is the plantable bed only; path spacing is left as open space. Use a road/path preset for non-plantable access lanes.</p>
       {notice && <p className="muted"><strong>{notice}</strong></p>}
       {bedPresets.length > 0 && (
-        <div className="generated-bed-list">
-          {bedPresets.map((preset) => (
-            <span key={preset.id} className="small-chip preset-chip">
-              {preset.isRoad
-                ? `${preset.name}: ${formatLength(preset.bedWidthM, distanceUnit)} road/path`
-                : `${preset.name}: ${formatLength(preset.bedWidthM, distanceUnit)} bed / ${formatLength(preset.pathSpacingM, distanceUnit)} path`}
-              <button type="button" className="link-button" onClick={() => void deletePreset(preset.id, preset.name)}>Delete</button>
-            </span>
-          ))}
-        </div>
+        <MobileListLimiter itemCount={bedPresets.length} itemLabel="bed presets">
+          <div className="generated-bed-list">
+            {bedPresets.map((preset) => (
+              <span key={preset.id} className="small-chip preset-chip">
+                {preset.isRoad
+                  ? `${preset.name}: ${formatLength(preset.bedWidthM, distanceUnit)} road/path`
+                  : `${preset.name}: ${formatLength(preset.bedWidthM, distanceUnit)} bed / ${formatLength(preset.pathSpacingM, distanceUnit)} path`}
+                <button type="button" className="link-button" onClick={() => void deletePreset(preset.id, preset.name)}>Delete</button>
+              </span>
+            ))}
+          </div>
+        </MobileListLimiter>
       )}
       <form
         className="form-grid"
@@ -12242,10 +12383,14 @@ function BedGeneratorCard({
               </details>
             )}
             {bedLineSource !== "selected_bed" && (
-              <div className="full-span generated-bed-list">
-                {existingBeds.map((bed) => (
-                  <span key={bed.id} className="small-chip">{bed.name}</span>
-                ))}
+              <div className="full-span">
+                <MobileListLimiter itemCount={existingBeds.length} itemLabel="existing beds">
+                  <div className="generated-bed-list">
+                    {existingBeds.map((bed) => (
+                      <span key={bed.id} className="small-chip">{bed.name}</span>
+                    ))}
+                  </div>
+                </MobileListLimiter>
               </div>
             )}
             {bedLineSource !== "selected_bed" && (

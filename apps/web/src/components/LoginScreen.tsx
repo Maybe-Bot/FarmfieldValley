@@ -253,13 +253,6 @@ export function LoginScreen({
               {saving ? (mode === "login" ? "Signing in..." : "Creating...") : (mode === "login" ? "Log in" : "Create farm account")}
             </button>
           </form>
-          <div className="auth-demo-list">
-            <strong>Seeded demo accounts</strong>
-            <div className="table-subtle">`river_owner` / `river123`</div>
-            <div className="table-subtle">`river_crew` / `river123`</div>
-            <div className="table-subtle">`cedar_owner` / `cedar123`</div>
-            <div className="table-subtle">`cedar_crew` / `cedar123`</div>
-          </div>
         </div>
       </main>
       <footer className="page-feedback-bar auth-feedback-bar">
