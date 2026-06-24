@@ -22,6 +22,18 @@ services:
         value: Lax
       - key: CORS_ALLOWED_ORIGINS
         sync: false
+      - key: REQUIRE_EMAIL_VERIFICATION
+        value: "true"
+      - key: PUBLIC_API_URL
+        sync: false
+      - key: PUBLIC_WEB_URL
+        sync: false
+      - key: EMAIL_DELIVERY_MODE
+        value: resend
+      - key: RESEND_API_KEY
+        sync: false
+      - key: EMAIL_FROM
+        sync: false
 
   - type: static
     name: loam-ledger-web

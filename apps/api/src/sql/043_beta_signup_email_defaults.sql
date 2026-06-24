@@ -1,7 +1,5 @@
--- Keep the shared beta-test email reusable while real email delivery is optional.
--- Older local databases may still have the original all-email unique index.
+-- Keep account email uniqueness consistent on databases created by older builds.
 drop index if exists app_users_email_lower_idx;
 
 create unique index if not exists app_users_email_lower_unique_idx
-  on app_users (lower(email))
-  where lower(email) <> 'junk@trash.com';
+  on app_users (lower(email));

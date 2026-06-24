@@ -1,0 +1,57 @@
+FARMMAN DASHBOARD API
+
+Endpoint
+
+  GET /api/dashboard
+
+DEFAULT SMALL-FARM BEHAVIOR
+
+Calling the endpoint without query parameters returns the same complete
+DashboardData object as before. Existing clients and small farms can continue
+using one request.
+
+PARTIAL RELOADS
+
+Use the resources query parameter after a small save:
+
+  GET /api/dashboard?resources=tasks,events,plantings
+  GET /api/dashboard?resources=fields,blocks,blockZones,beds
+  GET /api/dashboard?resources=taskFlowTemplates,taskFlowNodes,taskFlowEdges
+
+Only the listed database queries run. The response contains only the listed
+DashboardData properties. Clients must merge those properties into their
+existing dashboard state and leave omitted properties unchanged.
+
+This is used by the FarmMan frontend after task, map, planting, task-flow, seed,
+and garage changes. Login, registration, spreadsheet imports, undo, redo, and
+other broad operations may still request the complete dashboard because those
+operations can affect several unrelated areas.
+
+VALID RESOURCE NAMES
+
+  farm
+  fields
+  blocks
+  blockZones
+  beds
+  bedPresets
+  coverCropNames
+  seedItems
+  crops
+  varieties
+  taskFlowTemplates
+  taskFlowNodes
+  taskFlowEdges
+  tractorProfiles
+  plantings
+  placements
+  placementGaps
+  placementOverflows
+  events
+  tasks
+  harvests
+
+ERRORS
+
+Unknown resource names return HTTP 400. An empty or omitted resources parameter
+uses the complete-dashboard behavior.

@@ -1,0 +1,550 @@
+LOAM LEDGER CLEAN REBUILD PROMPT
+
+Use this prompt while working inside the existing FarmMan / Loam Ledger repository.
+
+
+MAIN GOAL
+
+Rebuild the complete Loam Ledger site so the finished application looks and works the same as the current active site, on desktop and mobile, but has a clean maintainable structure.
+
+The rebuild must:
+
+1. Preserve every feature and workflow that a user can currently reach and use.
+2. Preserve the current visual design, wording, responsive behavior, permissions, and farm workflow.
+3. Remove code and features that were built but are not actually used.
+4. Break the frontend and backend into sensible feature modules instead of recreating giant files.
+5. Preserve existing farm data and database compatibility.
+6. Be understandable and maintainable by a future coding agent.
+
+Do not redesign the application. This is a careful clean rebuild, not a new product.
+
+
+SOURCE OF TRUTH
+
+Use these sources in this order:
+
+1. The current running application and reachable user workflows.
+2. The current source code and API behavior.
+3. docs/cards-desktop.txt and docs/cards-mobile.txt for the visible card inventory.
+4. The current tests, database migrations, README, and beta checklists.
+
+If the documentation disagrees with the running application, follow the running application and update the documentation.
+
+Before changing code, run and record:
+
+- npm test
+- npm run build
+- git diff --check
+
+Do not overwrite or discard existing uncommitted user changes.
+
+
+IMPORTANT SAFETY RULES
+
+- Never delete, reset, truncate, or reseed an existing database.
+- Never change the meaning of existing farm records during this rebuild.
+- Keep existing migrations intact. Add a migration only when a real schema change is required.
+- Spreadsheet imports must remain append-only. They must never delete existing farm records and must not offer a delete/replace option.
+- Keep full backup export/import compatibility for existing farm data.
+- Preserve authentication, sessions, CSRF protection, CORS handling, farm scoping, planner/worker permissions, admin permissions, undo/redo, feedback reports, inbox replies, and usage tracking.
+- Do not remove a route, table, type, or helper merely because its name looks old. Prove it is unreachable and not required for existing saved data, imports, migrations, tests, or compatibility.
+- Do not put the whole rebuild into one new App.tsx or one new server.ts.
+- Do not change user-facing labels or move controls unless required to reproduce the current mobile or desktop layout.
+
+
+CURRENT ACTIVE PRODUCT
+
+Product name:
+
+- Loam Ledger
+
+Technology:
+
+- React, TypeScript, and Vite frontend
+- Leaflet and React-Leaflet maps
+- Node, TypeScript, and Express API
+- PostgreSQL with PostGIS
+
+Account types:
+
+- Planner: can create and edit plans, maps, beds, seed records, task flows, vehicles, and team accounts.
+- Worker: can view farm plans and record work.
+- Global admin: can manage users, reports, replies, and usage information.
+
+
+ACTIVE SCREENS AND WORKFLOWS TO KEEP
+
+SIGNED-OUT EXPERIENCE
+
+- Loading/session check.
+- Loam Ledger landing page.
+- Farm login.
+- Create farm account.
+- Email verification behavior.
+- Suggestion/problem reporting while signed out.
+- Light and dark theme appearance.
+- Do not show seeded demo credentials on the login page.
+
+GLOBAL SIGNED-IN EXPERIENCE
+
+- Desktop top toolbar.
+- Mobile sticky summary toolbar and opaque left drawer.
+- Current page title.
+- Undo and redo.
+- Main navigation.
+- Inbox unread count.
+- Settings and admin navigation.
+- Signed-in user and farm identity.
+- Suggestion/problem modal with page, selection, map date, and recent activity context.
+- Beta warning.
+- First-account tutorial.
+- Full-workflow test tutorial.
+- Light/dark theme and distance display preferences.
+- Mobile list limiting: more than five rows starts with a short preview and can expand.
+- Tables remain tables and scroll horizontally on small screens.
+
+FARM MAP
+
+Keep the current map appearance and behavior:
+
+- Live web basemap and attribution.
+- Fields, blocks, block sections/zones, beds, roads, cover-crop areas, planned crops, actual crops, labels, tasks, vehicles, GPS position, drawing points, edit points, previews, and first-bed entrance arrow.
+- Planning and Work modes.
+- Draw field.
+- Draw block.
+- Select and edit mapped objects.
+- Delete selected vertices where allowed.
+- Make beds from a selected reference edge.
+- Reusable bed and road presets.
+- Generate a specified number of beds.
+- Fill the remaining block.
+- Keep or replace existing beds.
+- Optional harvest-road spacing within bed generation.
+- Bed geometry and real-world distance accuracy.
+- Select one or more beds for planting or work.
+- Map week selection and task overlays.
+- Planned crop, actual crop, weekly task, and authorized other-farm layers.
+- Phone GPS controls.
+- Selection details.
+- Planner-only map tools and worker access messages.
+
+Keep these reachable map-side workflows:
+
+- New field, block, section, or cover-crop area.
+- Edit field, block, section, or cover-crop area.
+- Generate beds in block.
+- Manage bed presets.
+- New Planting.
+- Bed records.
+- Block crop/placement plan.
+- Record Work Done for a scheduled task.
+- Record Work for unplanned work.
+- Cover crop work.
+- Bed Maker.
+- Weekly work-to-do and done-this-week lists.
+
+ANNUAL CROP PLAN
+
+- Grouped annual crop plan table.
+- Review markers for incomplete imported plantings.
+- Planting status and planned dates.
+- Intended location.
+- Open Planting Detail.
+- Select and delete plantings for planner accounts.
+- Show unscheduled task warnings.
+- New Planting form.
+- Spreadsheet template download.
+- Spreadsheet crop-plan import.
+- Full farm spreadsheet export and backup import.
+- Worker view-only access message.
+
+PLANTING DETAIL
+
+- Planting title, crop/variety/seed information, status, review information, milestones, and planning details.
+- Edit and delete for planners.
+- Bed placement history.
+- Event history.
+- Record actual work and recalculate connected tasks.
+- Worker view-only behavior.
+
+TASK LIST
+
+- Current or selected week.
+- Previous, current, and next week controls.
+- Past-undone option where currently shown.
+- Task table with task, planting, bed, status, dependencies, rule, and completion action.
+- Record Work Done form for the selected task.
+- Connected-task date shifting based on actual completed work.
+
+TASK FLOWS
+
+- Reusable task-flow list.
+- Create, copy, edit, and delete a task flow.
+- Node and edge editor.
+- Current edge-based delays, including fractional non-negative delay values.
+- Scheduling anchors and connected dependency behavior.
+- Task types, labels, icons, vehicle assignments, and colors.
+- Validation that prevents invalid or cyclic flows.
+- Garage with saved vehicle profiles, vehicle preview, model, primary color, secondary color, create, edit, and delete.
+- Vehicle and tractor markers must continue to display and animate on the map when their task meets the active map filters.
+
+SEED BANK
+
+- Active seed record count.
+- In-stock and archived filters.
+- Seed record table.
+- Add, edit, archive, and restore.
+- Crop, variety, family, breed/type, supplier, catalog number, maturity, spacing defaults, seed lots, quantity, and availability.
+- Links between seed records and crop planning.
+- Planner editing and worker view-only behavior.
+
+INBOX
+
+- Message list.
+- Unread state and unread navigation count.
+- Refresh.
+- Message sender, subject, body, date, and related report number.
+- Mark read.
+- Admin replies to signed-in feedback reporters.
+
+SETTINGS
+
+- Distance display units.
+- Light/dark color theme.
+- Preview card.
+- Tutorials for planners.
+- Account and logout.
+- Team-account creation and listing for planners.
+- Current live-map imagery explanation and privacy explanation.
+
+ADMIN
+
+- Admin control panel.
+- User list and account status.
+- Farm memberships and roles.
+- Safe user deletion rules.
+- Recent usage events.
+- Recent problem/suggestion reports.
+- Expandable saved report context.
+- Reply to signed-in reporters through their inbox.
+- Clear explanation when anonymous reports cannot receive replies.
+
+
+CURRENT RESPONSIVE DESIGN TO MATCH
+
+Desktop:
+
+- Keep the current earthy green, cream, and farm-led visual style.
+- Keep the current CSS-variable light and dark themes.
+- Keep the current typography, card borders, shadows, control shapes, spacing, muted text, chips, tables, and button hierarchy.
+- Most pages use two columns, with primary content on the left and tools or secondary cards on the right.
+- The map page keeps the large map and its context-card column.
+- The desktop toolbar stays open across the top.
+
+Mobile at 760 pixels wide or less:
+
+- Use one-column page layouts.
+- Keep the sticky compact top bar.
+- The menu button opens an opaque left drawer covering about 80 percent of the screen.
+- Lock the page behind the open drawer.
+- Close the drawer with its Close button, backdrop, Escape key, page navigation, or map-tool selection.
+- Keep Plan/Work and map tools in the drawer.
+- Keep the compact GPS, Week, and Layers map controls.
+- Stack form fields.
+- Use two-column button rows when space permits.
+- Keep wide tables horizontally scrollable.
+- Keep the current short-list/full-list behavior for lists with more than five records.
+
+The rebuilt frontend should be visually compared with the current site at common desktop widths and at 760, 390, and 320 pixel mobile widths.
+
+
+FEATURES AND CODE TO OMIT
+
+Remove these from the clean rebuild unless current reachability testing proves that the user can actively use them:
+
+1. Standalone Record Work page.
+   The scheduled-task recording card must remain available from the Farm Map and Task List, but the separate Record Work view currently has no normal navigation path.
+
+2. Standalone Harvest Log / Summary page and its separate harvest-entry page.
+   The current page has no normal navigation path and is explicitly marked out of beta scope. Do not remove harvest data from old databases or backup compatibility. Preserve old records safely even if no active page displays them.
+
+3. Offline imagery/cache feature.
+   The active frontend uses the live web basemap and Settings says offline caching is disabled. Omit the unused frontend status request, offline map-source choices, tile-cache server routes, cache-building script, and cache-specific configuration from the clean application unless an active deployment is proven to use them.
+
+4. Duplicate forms or helpers superseded by the active versions.
+   For example, there should be one maintained planting form system and one maintained scheduled-task recording system, configured for their different contexts instead of copied versions drifting apart.
+
+5. Unreachable UI branches, unused API client methods, unused exports, unused styles, abandoned compatibility adapters that are not needed for saved data, and files that have no runtime, test, migration, import/export, or build references.
+
+For every removal, create a short removal record containing:
+
+- What was removed.
+- Evidence that it was unreachable or inactive.
+- Searches or tests used to verify it.
+- Any data compatibility behavior retained.
+
+Do not treat historical SQL migrations as unused code. Keep them.
+
+
+REQUIRED FRONTEND STRUCTURE
+
+Use a feature-oriented structure similar to this. Adjust names when needed, but preserve the separation of responsibilities.
+
+apps/web/src/
+  app/
+    App.tsx
+    AppShell.tsx
+    navigation.ts
+    session/
+    providers/
+  api/
+    client.ts
+    auth.ts
+    dashboard.ts
+    map.ts
+    plantings.ts
+    tasks.ts
+    taskFlows.ts
+    seeds.ts
+    messages.ts
+    admin.ts
+  features/
+    auth/
+    feedback/
+    tutorials/
+    map/
+      components/
+      controls/
+      drawing/
+      geometry/
+      layers/
+      sidebar/
+      state/
+    cropPlan/
+    plantings/
+    tasks/
+    taskFlows/
+    garage/
+    seedBank/
+    inbox/
+    settings/
+    teamAccounts/
+    admin/
+  shared/
+    components/
+    forms/
+    hooks/
+    formatting/
+    permissions/
+    types/
+  styles/
+    tokens.css
+    global.css
+    layout.css
+    responsive.css
+
+Frontend architecture rules:
+
+- App.tsx should compose providers, navigation, and page components. It must not contain thousands of lines of feature implementation.
+- Each page belongs to its feature folder.
+- Each major visible card should be its own focused component.
+- Put reusable stateful behavior in hooks only when it is genuinely shared.
+- Keep map state together in a map controller/reducer instead of dozens of unrelated top-level useState calls.
+- Separate map geometry calculations from React rendering.
+- Separate API calls from page components.
+- Centralize shared domain types and permission checks.
+- Use one source of truth for labels, task types, vehicle types, themes, and navigation.
+- Split CSS by design tokens, shared layout, responsive rules, and feature styles. Do not replace the current visual design with a component library.
+- Avoid generic abstractions that hide farm-specific behavior.
+- Keep components small enough that their purpose is clear. As a guideline, investigate any component above roughly 400 lines and split it when it has more than one responsibility.
+
+
+REQUIRED BACKEND STRUCTURE
+
+Use a feature-oriented structure similar to:
+
+apps/api/src/
+  app.ts
+  server.ts
+  config/
+  middleware/
+  db/
+    migrations/
+    queries/
+  modules/
+    auth/
+    farms/
+    accounts/
+    dashboard/
+    maps/
+    beds/
+    plantings/
+    tasks/
+    taskFlows/
+    seeds/
+    spreadsheets/
+    undo/
+    feedback/
+    messages/
+    usage/
+    admin/
+  shared/
+    errors/
+    validation/
+    permissions/
+    types/
+
+Backend architecture rules:
+
+- Route files should validate input, enforce permission, call a service, and format the response.
+- Business rules belong in services/domain modules, not giant route handlers.
+- Database queries belong near their feature and should remain farm-scoped.
+- Keep task scheduling and task-flow validation independent and testable.
+- Keep map geometry and bed generation independent and testable.
+- Keep spreadsheet parsing, validation, append-only import, and export separate.
+- Keep authentication and account-email behavior separate from farm workflows.
+- Use consistent error handling and validation.
+- Do not rewrite working SQL merely to make it look different.
+
+
+STATE AND DATA RULES
+
+- Keep the server as the source of truth for farm records.
+- Use local component state for temporary form drafts and map drawing only.
+- Reload or update the relevant feature data after a successful write.
+- Keep saved vehicle profiles loaded from their dedicated endpoint so Garage data is not lost when dashboard data refreshes.
+- Preserve task-flow edge delays as the timing source. Do not move delays back onto task nodes.
+- Preserve exact map geometry behavior and PostGIS coordinate handling.
+- Preserve existing spreadsheet column meanings and full-backup sheet identities.
+- Keep "Planting Details" as the stable full-backup planting sheet.
+- Keep "Plantings" as the simpler crop-plan template sheet.
+- Preserve review markers for imported incomplete data.
+
+
+DEAD-CODE AUDIT METHOD
+
+Before deleting anything:
+
+1. Inventory all pages reachable through navigation, buttons, table rows, map selections, tutorials, permission-specific controls, and modal actions.
+2. Test planner, worker, signed-out, and admin paths.
+3. Search every frontend API method for callers.
+4. Search every backend route for frontend, script, test, import/export, or deployment callers.
+5. Search every exported function/type/component for runtime and test imports.
+6. Search CSS selectors against rendered class names.
+7. Check package scripts and deployment documentation.
+8. Check database migrations and backup import/export compatibility.
+9. Only remove an item after this evidence shows that it is not active.
+
+If uncertain, keep compatibility behavior isolated behind a clearly named adapter and document why.
+
+
+IMPLEMENTATION ORDER
+
+Complete this as a controlled replacement, not a one-step rewrite.
+
+Phase 1: Baseline
+
+- Run tests and build.
+- Record active navigation and permission-specific workflows.
+- Capture desktop and mobile screenshots of every reachable screen and major conditional card.
+- Create a feature/reachability inventory.
+- Create a list of removal candidates with evidence.
+
+Phase 2: Shared foundation
+
+- Extract API client modules.
+- Extract shared types, formatting, permissions, buttons, cards, tables, form controls, modals, and responsive layout primitives.
+- Split design tokens and global styles without changing appearance.
+
+Phase 3: Feature extraction
+
+- Rebuild one feature at a time.
+- Keep old and new behavior comparable during each extraction.
+- Start with simpler screens such as Inbox, Settings, and Admin.
+- Continue with Seed Bank, Crop Plan, Planting Detail, and Tasks.
+- Rebuild Task Flows and Garage.
+- Rebuild the Farm Map last because it has the most cross-feature state and geometry behavior.
+
+Phase 4: Backend modularization
+
+- Move routes and business rules feature by feature.
+- Keep route URLs and response shapes stable unless a coordinated frontend change is tested.
+- Preserve database and backup compatibility.
+
+Phase 5: Remove proven dead code
+
+- Remove only items verified by the dead-code audit.
+- Include the unused-feature removals listed in this prompt when confirmed.
+- Remove obsolete styles and types after their code is gone.
+
+Phase 6: Final verification
+
+- Run automated tests, production builds, and diff checks.
+- Complete the current beta workflow checklist.
+- Compare current and rebuilt desktop/mobile screenshots.
+- Test against a copy of a migrated existing database, not only an empty seeded database.
+
+
+TESTING REQUIREMENTS
+
+At minimum, preserve or add tests for:
+
+- Login, registration, logout, and permissions.
+- Farm data isolation.
+- Planner versus worker access.
+- Field, block, section, bed, and cover-crop geometry.
+- Bed generation and ground-distance accuracy.
+- Planting creation, editing, placement, and deletion.
+- Scheduled and unplanned work recording.
+- Task-flow validation.
+- Edge-delay scheduling and recalculation from actual work.
+- Seed records and lots.
+- Spreadsheet append-only import.
+- Full farm backup export/import round trip.
+- Undo and redo.
+- Vehicle profile persistence and map rendering inputs.
+- Inbox/read state and admin replies.
+- Usage events and feedback context.
+- Mobile navigation and list-limiter behavior.
+
+Required final commands:
+
+- npm test
+- npm run build
+- git diff --check
+
+Also perform manual checks using docs/beta-current-test-checklist.txt.
+
+
+DEFINITION OF DONE
+
+The rebuild is complete only when:
+
+- A normal user can perform every currently reachable workflow with the same labels and expected results.
+- Desktop and mobile layouts closely match the current site.
+- Planner, worker, and admin permissions still behave correctly.
+- Existing migrated farm data loads without reset or reseeding.
+- Spreadsheet import remains append-only and backup restore remains compatible.
+- The standalone unreachable Record Work and Harvest pages are absent.
+- Disabled offline imagery/cache code is absent unless active usage was proven.
+- No replacement monolith was created.
+- Feature folders have clear ownership.
+- There are no known unused components, API methods, styles, or route handlers without a documented compatibility reason.
+- Tests and production builds pass.
+- A short architecture document explains where each feature now lives.
+- A short removals document explains what unused code was removed and why.
+
+
+FINAL REPORT FORMAT
+
+When finished, report:
+
+1. What remained exactly the same for users.
+2. What code was reorganized.
+3. What unused features/code were removed and the evidence for each removal.
+4. What compatibility code had to remain.
+5. Test and build results.
+6. Any visible difference that could not be avoided.
+7. The main files/folders a future coding agent should use for each feature.
+
+Do not claim the rebuild is complete if only the files were reorganized. Completion requires behavior, visual, permission, data, mobile, and existing-database verification.

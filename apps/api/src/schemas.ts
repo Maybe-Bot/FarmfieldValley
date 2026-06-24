@@ -201,11 +201,33 @@ export const registerSchema = z.object({
   password: passwordSchema
 });
 
-export const accountCreateSchema = z.object({
+export const accountInvitationSchema = z.object({
   email: emailSchema,
-  username: usernameSchema,
-  password: passwordSchema,
   displayName: z.string().trim().min(1).max(100).nullable().optional(),
+  role: z.enum(["planner", "worker"])
+});
+
+export const passwordChangeSchema = z.object({
+  currentPassword: z.string().min(1),
+  newPassword: passwordSchema
+});
+
+export const forgotPasswordSchema = z.object({
+  email: emailSchema
+});
+
+export const passwordResetSchema = z.object({
+  token: z.string().min(20).max(200),
+  newPassword: passwordSchema
+});
+
+export const invitationAcceptSchema = z.object({
+  token: z.string().min(20).max(200),
+  username: usernameSchema.optional(),
+  password: passwordSchema
+});
+
+export const membershipRoleSchema = z.object({
   role: z.enum(["planner", "worker"])
 });
 

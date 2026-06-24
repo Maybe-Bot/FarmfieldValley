@@ -1,112 +1,176 @@
 import express from "express";
 import { z } from "zod";
-import { AuthContext } from "../auth";
+import { config } from "../config";
 import { pool } from "../db";
+import { asyncHandler, currentAuth, requireAdmin } from "../route-helpers";
+import { sanitizeUsageEvent } from "../usage-privacy";
 
-const usageEventSchema = z.object({
-  anonymousId: z.string().trim().max(80).nullable().optional(),
-  browserSessionId: z.string().trim().max(80).nullable().optional(),
-  eventType: z.string().trim().min(1).max(80),
-  page: z.string().trim().min(1).max(120),
-  path: z.string().trim().min(1).max(512),
-  title: z.string().trim().max(200).nullable().optional(),
-  occurredAt: z.string().datetime().nullable().optional(),
-  durationMs: z.number().int().min(0).max(24 * 60 * 60 * 1000).nullable().optional(),
-  details: z.record(z.unknown()).optional()
-});
+let lastRetentionSweep = 0;
 
-type UsageEventRouteDeps = {
-  asyncHandler: (
-    handler: (req: express.Request, res: express.Response, next: express.NextFunction) => Promise<void>
-  ) => express.RequestHandler;
-  currentAuth: (req: express.Request) => AuthContext | null;
-  requireAdmin: () => express.RequestHandler;
+export type UsageEventIngestionStore = {
+  isUsageTrackingEnabled: (userId: number) => Promise<boolean>;
+  consumeUsageRateLimit: (userId: number) => Promise<boolean>;
+  recordUsageEvent: (event: {
+    eventType: string;
+    page: string;
+    details: Record<string, string>;
+    durationBucket: string | null;
+  }) => Promise<void>;
+  pruneUsageData: () => Promise<void>;
 };
 
-function jsonLength(value: unknown) {
-  return JSON.stringify(value).length;
+async function pruneStoredUsageData() {
+  const now = Date.now();
+  if (now - lastRetentionSweep < 60 * 60 * 1000) return;
+
+  await pool.query(
+    "delete from usage_events where occurred_at < now() - ($1::int * interval '1 day')",
+    [config.usageRetentionDays]
+  );
+  await pool.query("delete from usage_rate_limits where expires_at < now()");
+  lastRetentionSweep = now;
 }
 
-function assertUsageEventLimits(body: z.infer<typeof usageEventSchema>) {
-  if (jsonLength(body.details ?? {}) > 20_000) {
-    throw new Error("Usage event details are too large");
+async function consumeUsageRateLimit(userId: number) {
+  const result = await pool.query(
+    `
+      insert into usage_rate_limits (user_id, window_start, event_count, expires_at)
+      values ($1, date_trunc('minute', now()), 1, now() + interval '2 hours')
+      on conflict (user_id, window_start)
+      do update set event_count = usage_rate_limits.event_count + 1
+      where usage_rate_limits.event_count < $2
+      returning event_count
+    `,
+    [userId, config.usageRateLimitPerMinute]
+  );
+
+  return result.rows.length > 0;
+}
+
+async function isUsageTrackingEnabled(userId: number) {
+  const preference = await pool.query(
+    "select usage_tracking_enabled from app_users where id = $1",
+    [userId]
+  );
+  return preference.rows[0]?.usage_tracking_enabled === true;
+}
+
+async function recordUsageEvent(event: {
+  eventType: string;
+  page: string;
+  details: Record<string, string>;
+  durationBucket: string | null;
+}) {
+  await pool.query(
+    `insert into usage_events (event_type, page, occurred_at, details)
+     values ($1, $2, now(), $3)`,
+    [
+      event.eventType,
+      event.page,
+      JSON.stringify({
+        ...event.details,
+        ...(event.durationBucket ? { duration: event.durationBucket } : {})
+      })
+    ]
+  );
+}
+
+export async function ingestUsageEventForUser(
+  userId: number,
+  body: unknown,
+  store: UsageEventIngestionStore
+) {
+  if (!(await store.isUsageTrackingEnabled(userId))) {
+    return { ok: true, recorded: false, rateLimited: false };
   }
+
+  const event = sanitizeUsageEvent(body);
+  if (!(await store.consumeUsageRateLimit(userId))) {
+    return { ok: false, recorded: false, rateLimited: true };
+  }
+
+  await store.pruneUsageData();
+  await store.recordUsageEvent(event);
+  return { ok: true, recorded: true, rateLimited: false };
 }
 
-export function registerUsageEventRoutes(app: express.Express, deps: UsageEventRouteDeps) {
-  app.post("/api/usage/events", deps.asyncHandler(async (req, res) => {
-    const auth = deps.currentAuth(req);
-    const body = usageEventSchema.parse(req.body);
-    assertUsageEventLimits(body);
+const postgresUsageEventStore: UsageEventIngestionStore = {
+  isUsageTrackingEnabled,
+  consumeUsageRateLimit,
+  async pruneUsageData() {
+    void pruneStoredUsageData().catch((error) => console.error("Usage retention sweep failed", error));
+  },
+  recordUsageEvent
+};
 
-    await pool.query(
-      `
-        insert into usage_events (
-          farm_id,
-          user_id,
-          anonymous_id,
-          browser_session_id,
-          event_type,
-          page,
-          path,
-          title,
-          occurred_at,
-          duration_ms,
-          details,
-          user_agent
-        )
-        values ($1, $2, $3, $4, $5, $6, $7, $8, coalesce($9::timestamptz, now()), $10, $11, $12)
-      `,
-      [
-        auth?.farmId ?? null,
-        auth?.userId ?? null,
-        body.anonymousId ?? null,
-        body.browserSessionId ?? null,
-        body.eventType,
-        body.page,
-        body.path,
-        body.title ?? null,
-        body.occurredAt ?? null,
-        body.durationMs ?? null,
-        JSON.stringify(body.details ?? {}),
-        req.header("user-agent") ?? null
-      ]
+export function registerUsageEventRoutes(app: express.Express) {
+  app.get("/api/usage/preference", asyncHandler(async (req, res) => {
+    const auth = currentAuth(req);
+    if (!auth) {
+      res.status(401).json({ error: "Login required" });
+      return;
+    }
+    const result = await pool.query(
+      "select usage_tracking_enabled from app_users where id = $1",
+      [auth.userId]
     );
-
-    res.status(201).json({ ok: true });
+    res.json({ enabled: result.rows[0]?.usage_tracking_enabled === true });
   }));
 
-  app.get("/api/usage/events", deps.requireAdmin(), deps.asyncHandler(async (req, res) => {
+  app.put("/api/usage/preference", asyncHandler(async (req, res) => {
+    const auth = currentAuth(req);
+    if (!auth) {
+      res.status(401).json({ error: "Login required" });
+      return;
+    }
+    const body = z.object({ enabled: z.boolean() }).strict().parse(req.body);
+    await pool.query(
+      "update app_users set usage_tracking_enabled = $1, updated_at = now() where id = $2",
+      [body.enabled, auth.userId]
+    );
+    res.json({ enabled: body.enabled });
+  }));
+
+  app.post("/api/usage/events", asyncHandler(async (req, res) => {
+    const auth = currentAuth(req);
+    if (!auth) {
+      res.status(401).json({ error: "Login required" });
+      return;
+    }
+
+    const result = await ingestUsageEventForUser(auth.userId, req.body, postgresUsageEventStore);
+    if (result.rateLimited) {
+      res.setHeader("Retry-After", "60");
+      res.status(429).json({ error: "Usage tracking rate limit exceeded. Try again shortly." });
+      return;
+    }
+
+    if (!result.recorded) {
+      res.json({ ok: true, recorded: false });
+      return;
+    }
+
+    res.status(201).json({ ok: true, recorded: true });
+  }));
+
+  app.get("/api/usage/events", requireAdmin(), asyncHandler(async (req, res) => {
+    await pruneStoredUsageData();
     const limit = z.coerce.number().int().min(1).max(500).default(200).parse(req.query.limit);
     const result = await pool.query(
-      `
-        select
-          event.id,
-          event.farm_id as "farmId",
-          farm.name as "farmName",
-          event.user_id as "userId",
-          app_user.username,
-          app_user.display_name as "displayName",
-          event.anonymous_id as "anonymousId",
-          event.browser_session_id as "browserSessionId",
-          event.event_type as "eventType",
-          event.page,
-          event.path,
-          event.title,
-          event.occurred_at as "occurredAt",
-          event.duration_ms as "durationMs",
-          event.details,
-          event.user_agent as "userAgent",
-          event.created_at as "createdAt"
-        from usage_events event
-        left join app_users app_user on app_user.id = event.user_id
-        left join farms farm on farm.id = event.farm_id
-        order by event.occurred_at desc, event.id desc
-        limit $1
-      `,
+      `select id, event_type as "eventType", page, occurred_at as "occurredAt",
+              details, created_at as "createdAt"
+       from usage_events
+       order by occurred_at desc, id desc
+       limit $1`,
       [limit]
     );
+    res.json({ events: result.rows, retentionDays: config.usageRetentionDays });
+  }));
 
-    res.json(result.rows);
+  app.delete("/api/usage/events", requireAdmin(), asyncHandler(async (_req, res) => {
+    const result = await pool.query(
+      "with deleted as (delete from usage_events returning 1) select count(*)::int as count from deleted"
+    );
+    res.json({ ok: true, deleted: result.rows[0]?.count ?? 0 });
   }));
 }

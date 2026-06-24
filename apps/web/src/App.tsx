@@ -7,25 +7,146 @@
  * extraction targets are the map sidebar cards, planting forms, task-flow
  * editor, settings panels, and reusable date/unit controls.
  */
-import { CSSProperties, FormEvent, Fragment, ReactNode, useEffect, useMemo, useRef, useState } from "react";
-import { divIcon, LatLngTuple } from "leaflet";
-import { AttributionControl, Circle, CircleMarker, MapContainer, Marker, Polygon, Polyline, TileLayer, Tooltip, useMap, useMapEvents } from "react-leaflet";
+import { CSSProperties, FormEvent, Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { AttributionControl, Circle, CircleMarker, MapContainer, Marker, Polygon, Polyline, Tooltip } from "react-leaflet";
 import { api } from "./api";
 import { buildBedAllocationPreview, estimatePlantCountFromPlan } from "./bed-allocation";
 import { AdminPanel } from "./components/AdminPanel";
+import { BedGeneratorCard } from "./components/BedGeneratorCard";
+import { BedPresetCard } from "./components/BedPresetCard";
+import { CoverCropWorkCard } from "./components/CoverCropWorkCard";
+import { defaultEntranceTractorProfile, GarageCard } from "./components/GarageCard";
+import { HarvestForm } from "./components/HarvestForm";
 import { InboxPanel } from "./components/InboxPanel";
 import { LoginScreen } from "./components/LoginScreen";
+import {
+  FitToFarm,
+  FocusSelection,
+  FocusUserLocation,
+  MapDrawingEvents,
+  MapLineDragEvents,
+  MapZoomTracker,
+  PersistMapView,
+  readStoredMapView,
+  ResponsiveBasemap,
+  TutorialAutoScroll
+} from "./components/MapSupport";
 import { MobileListLimiter } from "./components/MobileListLimiter";
 import { PlantingForm, PlantingMapPreviewItem, PlantingTutorialDraft } from "./components/PlantingForms";
 import { SeedBankCard } from "./components/SeedBankCard";
 import { SpreadsheetImportCard } from "./components/SpreadsheetImportCard";
 import { TaskFlowEditorCard } from "./components/TaskFlowEditorCard";
 import { TaskIconMark } from "./components/TaskIconMark";
+import { AccountPasswordCard, TeamAccountsCard } from "./components/TeamAccountsCard";
+import { WorkBedPicker } from "./components/WorkBedPicker";
 import { formatDate } from "./display-utils";
-import { basemaps } from "./map-config";
+import { handleForm } from "./form-utils";
+import {
+  bedParallelSplitLineThroughPoint,
+  bedParallelSplitLinesForBlock,
+  bedRunDistancePx,
+  bedSectionBoundary,
+  bedSerpentineReversesFromEnd,
+  bedSharedVehicleTiming,
+  bedTravelPath,
+  boundaryEdgeLines,
+  buildNextBedPreview,
+  clipLineToPolygon,
+  CoordinateDraft,
+  firstBedEntrancePose,
+  firstBedSideReferencePoint,
+  longestBoundaryEdgeLine,
+  orientLineLeftAwayFromPoint,
+  orientLineLeftTowardPoint,
+  plantingPlacementCount,
+  pointIsInsideOrOnPolygon,
+  pointToSegmentDistance,
+  polygonCenter,
+  polygonEdgesCrossBoundary,
+  polygonIsInsideOrOnPolygon,
+  polygonPositions,
+  selectedBedGuideLine,
+  sideOfLine,
+  sortedPlantableBlockBeds,
+  splitAreaPreviewForBlock,
+  splitGuideLineForBlock
+} from "./map-geometry";
 import { geoJsonPolygonToLatLngs, midpoint, polygonAreaSqM, taskMapIcon, vertexIcon } from "./map-utils";
+import {
+  addDaysToDateString,
+  bedStyle,
+  blockStyle,
+  colorizeBlockPlacementRows,
+  defaultZoneName,
+  DetailTerm,
+  daysBetweenDateStrings,
+  fieldReviewSeverity,
+  FieldLabel,
+  fieldsForImportIssue,
+  fieldStyle,
+  formatPlannedUseLabel,
+  formatTaskAnchorLabel,
+  formatTaskTypeLabel,
+  formatZoneActualStateLabel,
+  isPlantingInGroundOnDate,
+  issueListFromNotes,
+  latestDateIndexOnOrBefore,
+  mapObjectLabel,
+  mapSaveErrorMessage,
+  placementOverlayStyle,
+  plantingCropVarietyLabel,
+  plantingFieldStillNeedsReview,
+  plantingGroundEndDate,
+  plantingGroundStartDate,
+  plantingLabelIcon,
+  plantingMapColorForOrder,
+  PlantingMapColor,
+  plantingOverlayStyleForColor,
+  plantingPlanYear,
+  PlantingDateInput,
+  PlantingPlanningInput,
+  plantingReviewInfo,
+  PlantingReviewBadge,
+  PlantingReviewInfo,
+  PlantingReviewMarker,
+  PlantingReviewSeverity,
+  plannedOverlayStyle,
+  summarizeTitles,
+  taskColor,
+  taskIconColor,
+  zoneStyle
+} from "./planting-display";
 import { getCachedSpriteSheetUrl, preloadSpriteSheets, spriteSheetRequestForTask, subscribeSpriteSheetCache } from "./sprite-sheet-cache";
-import { Bed, Block, BlockZone, DashboardData, FarmEvent, FeedbackReport, Field, Placement, PlannedUse, Planting, SeedItem, SessionInfo, Task, TaskFlowEdge, TaskFlowNode, TaskFlowTemplate, TractorProfile, UndoSnapshotSummary, UserMessage, ZoneActualState } from "./types";
+import { Bed, Block, BlockZone, DashboardData, DashboardResourceName, FarmEvent, FeedbackReport, Field, Placement, PlannedUse, Planting, SeedItem, SessionInfo, Task, TaskFlowEdge, TaskFlowNode, TaskFlowTemplate, TractorProfile, UndoSnapshotSummary, UserMessage, ZoneActualState } from "./types";
+import {
+  addDaysToDate,
+  dateDiffDays,
+  dateInputValue,
+  defaultSpacingExample,
+  defaultTaskRecordDate,
+  DistanceUnit,
+  formatDateForInputHint,
+  formatDecimalInputValue,
+  formatDisplayArea,
+  formatLength,
+  formatLengthInputValue,
+  formatSpacing,
+  formatSpacingPair,
+  formatTaskWeekTitle,
+  formatWeekRange,
+  isCurrentTaskCategory,
+  isDateInWeek,
+  isPlantingActionTask,
+  parseLengthInputValue,
+  parseSpacingPairForUnit,
+  spacingInputToMeters,
+  spacingMetersToInput,
+  spacingUnitLabel,
+  startOfWeekDate,
+  taskNeedsRecordForm,
+  todayDateInputValue,
+  toNumericValue
+} from "./unit-utils";
 import { useUsageTracking } from "./usage-tracking";
 
 type View = "map" | "plan" | "planting" | "tasks" | "flows" | "seed-bank" | "record" | "harvests" | "inbox" | "settings" | "admin";
@@ -47,7 +168,6 @@ function isPointSelectionMapMode(mode: MapMode) {
     "pick_bed_edge"
   ].includes(mode);
 }
-type DistanceUnit = "m" | "ft";
 type ThemeMode = "light" | "dark";
 type MobileMapPanel = "gps" | "week" | "layers" | null;
 type ZoneDraftMethod = "whole_block" | "split_line" | "polygon" | null;
@@ -59,14 +179,6 @@ type MapSelection =
   | null;
 
 // Draft coordinates are temporary points drawn before the user saves geometry.
-type CoordinateDraft = {
-  lat: number;
-  lng: number;
-};
-type BedTravelPath = {
-  bearing: number;
-  lengthM: number;
-};
 type MapTaskMarker = {
   key: string;
   task: Task;
@@ -91,13 +203,6 @@ type PlantingMapLabel = {
   color: string;
   order: number;
 };
-type PlantingMapColor = {
-  hue: number;
-  stroke: string;
-  fill: string;
-  label: string;
-};
-
 type SaveResponse = {
   id?: number;
   warning?: string;
@@ -148,8 +253,22 @@ const emptyDashboard: DashboardData = {
   harvests: []
 };
 
+const dashboardRefreshResources = {
+  map: [
+    "fields", "blocks", "blockZones", "beds", "bedPresets", "coverCropNames",
+    "placements", "placementGaps", "placementOverflows", "events", "tasks"
+  ],
+  plantings: [
+    "plantings", "placements", "placementGaps", "placementOverflows",
+    "events", "tasks", "harvests", "beds"
+  ],
+  tasks: ["tasks", "events", "plantings", "placements", "harvests", "beds"],
+  taskFlows: ["taskFlowTemplates", "taskFlowNodes", "taskFlowEdges", "tasks"],
+  seeds: ["seedItems", "crops", "varieties"],
+  garage: ["tractorProfiles", "taskFlowNodes", "tasks"]
+} satisfies Record<string, DashboardResourceName[]>;
+
 // Local storage keeps lightweight UI preferences on this browser only.
-const VIEW_STORAGE_KEY = "loam-ledger-map-view";
 const SETTINGS_STORAGE_KEY = "loam-ledger-settings";
 const MAP_LAYER_STORAGE_PREFIX = "loam-ledger-map-layers";
 const MOBILE_MEDIA_QUERY = "(max-width: 760px)";
@@ -158,8 +277,6 @@ const PROTOTYPE_WARNING_STORAGE_PREFIX = "loam-ledger-prototype-warning";
 const TUTORIAL_DISMISSED_STORAGE_PREFIX = "loam-ledger-tutorial-dismissed";
 
 // Default center is only a starting point; saved farm geometry can fit/zoom the map later.
-const DEFAULT_CENTER: LatLngTuple = [40.0448, -76.2662];
-const DEFAULT_ZOOM = 18;
 const EARTH_RADIUS_M = 6378137;
 const MAX_WEB_MERCATOR_LATITUDE = 85.05112878;
 const WEB_MERCATOR_EQUATOR_METERS_PER_PIXEL = 156543.03392;
@@ -212,583 +329,6 @@ const zoneActualStateOptions: ZoneActualState[] = [
   "cover_crop_established",
   "finished"
 ];
-const garageVehicleOptions = [
-  { value: "cab", label: "Cab tractor", previewTaskType: "bed_making" },
-  { value: "canopy", label: "Canopy tractor", previewTaskType: "cultivation" },
-  { value: "open", label: "Open tractor", previewTaskType: "cleanup" },
-  { value: "van", label: "Van", previewTaskType: "transplant" },
-  { value: "pickup", label: "Pickup", previewTaskType: "seed_in_tray" },
-  { value: "box", label: "Box truck", previewTaskType: "cover_crop" }
-];
-
-const primaryColorPresets = [
-  { name: "Field green", value: "#3f8f45" },
-  { name: "Harvester red", value: "#b7322c" },
-  { name: "Utility orange", value: "#d9802e" },
-  { name: "Construction yellow", value: "#e2b83f" },
-  { name: "Deep blue", value: "#2f5f9f" },
-  { name: "Fleet white", value: "#ffffff" },
-  { name: "Truck silver", value: "#b9c0c4" },
-  { name: "Service black", value: "#2b2f32" }
-];
-
-const secondaryColorPresets = [
-  { name: "Warm cream", value: "#f2d6aa" },
-  { name: "Wheel yellow", value: "#d6a84a" },
-  { name: "Cab white", value: "#ffffff" },
-  { name: "Charcoal", value: "#303334" },
-  { name: "Chrome gray", value: "#aeb7bc" },
-  { name: "Safety amber", value: "#e4a11b" }
-];
-
-function garageOptionForModel(model: string) {
-  return garageVehicleOptions.find((option) => option.value === model) ?? garageVehicleOptions[0];
-}
-
-function emptyGarageDraft() {
-  return {
-    name: "",
-    tractorModel: "cab",
-    iconColor: "#b7322c",
-    iconSecondaryColor: "#f2d6aa"
-  };
-}
-
-const defaultEntranceTractorProfile: TractorProfile = {
-  id: 0,
-  farmId: 0,
-  name: "Default tractor",
-  tractorModel: "cab",
-  iconColor: "#b7322c",
-  iconSecondaryColor: "#f2d6aa"
-};
-
-function ColorPresetRow({
-  label,
-  value,
-  presets,
-  onChange
-}: {
-  label: string;
-  value: string;
-  presets: Array<{ name: string; value: string }>;
-  onChange: (value: string) => void;
-}) {
-  return (
-    <div className="color-preset-group">
-      <span>{label}</span>
-      <div className="color-swatch-row">
-        {presets.map((preset) => (
-          <button
-            key={preset.value}
-            type="button"
-            className={`color-swatch${preset.value.toLowerCase() === value.toLowerCase() ? " selected" : ""}`}
-            style={{ "--swatch-color": preset.value } as CSSProperties}
-            title={preset.name}
-            aria-label={preset.name}
-            onClick={() => onChange(preset.value)}
-          />
-        ))}
-        <input type="color" value={value} aria-label={`Custom ${label.toLowerCase()}`} onChange={(event) => onChange(event.target.value)} />
-      </div>
-    </div>
-  );
-}
-
-function GaragePreview({
-  profile,
-  scale = 1.28,
-  spinning = true
-}: {
-  profile: Pick<TractorProfile, "tractorModel" | "iconColor" | "iconSecondaryColor">;
-  scale?: number;
-  spinning?: boolean;
-}) {
-  const option = garageOptionForModel(profile.tractorModel);
-  return (
-    <TaskIconMark
-      taskType={option.previewTaskType}
-      color={profile.iconColor}
-      secondaryColor={profile.iconSecondaryColor}
-      tractorModel={profile.tractorModel}
-      scale={scale}
-      spinning={spinning}
-      mini
-    />
-  );
-}
-
-function GarageCard({
-  tractorProfiles
-}: {
-  tractorProfiles: TractorProfile[];
-}) {
-  const [savedProfiles, setSavedProfiles] = useState<TractorProfile[]>(tractorProfiles);
-  const [draft, setDraft] = useState(emptyGarageDraft);
-  const [editingId, setEditingId] = useState<number | null>(null);
-  const [status, setStatus] = useState<string | null>(null);
-  const [saving, setSaving] = useState(false);
-  const previewProfile = {
-    tractorModel: draft.tractorModel,
-    iconColor: draft.iconColor,
-    iconSecondaryColor: draft.iconSecondaryColor
-  };
-
-  useEffect(() => {
-    setSavedProfiles(tractorProfiles);
-  }, [tractorProfiles]);
-
-  useEffect(() => {
-    let cancelled = false;
-    void api.getTractorProfiles()
-      .then((profiles) => {
-        if (!cancelled) {
-          setSavedProfiles(profiles);
-        }
-      })
-      .catch((error) => {
-        if (!cancelled) {
-          setStatus(error instanceof Error ? `Could not load saved vehicles: ${error.message}` : "Could not load saved vehicles.");
-        }
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, []);
-
-  function editProfile(profile: TractorProfile) {
-    setEditingId(profile.id);
-    setDraft({
-      name: profile.name,
-      tractorModel: profile.tractorModel,
-      iconColor: profile.iconColor,
-      iconSecondaryColor: profile.iconSecondaryColor
-    });
-    setStatus(null);
-  }
-
-  function resetGarageForm() {
-    setEditingId(null);
-    setDraft(emptyGarageDraft());
-  }
-
-  async function saveProfile() {
-    if (!draft.name.trim()) {
-      setStatus("Name is required.");
-      return;
-    }
-    try {
-      setSaving(true);
-      setStatus("Saving vehicle...");
-      const payload = {
-        name: draft.name.trim(),
-        tractorModel: draft.tractorModel,
-        iconColor: draft.iconColor,
-        iconSecondaryColor: draft.iconSecondaryColor
-      };
-      if (editingId == null) {
-        const response = await api.createTractorProfile(payload);
-        const savedProfile: TractorProfile = {
-          id: response.id,
-          farmId: response.farmId ?? 0,
-          name: response.name ?? payload.name,
-          tractorModel: response.tractorModel ?? payload.tractorModel,
-          iconColor: response.iconColor ?? payload.iconColor,
-          iconSecondaryColor: response.iconSecondaryColor ?? payload.iconSecondaryColor
-        };
-        setSavedProfiles((current) => [...current.filter((profile) => profile.id !== savedProfile.id), savedProfile]);
-      } else {
-        const response = await api.updateTractorProfile(editingId, payload);
-        const savedProfile: TractorProfile = {
-          id: response.id ?? editingId,
-          farmId: response.farmId ?? savedProfiles.find((profile) => profile.id === editingId)?.farmId ?? 0,
-          name: response.name ?? payload.name,
-          tractorModel: response.tractorModel ?? payload.tractorModel,
-          iconColor: response.iconColor ?? payload.iconColor,
-          iconSecondaryColor: response.iconSecondaryColor ?? payload.iconSecondaryColor
-        };
-        setSavedProfiles((current) => current.map((profile) => profile.id === savedProfile.id ? savedProfile : profile));
-      }
-      resetGarageForm();
-      setStatus("Saved.");
-    } catch (error) {
-      setStatus(error instanceof Error ? error.message : "Vehicle save failed.");
-    } finally {
-      setSaving(false);
-    }
-  }
-
-  async function deleteProfile(profile: TractorProfile) {
-    try {
-      setSaving(true);
-      setStatus(`Deleting ${profile.name}...`);
-      await api.deleteTractorProfile(profile.id);
-      setSavedProfiles((current) => current.filter((item) => item.id !== profile.id));
-      if (editingId === profile.id) {
-        resetGarageForm();
-      }
-      setStatus("Deleted.");
-    } catch (error) {
-      setStatus(error instanceof Error ? error.message : "Vehicle delete failed.");
-    } finally {
-      setSaving(false);
-    }
-  }
-
-  return (
-    <div className="card">
-      <h2>Garage</h2>
-      {status && <p className="muted"><strong>{status}</strong></p>}
-      <div className="garage-editor">
-        <div className="garage-preview">
-          <GaragePreview profile={previewProfile} />
-        </div>
-        <div className="garage-form">
-          <div className="form-grid">
-            <label>
-              <span>Name</span>
-              <input value={draft.name} onChange={(event) => setDraft((current) => ({ ...current, name: event.target.value }))} placeholder="Red pickup" />
-            </label>
-            <label>
-              <span>Vehicle type</span>
-              <select value={draft.tractorModel} onChange={(event) => setDraft((current) => ({ ...current, tractorModel: event.target.value }))}>
-                {garageVehicleOptions.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
-              </select>
-            </label>
-            <ColorPresetRow
-              label="Primary color"
-              value={draft.iconColor}
-              presets={primaryColorPresets}
-              onChange={(value) => setDraft((current) => ({ ...current, iconColor: value }))}
-            />
-            <ColorPresetRow
-              label="Secondary color"
-              value={draft.iconSecondaryColor}
-              presets={secondaryColorPresets}
-              onChange={(value) => setDraft((current) => ({ ...current, iconSecondaryColor: value }))}
-            />
-          </div>
-          <div className="button-row">
-            <button type="button" className="primary-button" disabled={saving} onClick={() => void saveProfile()}>
-              {saving ? "Saving..." : "Save"}
-            </button>
-            {editingId != null && (
-              <>
-                <button type="button" className="secondary-button" disabled={saving} onClick={resetGarageForm}>Cancel</button>
-                <button
-                  type="button"
-                  className="danger-button"
-                  disabled={saving}
-                  onClick={() => {
-                    const profile = savedProfiles.find((item) => item.id === editingId);
-                    if (profile) void deleteProfile(profile);
-                  }}
-                >
-                  Delete
-                </button>
-              </>
-            )}
-          </div>
-        </div>
-      </div>
-      <div className="task-flow-step-header">
-        <strong>Saved vehicles</strong>
-        <span className="small-chip">{savedProfiles.length}</span>
-      </div>
-      <MobileListLimiter itemCount={savedProfiles.length} itemLabel="saved vehicles" forceExpanded={editingId != null}>
-        <div className="garage-grid">
-          {savedProfiles.length === 0 && (
-            <p className="muted">No saved vehicles were returned for this farm.</p>
-          )}
-          {savedProfiles.map((profile) => (
-            <div key={profile.id} className="garage-tile">
-              <div className="garage-tile-preview">
-                <GaragePreview profile={profile} scale={0.68} spinning={false} />
-              </div>
-              <strong>{profile.name}</strong>
-              <span className="table-subtle">{garageOptionForModel(profile.tractorModel).label}</span>
-              <button type="button" className="secondary-button compact-button" disabled={saving} onClick={() => editProfile(profile)}>Edit</button>
-            </div>
-          ))}
-        </div>
-      </MobileListLimiter>
-    </div>
-  );
-}
-
-// Formatting and unit helpers keep the rest of the UI from worrying about
-// whether the user prefers metric or feet/inches.
-function dateInputValue(value: string | null | undefined) {
-  if (!value) {
-    return "";
-  }
-
-  return value.includes("T") ? value.split("T")[0] : value;
-}
-
-function toNumericValue(value: number | string | null | undefined) {
-  if (value == null) {
-    return null;
-  }
-
-  const numeric = typeof value === "number" ? value : Number(value);
-  return Number.isFinite(numeric) ? numeric : null;
-}
-
-function formatLength(valueM: number | string | null, unit: DistanceUnit) {
-  const numericValue = toNumericValue(valueM);
-  if (numericValue == null) {
-    return "—";
-  }
-
-  if (unit === "ft") {
-    return `${(numericValue * 3.28084).toFixed(1)} ft`;
-  }
-
-  return `${numericValue.toFixed(1)} m`;
-}
-
-function formatLengthInputValue(valueM: number | string | null, unit: DistanceUnit) {
-  const numericValue = toNumericValue(valueM);
-  if (numericValue == null) {
-    return "";
-  }
-
-  if (unit === "ft") {
-    return (numericValue * 3.28084).toFixed(2);
-  }
-
-  return numericValue.toFixed(2);
-}
-
-function parseLengthInputValue(value: FormDataEntryValue | null, unit: DistanceUnit) {
-  const raw = typeof value === "string" ? value.trim() : "";
-  if (!raw) {
-    return null;
-  }
-
-  const numericValue = Number(raw);
-  if (!Number.isFinite(numericValue)) {
-    return null;
-  }
-
-  return unit === "ft" ? numericValue / 3.28084 : numericValue;
-}
-
-function defaultSpacingExample(unit: DistanceUnit) {
-  return unit === "ft" ? "11.8 in x 11.8 in" : "30 cm x 30 cm";
-}
-
-function formatDisplayArea(valueSqM: number | string | null | undefined, unit: DistanceUnit) {
-  const numericValue = toNumericValue(valueSqM);
-  if (numericValue == null || numericValue <= 0) {
-    return "—";
-  }
-
-  const acres = numericValue / 4046.8564224;
-  if (acres >= 0.125) {
-    return `${acres.toFixed(acres >= 10 ? 1 : 2)} ac`;
-  }
-
-  if (unit === "ft") {
-    return `${Math.round(numericValue * 10.7639).toLocaleString()} sq ft`;
-  }
-
-  return `${Math.round(numericValue).toLocaleString()} sq m`;
-}
-
-function formatDecimalInputValue(value: number) {
-  if (!Number.isFinite(value)) {
-    return "";
-  }
-  const fixed = value >= 100 ? value.toFixed(0) : value >= 10 ? value.toFixed(1) : value.toFixed(2);
-  return fixed.replace(/\.0+$/, "").replace(/(\.\d*[1-9])0+$/, "$1");
-}
-
-function formatSpacing(value: string | null, unit: DistanceUnit) {
-  if (!value) {
-    return "—";
-  }
-
-  if (unit === "m") {
-    return value;
-  }
-
-  return value
-    .replace(/(\d+(?:\.\d+)?)\s*cm\b/gi, (_match, amount) => `${(Number(amount) / 2.54).toFixed(1)} in`)
-    .replace(/(\d+(?:\.\d+)?)\s*m\b/gi, (_match, amount) => `${(Number(amount) * 3.28084).toFixed(1)} ft`);
-}
-
-function spacingUnitLabel(unit: DistanceUnit) {
-  return unit === "ft" ? "in" : "cm";
-}
-
-function spacingInputToMeters(value: string, unit: DistanceUnit) {
-  const numericValue = Number(value);
-  if (!Number.isFinite(numericValue) || numericValue <= 0) {
-    return null;
-  }
-
-  return unit === "ft" ? numericValue * 0.0254 : numericValue / 100;
-}
-
-function spacingMetersToInput(valueM: number, unit: DistanceUnit) {
-  return unit === "ft" ? valueM / 0.0254 : valueM * 100;
-}
-
-function parseSpacingPairForUnit(value: string | null, unit: DistanceUnit) {
-  if (!value) {
-    return { inRow: "", betweenRows: "" };
-  }
-
-  const matches = [...value.matchAll(/(\d+(?:\.\d+)?)\s*(cm|m|in|ft)?/gi)];
-  if (matches.length === 0) {
-    return { inRow: "", betweenRows: "" };
-  }
-
-  const toMeters = (amount: string, rawUnit: string | undefined) => {
-    const numericValue = Number(amount);
-    if (!Number.isFinite(numericValue)) {
-      return null;
-    }
-
-    const sourceUnit = rawUnit?.toLowerCase() ?? (unit === "ft" ? "in" : "cm");
-    if (sourceUnit === "in") return numericValue * 0.0254;
-    if (sourceUnit === "ft") return numericValue / 3.28084;
-    if (sourceUnit === "m") return numericValue;
-    return numericValue / 100;
-  };
-
-  const first = toMeters(matches[0][1], matches[0][2]);
-  const second = toMeters(matches[1]?.[1] ?? matches[0][1], matches[1]?.[2] ?? matches[0][2]);
-
-  return {
-    inRow: first == null ? "" : spacingMetersToInput(first, unit).toFixed(unit === "ft" ? 1 : 0),
-    betweenRows: second == null ? "" : spacingMetersToInput(second, unit).toFixed(unit === "ft" ? 1 : 0)
-  };
-}
-
-function formatSpacingPair(inRow: string, betweenRows: string, unit: DistanceUnit) {
-  const label = spacingUnitLabel(unit);
-  const first = inRow.trim();
-  const second = betweenRows.trim() || first;
-  if (!first) {
-    return null;
-  }
-
-  return `${first} ${label} x ${second} ${label}`;
-}
-
-function todayDateInputValue() {
-  const now = new Date();
-  const local = new Date(now.getTime() - now.getTimezoneOffset() * 60000);
-  return local.toISOString().slice(0, 10);
-}
-
-// Week helpers power the map/task week controls.
-function addDaysToDate(value: string, days: number) {
-  const date = new Date(`${value}T12:00:00`);
-  date.setDate(date.getDate() + days);
-  return date.toISOString().slice(0, 10);
-}
-
-function startOfWeekDate(value: string) {
-  const date = new Date(`${value}T12:00:00`);
-  const day = date.getDay();
-  const mondayOffset = day === 0 ? -6 : 1 - day;
-  date.setDate(date.getDate() + mondayOffset);
-  return date.toISOString().slice(0, 10);
-}
-
-function formatWeekRange(startDate: string) {
-  return `${startDate} to ${addDaysToDate(startDate, 6)}`;
-}
-
-function formatTaskWeekTitle(weekStart: string) {
-  const currentWeekStart = startOfWeekDate(todayDateInputValue());
-  const daysFromCurrentWeek = dateDiffDays(currentWeekStart, weekStart) ?? 0;
-  const weeksFromCurrentWeek = Math.round(daysFromCurrentWeek / 7);
-  if (weeksFromCurrentWeek === 0) return "Tasks this week";
-  if (weeksFromCurrentWeek === -1) return "Tasks last week";
-  if (weeksFromCurrentWeek === 1) return "Tasks next week";
-  if (weeksFromCurrentWeek < 0) return `Tasks ${Math.abs(weeksFromCurrentWeek)} weeks ago`;
-  return `Tasks in ${weeksFromCurrentWeek} weeks`;
-}
-
-function formatDateForInputHint(value: string | null) {
-  if (!value) {
-    return "the scheduled date";
-  }
-
-  const [year, month, day] = value.split("-");
-  if (!year || !month || !day) {
-    return value;
-  }
-  return `${month}/${day}/${year}`;
-}
-
-function isDateInWeek(value: string | null, weekStart: string) {
-  if (!value) {
-    return false;
-  }
-  const weekEnd = addDaysToDate(weekStart, 6);
-  return value >= weekStart && value <= weekEnd;
-}
-
-function defaultTaskRecordDate(task: Pick<Task, "scheduledDate">) {
-  const today = todayDateInputValue();
-  if (!task.scheduledDate) {
-    return today;
-  }
-
-  const scheduled = new Date(`${task.scheduledDate}T12:00:00`).getTime();
-  const current = new Date(`${today}T12:00:00`).getTime();
-  const daysAway = Math.round((scheduled - current) / 86400000);
-  return Math.abs(daysAway) <= 28 ? today : task.scheduledDate;
-}
-
-function isPlantingActionTask(taskType: string) {
-  return taskType === "seed_in_tray" || taskType === "direct_seed" || taskType === "transplant";
-}
-
-function isCurrentTaskCategory(taskType: string) {
-  return ["seed_in_tray", "direct_seed", "till", "fertilizing_spraying", "bed_making", "transplant", "cultivation", "cleanup", "cover_crop"].includes(taskType);
-}
-
-function taskNeedsRecordForm(taskType: string) {
-  return ["seed_in_tray", "direct_seed", "bed_making", "transplant"].includes(taskType);
-}
-
-function dateDiffDays(startDate: string | null | undefined, endDate: string | null | undefined) {
-  if (!startDate || !endDate) {
-    return null;
-  }
-
-  const start = new Date(`${startDate.slice(0, 10)}T12:00:00Z`).getTime();
-  const end = new Date(`${endDate.slice(0, 10)}T12:00:00Z`).getTime();
-  if (Number.isNaN(start) || Number.isNaN(end)) {
-    return null;
-  }
-
-  return Math.round((end - start) / 86400000);
-}
-
-function polygonCenter(points: CoordinateDraft[]) {
-  if (points.length === 0) {
-    return null;
-  }
-
-  const total = points.reduce((sum, point) => ({
-    lat: sum.lat + point.lat,
-    lng: sum.lng + point.lng
-  }), { lat: 0, lng: 0 });
-
-  return {
-    lat: total.lat / points.length,
-    lng: total.lng / points.length
-  };
-}
-
 function readSettings(): { distanceUnit: DistanceUnit; themeMode: ThemeMode } {
   if (typeof window === "undefined") {
     return { distanceUnit: "m", themeMode: "light" };
@@ -858,1214 +398,6 @@ function readMapLayerSettings(userId: number | null | undefined) {
 
 // Map geometry helpers. These bridge Leaflet lat/lng data with simple projected
 // meter math used for bed previews and edge picking.
-function polygonPositions(points: CoordinateDraft[]) {
-  return points.map((point) => [point.lat, point.lng] as LatLngTuple);
-}
-
-function plantingPlacementCount(placements: Placement[], plantingId: number) {
-  return placements
-    .filter((placement) => placement.plantingId === plantingId)
-    .reduce((sum, placement) => sum + (placement.plantCount ?? 0), 0);
-}
-
-function bedSectionBoundary(bed: Bed, startM: number, lengthM: number, reverseFromEnd = false): Bed["boundary"] | null {
-  const boundary = geoJsonPolygonToLatLngs(bed.boundary);
-  if (boundary.length < 3 || lengthM <= 0) {
-    return null;
-  }
-
-  const projected = boundary.map(projectForEdgePicking);
-  let longestEdge = { start: projected[0], end: projected[1], length: 0 };
-  for (let index = 0; index < projected.length; index += 1) {
-    const start = projected[index];
-    const end = projected[(index + 1) % projected.length];
-    const length = Math.hypot(end.x - start.x, end.y - start.y);
-    if (length > longestEdge.length) {
-      longestEdge = { start, end, length };
-    }
-  }
-
-  if (longestEdge.length === 0) {
-    return null;
-  }
-
-  const bedLengthM = Number(bed.bedLengthM);
-  const projectedMetersPerBedMeter =
-    Number.isFinite(bedLengthM) && bedLengthM > 0
-      ? Math.max(0.2, Math.min(5, longestEdge.length / bedLengthM))
-      : 1;
-  const projectedStartM = Math.max(0, startM) * projectedMetersPerBedMeter;
-  const projectedLengthM = Math.max(0, lengthM) * projectedMetersPerBedMeter;
-  const along = {
-    x: (longestEdge.end.x - longestEdge.start.x) / longestEdge.length,
-    y: (longestEdge.end.y - longestEdge.start.y) / longestEdge.length
-  };
-  const across = { x: -along.y, y: along.x };
-  const projectedLocal = projected.map((point) => ({
-    along: point.x * along.x + point.y * along.y,
-    across: point.x * across.x + point.y * across.y
-  }));
-  const minAlong = Math.min(...projectedLocal.map((point) => point.along));
-  const maxAlong = Math.max(...projectedLocal.map((point) => point.along));
-  const minAcross = Math.min(...projectedLocal.map((point) => point.across));
-  const maxAcross = Math.max(...projectedLocal.map((point) => point.across));
-  const boundedStartM = reverseFromEnd
-    ? Math.max(0, longestEdge.length - projectedStartM - projectedLengthM)
-    : projectedStartM;
-  const sectionStart = Math.min(maxAlong, minAlong + boundedStartM);
-  const sectionEnd = Math.min(maxAlong, sectionStart + projectedLengthM);
-  if (sectionEnd <= sectionStart) {
-    return null;
-  }
-
-  const toWorld = (alongPosition: number, acrossPosition: number) => unprojectFromWebMercator({
-    x: along.x * alongPosition + across.x * acrossPosition,
-    y: along.y * alongPosition + across.y * acrossPosition
-  });
-  const corners = [
-    toWorld(sectionStart, minAcross),
-    toWorld(sectionEnd, minAcross),
-    toWorld(sectionEnd, maxAcross),
-    toWorld(sectionStart, maxAcross)
-  ];
-
-  return {
-    type: "Polygon",
-    coordinates: [[...corners.map((point) => [point.lng, point.lat]), [corners[0].lng, corners[0].lat]]]
-  };
-}
-
-function bedTravelPath(bed: Bed): BedTravelPath {
-  const boundary = geoJsonPolygonToLatLngs(bed.boundary);
-  if (boundary.length < 2) {
-    return { bearing: 0, lengthM: Number.isFinite(bed.bedLengthM) ? Math.max(0, bed.bedLengthM) : 0 };
-  }
-
-  const projected = boundary.map(projectForEdgePicking);
-  let longestEdge = { start: projected[0], end: projected[1], length: 0 };
-  for (let index = 0; index < projected.length; index += 1) {
-    const start = projected[index];
-    const end = projected[(index + 1) % projected.length];
-    const length = Math.hypot(end.x - start.x, end.y - start.y);
-    if (length > longestEdge.length) {
-      longestEdge = { start, end, length };
-    }
-  }
-
-  if (longestEdge.length === 0) {
-    return { bearing: 0, lengthM: Number.isFinite(bed.bedLengthM) ? Math.max(0, bed.bedLengthM) : 0 };
-  }
-
-  // CSS rotation uses the horizontal screen axis. Web Mercator y points north,
-  // so invert dy to make the tractor move along the bed visually on the map.
-  return {
-    bearing: Math.atan2(-(longestEdge.end.y - longestEdge.start.y), longestEdge.end.x - longestEdge.start.x) * 180 / Math.PI,
-    lengthM: longestEdge.length
-  };
-}
-
-function firstBedEntrancePose(bed: Bed, entranceSide: "start" | "end") {
-  const boundary = geoJsonPolygonToLatLngs(bed.boundary);
-  if (boundary.length < 3) {
-    return null;
-  }
-
-  const projected = boundary.map(projectForEdgePicking);
-  let longestEdge = { start: projected[0], end: projected[1], length: 0 };
-  for (let index = 0; index < projected.length; index += 1) {
-    const start = projected[index];
-    const end = projected[(index + 1) % projected.length];
-    const length = Math.hypot(end.x - start.x, end.y - start.y);
-    if (length > longestEdge.length) {
-      longestEdge = { start, end, length };
-    }
-  }
-
-  if (longestEdge.length === 0) {
-    return null;
-  }
-
-  const along = {
-    x: (longestEdge.end.x - longestEdge.start.x) / longestEdge.length,
-    y: (longestEdge.end.y - longestEdge.start.y) / longestEdge.length
-  };
-  const across = { x: -along.y, y: along.x };
-  const projectedLocal = projected.map((point) => ({
-    along: point.x * along.x + point.y * along.y,
-    across: point.x * across.x + point.y * across.y
-  }));
-  const minAlong = Math.min(...projectedLocal.map((point) => point.along));
-  const maxAlong = Math.max(...projectedLocal.map((point) => point.along));
-  const minAcross = Math.min(...projectedLocal.map((point) => point.across));
-  const maxAcross = Math.max(...projectedLocal.map((point) => point.across));
-  const entranceAlong = entranceSide === "end" ? maxAlong : minAlong;
-  const entranceAcross = (minAcross + maxAcross) / 2;
-  const center = unprojectFromWebMercator({
-    x: along.x * entranceAlong + across.x * entranceAcross,
-    y: along.y * entranceAlong + across.y * entranceAcross
-  });
-  const baseBearing = Math.atan2(-(longestEdge.end.y - longestEdge.start.y), longestEdge.end.x - longestEdge.start.x) * 180 / Math.PI;
-  return {
-    center,
-    bearing: entranceSide === "end" ? baseBearing + 180 : baseBearing
-  };
-}
-
-function bedSerpentineReversesFromEnd(bed: Bed, block: Block | null, blockBeds: Bed[]) {
-  const orderedBeds = blockBeds
-    .filter((item) => item.blockId === bed.blockId && item.source !== "road")
-    .sort((left, right) => (left.sequenceNo ?? left.id) - (right.sequenceNo ?? right.id));
-  const index = orderedBeds.findIndex((item) => item.id === bed.id);
-  const zeroBasedIndex = index >= 0 ? index : 0;
-  const firstBedStartsAtEnd = block?.bedStartEntranceSide === "end";
-  return firstBedStartsAtEnd ? zeroBasedIndex % 2 === 0 : zeroBasedIndex % 2 === 1;
-}
-
-function bedRunDistancePx(path: BedTravelPath, center: CoordinateDraft, zoom: number) {
-  const metersPerPixel = WEB_MERCATOR_EQUATOR_METERS_PER_PIXEL * Math.cos(center.lat * Math.PI / 180) / (2 ** zoom);
-  if (!Number.isFinite(metersPerPixel) || metersPerPixel <= 0 || !Number.isFinite(path.lengthM) || path.lengthM <= 0) {
-    return 44;
-  }
-
-  return Math.max(36, Math.min(360, Math.round((path.lengthM / metersPerPixel) / 2)));
-}
-
-function bedSharedVehicleTiming(index: number, count: number) {
-  if (count <= 1) {
-    return { runDurationSec: 9.5, animationDelaySec: 0 };
-  }
-
-  const runDurationSec = 8.8 + (index % 5) * 0.85;
-  return {
-    runDurationSec,
-    animationDelaySec: -((index / count) * runDurationSec)
-  };
-}
-
-function projectForEdgePicking(point: CoordinateDraft) {
-  const x = (point.lng * Math.PI * EARTH_RADIUS_M) / 180;
-  const latRadians = (point.lat * Math.PI) / 180;
-  const y = EARTH_RADIUS_M * Math.log(Math.tan(Math.PI / 4 + latRadians / 2));
-  return { x, y };
-}
-
-function unprojectFromWebMercator(point: { x: number; y: number }): CoordinateDraft {
-  const lng = (point.x / EARTH_RADIUS_M) * (180 / Math.PI);
-  const lat = (2 * Math.atan(Math.exp(point.y / EARTH_RADIUS_M)) - Math.PI / 2) * (180 / Math.PI);
-  return { lat, lng };
-}
-
-function webMercatorScaleFactorForLatitude(lat: number) {
-  const clampedLat = Math.max(-MAX_WEB_MERCATOR_LATITUDE, Math.min(MAX_WEB_MERCATOR_LATITUDE, lat));
-  const cosine = Math.cos((clampedLat * Math.PI) / 180);
-  return 1 / Math.max(0.01, Math.abs(cosine));
-}
-
-function webMercatorMetersForGroundMeters(meters: number, referenceLat: number) {
-  return meters * webMercatorScaleFactorForLatitude(referenceLat);
-}
-
-function buildNextBedPreview(
-  linePoints: CoordinateDraft[],
-  bedWidthM: number,
-  pathSpacingM: number,
-  nextBedIndex: number,
-  edgeOffsetM: number,
-  invertSide: boolean,
-  harvestRoadEveryBeds: number | null,
-  harvestRoadWidthBeds: number
-) {
-  if (linePoints.length < 2 || bedWidthM <= 0 || pathSpacingM < 0) {
-    return [] as CoordinateDraft[];
-  }
-
-  const projectedLine = linePoints.map(projectForEdgePicking);
-  const start = projectedLine[0];
-  const end = projectedLine[projectedLine.length - 1];
-  const dx = end.x - start.x;
-  const dy = end.y - start.y;
-  const length = Math.hypot(dx, dy);
-  if (length === 0) {
-    return [] as CoordinateDraft[];
-  }
-
-  const unit = { x: dx / length, y: dy / length };
-  const sideSign = invertSide ? -1 : 1;
-  const normal = { x: -unit.y * sideSign, y: unit.x * sideSign };
-  const referenceLatitude = linePoints.reduce((sum, point) => sum + point.lat, 0) / linePoints.length;
-  const bedWidthProjectedM = webMercatorMetersForGroundMeters(bedWidthM, referenceLatitude);
-  const pathSpacingProjectedM = webMercatorMetersForGroundMeters(pathSpacingM, referenceLatitude);
-  const edgeOffsetProjectedM = webMercatorMetersForGroundMeters(edgeOffsetM, referenceLatitude);
-  const pitch = bedWidthProjectedM + pathSpacingProjectedM;
-  const skippedBedSlots = harvestRoadEveryBeds && harvestRoadWidthBeds > 0
-    ? Math.floor(nextBedIndex / harvestRoadEveryBeds) * harvestRoadWidthBeds
-    : 0;
-  const layoutIndex = nextBedIndex + skippedBedSlots;
-  const innerOffset = edgeOffsetProjectedM + layoutIndex * pitch;
-  const outerOffset = innerOffset + bedWidthProjectedM;
-
-  const innerEdge = projectedLine.map((point) => ({
-    x: point.x + normal.x * innerOffset,
-    y: point.y + normal.y * innerOffset
-  }));
-  const outerEdge = projectedLine.map((point) => ({
-    x: point.x + normal.x * outerOffset,
-    y: point.y + normal.y * outerOffset
-  }));
-
-  return [...innerEdge, ...outerEdge.reverse()].map(unprojectFromWebMercator);
-}
-
-function pointToSegmentDistance(point: CoordinateDraft, start: CoordinateDraft, end: CoordinateDraft) {
-  const projectedPoint = projectForEdgePicking(point);
-  const projectedStart = projectForEdgePicking(start);
-  const projectedEnd = projectForEdgePicking(end);
-  const dx = projectedEnd.x - projectedStart.x;
-  const dy = projectedEnd.y - projectedStart.y;
-  const lengthSq = dx * dx + dy * dy;
-  if (lengthSq === 0) {
-    return Math.hypot(projectedPoint.x - projectedStart.x, projectedPoint.y - projectedStart.y);
-  }
-
-  const t = Math.max(0, Math.min(1, ((projectedPoint.x - projectedStart.x) * dx + (projectedPoint.y - projectedStart.y) * dy) / lengthSq));
-  const closest = { x: projectedStart.x + t * dx, y: projectedStart.y + t * dy };
-  return Math.hypot(projectedPoint.x - closest.x, projectedPoint.y - closest.y);
-}
-
-function pointIsInsideOrOnPolygon(point: CoordinateDraft, polygon: CoordinateDraft[]) {
-  if (polygon.length < 3) {
-    return false;
-  }
-
-  const isOnBoundary = polygon.some((start, index) => {
-    const end = polygon[(index + 1) % polygon.length];
-    return pointToSegmentDistance(point, start, end) <= 0.25;
-  });
-  if (isOnBoundary) {
-    return true;
-  }
-
-  let inside = false;
-  for (let index = 0, previousIndex = polygon.length - 1; index < polygon.length; previousIndex = index, index += 1) {
-    const current = polygon[index];
-    const previous = polygon[previousIndex];
-    const crossesRay = (current.lat > point.lat) !== (previous.lat > point.lat);
-    if (!crossesRay) {
-      continue;
-    }
-
-    const crossingLng = ((previous.lng - current.lng) * (point.lat - current.lat)) / (previous.lat - current.lat) + current.lng;
-    if (point.lng < crossingLng) {
-      inside = !inside;
-    }
-  }
-
-  return inside;
-}
-
-function projectedCrossProduct(
-  first: ReturnType<typeof projectForEdgePicking>,
-  second: ReturnType<typeof projectForEdgePicking>,
-  third: ReturnType<typeof projectForEdgePicking>
-) {
-  return (second.x - first.x) * (third.y - first.y) - (second.y - first.y) * (third.x - first.x);
-}
-
-function projectedSegmentsProperlyIntersect(
-  firstStart: CoordinateDraft,
-  firstEnd: CoordinateDraft,
-  secondStart: CoordinateDraft,
-  secondEnd: CoordinateDraft
-) {
-  const a = projectForEdgePicking(firstStart);
-  const b = projectForEdgePicking(firstEnd);
-  const c = projectForEdgePicking(secondStart);
-  const d = projectForEdgePicking(secondEnd);
-  const firstSideA = projectedCrossProduct(a, b, c);
-  const firstSideB = projectedCrossProduct(a, b, d);
-  const secondSideA = projectedCrossProduct(c, d, a);
-  const secondSideB = projectedCrossProduct(c, d, b);
-  const epsilon = 0.000001;
-
-  return (
-    firstSideA * firstSideB < -epsilon &&
-    secondSideA * secondSideB < -epsilon
-  );
-}
-
-function polygonEdgesCrossBoundary(points: CoordinateDraft[], boundary: CoordinateDraft[]) {
-  for (let pointIndex = 0; pointIndex < points.length; pointIndex += 1) {
-    const pointStart = points[pointIndex];
-    const pointEnd = points[(pointIndex + 1) % points.length];
-    for (let boundaryIndex = 0; boundaryIndex < boundary.length; boundaryIndex += 1) {
-      const boundaryStart = boundary[boundaryIndex];
-      const boundaryEnd = boundary[(boundaryIndex + 1) % boundary.length];
-      if (projectedSegmentsProperlyIntersect(pointStart, pointEnd, boundaryStart, boundaryEnd)) {
-        return true;
-      }
-    }
-  }
-
-  return false;
-}
-
-function polygonIsInsideOrOnPolygon(points: CoordinateDraft[], boundary: CoordinateDraft[]) {
-  return (
-    points.length >= 3 &&
-    boundary.length >= 3 &&
-    points.every((point) => pointIsInsideOrOnPolygon(point, boundary)) &&
-    !polygonEdgesCrossBoundary(points, boundary)
-  );
-}
-
-function sideOfLine(linePoints: CoordinateDraft[], point: CoordinateDraft) {
-  if (linePoints.length < 2) {
-    return 0;
-  }
-
-  const start = projectForEdgePicking(linePoints[0]);
-  const end = projectForEdgePicking(linePoints[linePoints.length - 1]);
-  const target = projectForEdgePicking(point);
-  return (end.x - start.x) * (target.y - start.y) - (end.y - start.y) * (target.x - start.x);
-}
-
-function orientLineLeftTowardPoint(linePoints: CoordinateDraft[], point: CoordinateDraft | null) {
-  if (!point || linePoints.length < 2) {
-    return linePoints;
-  }
-
-  return sideOfLine(linePoints, point) < 0 ? [...linePoints].reverse() : linePoints;
-}
-
-function orientLineLeftAwayFromPoint(linePoints: CoordinateDraft[], point: CoordinateDraft | null) {
-  if (!point || linePoints.length < 2) {
-    return linePoints;
-  }
-
-  return sideOfLine(linePoints, point) > 0 ? [...linePoints].reverse() : linePoints;
-}
-
-function boundaryEdgeLines(boundary: CoordinateDraft[]) {
-  if (boundary.length < 3) {
-    return [] as CoordinateDraft[][];
-  }
-
-  return boundary.map((point, index) => [point, boundary[(index + 1) % boundary.length]]);
-}
-
-function selectedBedGuideLine(bed: Bed | null, block: Block | null) {
-  const bedBoundary = geoJsonPolygonToLatLngs(bed?.boundary ?? null);
-  const blockCenter = polygonCenter(geoJsonPolygonToLatLngs(block?.boundary ?? null));
-  const bedCenter = polygonCenter(bedBoundary);
-  if (bedBoundary.length < 3) {
-    return [] as CoordinateDraft[];
-  }
-
-  const projectedCenter = blockCenter ? projectForEdgePicking(blockCenter) : null;
-  const edges = bedBoundary.map((start, index) => {
-    const end = bedBoundary[(index + 1) % bedBoundary.length];
-    const projectedStart = projectForEdgePicking(start);
-    const projectedEnd = projectForEdgePicking(end);
-    const midpointProjected = {
-      x: (projectedStart.x + projectedEnd.x) / 2,
-      y: (projectedStart.y + projectedEnd.y) / 2
-    };
-    return {
-      start,
-      end,
-      length: Math.hypot(projectedEnd.x - projectedStart.x, projectedEnd.y - projectedStart.y),
-      centerDistance: projectedCenter
-        ? Math.hypot(midpointProjected.x - projectedCenter.x, midpointProjected.y - projectedCenter.y)
-        : 0
-    };
-  });
-
-  const longestLength = Math.max(...edges.map((edge) => edge.length));
-  const longEdges = edges.filter((edge) => edge.length >= longestLength * 0.8);
-  const guideEdge = longEdges.sort((left, right) => left.centerDistance - right.centerDistance)[0] ?? edges[0];
-  return guideEdge ? orientLineLeftAwayFromPoint([guideEdge.start, guideEdge.end], bedCenter) : [];
-}
-
-function sortedPlantableBlockBeds(beds: Bed[]) {
-  return beds
-    .filter((bed) => bed.source !== "road")
-    .sort((left, right) => (left.sequenceNo ?? left.id) - (right.sequenceNo ?? right.id));
-}
-
-function longestBoundaryEdgeLine(boundary: CoordinateDraft[]) {
-  if (boundary.length < 2) {
-    return [] as CoordinateDraft[];
-  }
-
-  return boundary
-    .map((start, index) => {
-      const end = boundary[(index + 1) % boundary.length];
-      const projectedStart = projectForEdgePicking(start);
-      const projectedEnd = projectForEdgePicking(end);
-      return {
-        line: [start, end] as CoordinateDraft[],
-        length: Math.hypot(projectedEnd.x - projectedStart.x, projectedEnd.y - projectedStart.y)
-      };
-    })
-    .sort((left, right) => right.length - left.length)[0]?.line ?? [];
-}
-
-function splitGuideLineForBlock(block: Block | null, beds: Bed[]) {
-  const firstBed = sortedPlantableBlockBeds(beds)[0] ?? null;
-  const bedGuide = selectedBedGuideLine(firstBed, block);
-  if (bedGuide.length >= 2) {
-    return bedGuide;
-  }
-
-  return longestBoundaryEdgeLine(geoJsonPolygonToLatLngs(block?.boundary ?? null));
-}
-
-function firstBedSideReferencePoint(block: Block | null, beds: Bed[]) {
-  const firstBed = sortedPlantableBlockBeds(beds)[0] ?? null;
-  const firstBedCenter = polygonCenter(geoJsonPolygonToLatLngs(firstBed?.boundary ?? null));
-  if (firstBedCenter) {
-    return firstBedCenter;
-  }
-
-  const boundary = geoJsonPolygonToLatLngs(block?.boundary ?? null);
-  const guideLine = splitGuideLineForBlock(block, beds);
-  if (boundary.length < 3 || guideLine.length < 2) {
-    return polygonCenter(boundary);
-  }
-
-  const start = projectForEdgePicking(guideLine[0]);
-  const end = projectForEdgePicking(guideLine[guideLine.length - 1]);
-  const dx = end.x - start.x;
-  const dy = end.y - start.y;
-  const length = Math.hypot(dx, dy);
-  if (length === 0) {
-    return polygonCenter(boundary);
-  }
-
-  const along = { x: dx / length, y: dy / length };
-  const across = { x: -along.y, y: along.x };
-  const projected = boundary.map(projectForEdgePicking);
-  const alongValues = projected.map((point) => point.x * along.x + point.y * along.y);
-  const acrossValues = projected.map((point) => point.x * across.x + point.y * across.y);
-  return unprojectFromWebMercator({
-    x: along.x * ((Math.min(...alongValues) + Math.max(...alongValues)) / 2) + across.x * Math.min(...acrossValues),
-    y: along.y * ((Math.min(...alongValues) + Math.max(...alongValues)) / 2) + across.y * Math.min(...acrossValues)
-  });
-}
-
-function bedParallelSplitLineThroughPoint(anchor: CoordinateDraft, block: Block | null, beds: Bed[]) {
-  const boundary = geoJsonPolygonToLatLngs(block?.boundary ?? null);
-  const guideLine = splitGuideLineForBlock(block, beds);
-  if (boundary.length < 3 || guideLine.length < 2) {
-    return [] as CoordinateDraft[];
-  }
-
-  const start = projectForEdgePicking(guideLine[0]);
-  const end = projectForEdgePicking(guideLine[guideLine.length - 1]);
-  const dx = end.x - start.x;
-  const dy = end.y - start.y;
-  const length = Math.hypot(dx, dy);
-  if (length === 0) {
-    return [];
-  }
-
-  const unit = { x: dx / length, y: dy / length };
-  const projectedBoundary = boundary.map(projectForEdgePicking);
-  const anchorPoint = projectForEdgePicking(anchor);
-  const boundaryAlongValues = projectedBoundary.map((point) => point.x * unit.x + point.y * unit.y);
-  const anchorAlong = anchorPoint.x * unit.x + anchorPoint.y * unit.y;
-  const minAlong = Math.min(...boundaryAlongValues);
-  const maxAlong = Math.max(...boundaryAlongValues);
-  const padding = Math.max(25, (maxAlong - minAlong) * 0.2);
-
-  return [
-    unprojectFromWebMercator({
-      x: anchorPoint.x + unit.x * (minAlong - anchorAlong - padding),
-      y: anchorPoint.y + unit.y * (minAlong - anchorAlong - padding)
-    }),
-    unprojectFromWebMercator({
-      x: anchorPoint.x + unit.x * (maxAlong - anchorAlong + padding),
-      y: anchorPoint.y + unit.y * (maxAlong - anchorAlong + padding)
-    })
-  ];
-}
-
-function bedParallelSplitLinesForBlock(block: Block | null, beds: Bed[], anchors: CoordinateDraft[]) {
-  return anchors
-    .map((anchor) => bedParallelSplitLineThroughPoint(anchor, block, beds))
-    .filter((line) => line.length === 2);
-}
-
-type ProjectedPoint = ReturnType<typeof projectForEdgePicking>;
-
-function projectedLineSide(line: ProjectedPoint[], point: ProjectedPoint) {
-  if (line.length < 2) {
-    return 0;
-  }
-  const start = line[0];
-  const end = line[line.length - 1];
-  return (end.x - start.x) * (point.y - start.y) - (end.y - start.y) * (point.x - start.x);
-}
-
-function projectedLineIntersection(
-  lineStart: ProjectedPoint,
-  lineEnd: ProjectedPoint,
-  segmentStart: ProjectedPoint,
-  segmentEnd: ProjectedPoint
-) {
-  const lineDx = lineEnd.x - lineStart.x;
-  const lineDy = lineEnd.y - lineStart.y;
-  const segmentDx = segmentEnd.x - segmentStart.x;
-  const segmentDy = segmentEnd.y - segmentStart.y;
-  const denominator = lineDx * segmentDy - lineDy * segmentDx;
-  if (Math.abs(denominator) < 0.000001) {
-    return null;
-  }
-  const t = ((segmentStart.x - lineStart.x) * segmentDy - (segmentStart.y - lineStart.y) * segmentDx) / denominator;
-  return {
-    x: lineStart.x + t * lineDx,
-    y: lineStart.y + t * lineDy
-  };
-}
-
-function clipProjectedPolygonToLineSide(polygon: ProjectedPoint[], line: ProjectedPoint[], keepSign: number) {
-  if (polygon.length < 3 || line.length < 2 || keepSign === 0) {
-    return polygon;
-  }
-
-  const output: ProjectedPoint[] = [];
-  const inside = (point: ProjectedPoint) => projectedLineSide(line, point) * keepSign >= -0.000001;
-
-  for (let index = 0; index < polygon.length; index += 1) {
-    const current = polygon[index];
-    const previous = polygon[(index + polygon.length - 1) % polygon.length];
-    const currentInside = inside(current);
-    const previousInside = inside(previous);
-    const intersection = projectedLineIntersection(line[0], line[line.length - 1], previous, current);
-
-    if (currentInside) {
-      if (!previousInside && intersection) {
-        output.push(intersection);
-      }
-      output.push(current);
-    } else if (previousInside && intersection) {
-      output.push(intersection);
-    }
-  }
-
-  return output;
-}
-
-function clipLineToPolygon(line: CoordinateDraft[], boundary: CoordinateDraft[]) {
-  if (line.length < 2 || boundary.length < 3) {
-    return line;
-  }
-
-  const projectedLine = line.map(projectForEdgePicking);
-  const projectedBoundary = boundary.map(projectForEdgePicking);
-  const intersections: ProjectedPoint[] = [];
-  for (let index = 0; index < projectedBoundary.length; index += 1) {
-    const start = projectedBoundary[index];
-    const end = projectedBoundary[(index + 1) % projectedBoundary.length];
-    const intersection = projectedLineIntersection(projectedLine[0], projectedLine[1], start, end);
-    if (!intersection) {
-      continue;
-    }
-    const segmentDx = end.x - start.x;
-    const segmentDy = end.y - start.y;
-    const segmentLengthSq = segmentDx * segmentDx + segmentDy * segmentDy;
-    const segmentT = segmentLengthSq === 0 ? 0 : ((intersection.x - start.x) * segmentDx + (intersection.y - start.y) * segmentDy) / segmentLengthSq;
-    if (segmentT >= -0.000001 && segmentT <= 1.000001) {
-      const duplicate = intersections.some((point) => Math.hypot(point.x - intersection.x, point.y - intersection.y) < 0.01);
-      if (!duplicate) {
-        intersections.push(intersection);
-      }
-    }
-  }
-
-  if (intersections.length < 2) {
-    return line;
-  }
-
-  const direction = {
-    x: projectedLine[1].x - projectedLine[0].x,
-    y: projectedLine[1].y - projectedLine[0].y
-  };
-  return intersections
-    .sort((left, right) => (
-      ((left.x - projectedLine[0].x) * direction.x + (left.y - projectedLine[0].y) * direction.y)
-      - ((right.x - projectedLine[0].x) * direction.x + (right.y - projectedLine[0].y) * direction.y)
-    ))
-    .slice(0, 2)
-    .map(unprojectFromWebMercator);
-}
-
-function splitAreaPreviewForBlock(
-  block: Block | null,
-  splitLines: CoordinateDraft[][],
-  firstBedSidePoint: CoordinateDraft | null
-) {
-  const boundary = geoJsonPolygonToLatLngs(block?.boundary ?? null);
-  if (boundary.length < 3 || splitLines.length < 1 || splitLines.length > 2 || splitLines.some((line) => line.length < 2)) {
-    return [] as CoordinateDraft[];
-  }
-
-  const projectedBoundary = boundary.map(projectForEdgePicking);
-  const projectedLines = splitLines.map((line) => line.map(projectForEdgePicking));
-  let clippedPolygon = projectedBoundary;
-
-  if (projectedLines.length === 1) {
-    const sidePoint = firstBedSidePoint ?? polygonCenter(boundary);
-    const keepSign = sidePoint ? Math.sign(projectedLineSide(projectedLines[0], projectForEdgePicking(sidePoint))) : 0;
-    clippedPolygon = clipProjectedPolygonToLineSide(clippedPolygon, projectedLines[0], keepSign || 1);
-  } else {
-    const firstLine = projectedLines[0];
-    const secondLine = projectedLines[1];
-    const secondLineAnchorSide = Math.sign(projectedLineSide(firstLine, secondLine[0]));
-    const firstLineAnchorSide = Math.sign(projectedLineSide(secondLine, firstLine[0]));
-    clippedPolygon = clipProjectedPolygonToLineSide(clippedPolygon, firstLine, secondLineAnchorSide || 1);
-    clippedPolygon = clipProjectedPolygonToLineSide(clippedPolygon, secondLine, firstLineAnchorSide || 1);
-  }
-
-  return clippedPolygon.length >= 3 ? clippedPolygon.map(unprojectFromWebMercator) : [];
-}
-
-function summarizeTitles(titles: string[]) {
-  const uniqueTitles = [...new Set(titles.filter(Boolean))];
-  if (uniqueTitles.length === 0) {
-    return "";
-  }
-
-  if (uniqueTitles.length <= 2) {
-    return uniqueTitles.join(" • ");
-  }
-
-  return `${uniqueTitles[0]} +${uniqueTitles.length - 1}`;
-}
-
-function readableMapLabelAngle(bearing: number) {
-  if (!Number.isFinite(bearing)) {
-    return 0;
-  }
-  let angle = ((bearing % 180) + 180) % 180;
-  if (angle > 90) {
-    angle -= 180;
-  }
-  return angle;
-}
-
-function plantingMapColor(index: number): PlantingMapColor {
-  const hue = (136 + index * 155) % 360;
-  const stroke = hslToHex(hue, 60, 24);
-  const fill = hslToHex(hue, 58, 42);
-  return {
-    hue,
-    stroke,
-    fill,
-    label: stroke
-  };
-}
-
-function plantingMapColorForOrder(order: number | string | null | undefined) {
-  const numericOrder = Number(order);
-  const zeroBasedOrder = Number.isFinite(numericOrder) ? Math.max(0, Math.round(numericOrder) - 1) : 0;
-  return plantingMapColor(zeroBasedOrder);
-}
-
-function colorizeBlockPlacementRows<T extends { blockId: number; placementOrder: number; color: PlantingMapColor }>(rows: T[]) {
-  const rowKeysByBlock = new Map<number, Array<{ key: number; order: number }>>();
-  for (const row of rows) {
-    const current = rowKeysByBlock.get(row.blockId) ?? [];
-    if (!current.some((item) => item.key === row.placementOrder)) {
-      current.push({ key: row.placementOrder, order: row.placementOrder });
-      rowKeysByBlock.set(row.blockId, current);
-    }
-  }
-
-  const colorIndexByBlockRow = new Map<string, number>();
-  for (const [blockId, rowKeys] of rowKeysByBlock) {
-    rowKeys
-      .sort((left, right) => left.order - right.order)
-      .forEach((rowKey, index) => {
-        colorIndexByBlockRow.set(`${blockId}:${rowKey.key}`, index);
-      });
-  }
-
-  return rows.map((row) => ({
-    ...row,
-    color: plantingMapColor(colorIndexByBlockRow.get(`${row.blockId}:${row.placementOrder}`) ?? 0)
-  }));
-}
-
-function hslToHex(hue: number, saturation: number, lightness: number) {
-  const s = saturation / 100;
-  const l = lightness / 100;
-  const c = (1 - Math.abs(2 * l - 1)) * s;
-  const x = c * (1 - Math.abs(((hue / 60) % 2) - 1));
-  const m = l - c / 2;
-  const [r, g, b] = hue < 60
-    ? [c, x, 0]
-    : hue < 120
-      ? [x, c, 0]
-      : hue < 180
-        ? [0, c, x]
-        : hue < 240
-          ? [0, x, c]
-          : hue < 300
-            ? [x, 0, c]
-            : [c, 0, x];
-  return `#${[r, g, b].map((channel) => Math.round((channel + m) * 255).toString(16).padStart(2, "0")).join("")}`;
-}
-
-function plantingOverlayStyleForColor(color: PlantingMapColor, extraClassName?: string) {
-  return {
-    color: color.stroke,
-    fillColor: color.fill,
-    fillOpacity: 0.44,
-    weight: 2,
-    className: ["map-plan-path", extraClassName].filter(Boolean).join(" "),
-    bubblingMouseEvents: false
-  };
-}
-
-function plantingLabelIcon(label: string, bearing: number, tone: "planned" | "actual", color: string) {
-  const safeLabel = label.replace(/[&<>"']/g, (char) => ({
-    "&": "&amp;",
-    "<": "&lt;",
-    ">": "&gt;",
-    "\"": "&quot;",
-    "'": "&#39;"
-  }[char] ?? char));
-  return divIcon({
-    className: "planting-map-label-icon",
-    iconSize: [1, 1],
-    html: `<span class="planting-map-label planting-map-label-${tone}" style="--label-angle: ${readableMapLabelAngle(bearing)}deg; --label-color: ${color}">${safeLabel}</span>`
-  });
-}
-
-// Label and style helpers centralize map colors and human-readable task/state names.
-function sentenceCase(input: string) {
-  return input.replaceAll("_", " ");
-}
-
-function formatTaskTypeLabel(taskType: string) {
-  const labels: Record<string, string> = {
-    seed_in_tray: "seed in tray",
-    direct_seed: "direct seed",
-    till: "till",
-    fertilizing_spraying: "fertilizing / spraying",
-    bed_making: "bed making",
-    transplant: "transplanting",
-    cultivation: "cultivation",
-    cleanup: "cleanup",
-    cover_crop: "covercrop"
-  };
-  return labels[taskType] ?? `stale: ${sentenceCase(taskType)}`;
-}
-
-function formatTaskAnchorLabel(anchor: string) {
-  if (anchor.startsWith("after:")) {
-    return `after ${anchor.slice("after:".length).split(",").filter(Boolean).join(", ")}`;
-  }
-
-  const labels: Record<string, string> = {
-    planned_sow: "seeding date"
-  };
-  return labels[anchor] ?? `stale: ${sentenceCase(anchor)}`;
-}
-
-function formatPlannedUseLabel(value: PlannedUse) {
-  if (value == null) {
-    return "none assigned";
-  }
-  return value === "cover_crop" ? "cover crop" : value.replaceAll("_", " ");
-}
-
-function formatZoneActualStateLabel(value: ZoneActualState) {
-  return value.replaceAll("_", " ");
-}
-
-function mapSaveErrorMessage(error: unknown, itemLabel: string) {
-  const message = error instanceof Error ? error.message : "Save failed.";
-  if (message.toLowerCase().includes("polygon is not valid")) {
-    return `Could not save ${itemLabel}: the outline crossed itself or has a bad shape. Click Cancel, then draw the outline again without crossing lines.`;
-  }
-  return `Could not save ${itemLabel}: ${message}`;
-}
-
-function taskIconColor(taskType: string) {
-  if (!["seed_in_tray", "direct_seed", "till", "fertilizing_spraying", "bed_making", "transplant", "cultivation", "cleanup", "cover_crop"].includes(taskType)) return "#b42318";
-  if (taskType === "cultivation") return "#d98c2b";
-  if (taskType === "transplant") return "#4f9b58";
-  if (taskType === "direct_seed" || taskType === "seed_in_tray") return "#7c9f35";
-  if (taskType === "bed_making" || taskType === "till") return "#8b6f43";
-  if (taskType === "fertilizing_spraying") return "#5f8f4f";
-  if (taskType === "cleanup" || taskType === "cover_crop") return "#6d7f45";
-  return "#4f84aa";
-}
-
-function taskColor(task: Pick<Task, "taskType" | "iconColor">) {
-  return task.iconColor || taskIconColor(task.taskType);
-}
-
-function latestDateIndexOnOrBefore(dates: string[], targetDate: string) {
-  let index = 0;
-  for (let currentIndex = 0; currentIndex < dates.length; currentIndex += 1) {
-    if (dates[currentIndex] <= targetDate) {
-      index = currentIndex;
-    }
-  }
-  return index;
-}
-
-function plantingGroundStartDate(planting: Planting) {
-  return planting.actualTransplantDate
-    ?? planting.actualDirectSeedingDate
-    ?? planting.plannedTransplantDate
-    ?? planting.plannedSowDate;
-}
-
-function plantingGroundEndDate(planting: Planting) {
-  return planting.actualFinishDate
-    ?? planting.actualHarvestDate
-    ?? planting.expectedHarvestEnd
-    ?? planting.expectedHarvestStart
-    ?? addDaysToDateString(plantingGroundStartDate(planting), 120);
-}
-
-function plantingPlanYear(planting: Planting) {
-  const date = planting.plannedSowDate
-    ?? planting.plannedTransplantDate
-    ?? planting.expectedHarvestStart
-    ?? planting.actualTraySeedingDate
-    ?? planting.actualDirectSeedingDate
-    ?? todayDateInputValue();
-  return Number(date.slice(0, 4));
-}
-
-function isPlantingInGroundOnDate(planting: Planting, date: string) {
-  const startDate = plantingGroundStartDate(planting);
-  if (!startDate || startDate > date) {
-    return false;
-  }
-
-  const endDate = plantingGroundEndDate(planting);
-  return !endDate || endDate >= date;
-}
-
-function addDaysToDateString(value: string | null, days: number) {
-  if (!value) {
-    return null;
-  }
-
-  const date = new Date(`${value.slice(0, 10)}T00:00:00Z`);
-  if (Number.isNaN(date.getTime())) {
-    return null;
-  }
-
-  date.setUTCDate(date.getUTCDate() + days);
-  return date.toISOString().slice(0, 10);
-}
-
-function daysBetweenDateStrings(startDate: string | null, endDate: string | null) {
-  if (!startDate || !endDate) {
-    return null;
-  }
-
-  const start = new Date(`${startDate.slice(0, 10)}T00:00:00Z`);
-  const end = new Date(`${endDate.slice(0, 10)}T00:00:00Z`);
-  if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime())) {
-    return null;
-  }
-
-  const days = Math.round((end.getTime() - start.getTime()) / 86400000);
-  return days > 0 ? days : null;
-}
-
-function plantingCropVarietyLabel(planting: Planting) {
-  if (planting.seedName) {
-    return planting.seedName;
-  }
-  return planting.varietyName ? `${planting.cropName} / ${planting.varietyName}` : planting.cropName;
-}
-
-type PlantingReviewSeverity = "major" | "minor";
-
-type PlantingReviewInfo = {
-  severity: PlantingReviewSeverity | null;
-  majorFields: Set<string>;
-  minorFields: Set<string>;
-  majorIssues: string[];
-  minorIssues: string[];
-};
-
-type PlantingPlanningInput = "initial" | "plantCount" | "bedLengthUsed" | "trayCount" | "cellsPerTray" | "seedCellCount" | "expectedTrayPlants" | "germinationRate" | "spacing" | "rowsPerBed" | "bed";
-type PlantingDateInput = "initial" | "plannedSowDate" | "plannedTransplantDate" | "daysToHarvest" | "expectedHarvestStart" | "expectedHarvestEnd";
-
-function issueListFromNotes(notes: string | null | undefined, prefix: string) {
-  const line = (notes ?? "").split(/\r?\n/).find((item) => item.startsWith(prefix));
-  if (!line) {
-    return [];
-  }
-  return line
-    .slice(prefix.length)
-    .replace(/\.$/, "")
-    .split(";")
-    .map((item) => item.trim())
-    .filter(Boolean);
-}
-
-function fieldsForImportIssue(issue: string) {
-  const lower = issue.toLowerCase();
-  if (lower.includes("plant count or bed length")) return ["plantCount", "bedLengthUsed"];
-  if (lower.includes("crop")) return ["crop"];
-  if (lower.includes("variety")) return ["variety"];
-  if (lower.includes("start date")) return ["plannedSowDate"];
-  if (lower.includes("bed length")) return ["bedLengthUsed"];
-  if (lower.includes("plant count")) return ["plantCount"];
-  if (lower.includes("field/block")) return ["field", "block"];
-  if (lower.includes("rows per bed")) return ["rowsPerBed"];
-  if (lower.includes("field spacing") || lower.includes("row spacing")) return ["spacing"];
-  if (lower.includes("field")) return ["field"];
-  if (lower.includes("block")) return ["block"];
-  if (lower.includes("bed cover")) return ["bedCover"];
-  if (lower.includes("bed")) return ["bed"];
-  if (lower.includes("transplant date")) return ["plannedTransplantDate"];
-  if (lower.includes("days to harvest")) return ["daysToHarvest"];
-  if (lower.includes("catalog")) return ["notes"];
-  return ["notes"];
-}
-
-function plantingFieldStillNeedsReview(planting: Planting, fieldName: string) {
-  if (fieldName === "crop") return planting.cropName === "Needs crop";
-  if (fieldName === "title") return planting.title.startsWith("Needs completion - ");
-  if (fieldName === "variety") return planting.varietyName == null;
-  if (fieldName === "plannedSowDate") return planting.plannedSowDate == null;
-  if (fieldName === "plannedTransplantDate") return planting.plannedTransplantDate == null;
-  if (fieldName === "expectedHarvestStart") return planting.expectedHarvestStart == null;
-  if (fieldName === "expectedHarvestEnd") return planting.expectedHarvestEnd == null;
-  if (fieldName === "plantCount") return planting.plantCount == null || planting.plantCount === 1;
-  if (fieldName === "bedLengthUsed") return planting.bedLengthUsedM == null;
-  if (fieldName === "field") return planting.intendedFieldId == null;
-  if (fieldName === "block") return planting.intendedBlockId == null;
-  if (fieldName === "bed") return planting.intendedBedId == null;
-  if (fieldName === "spacing") return planting.spacing == null;
-  if (fieldName === "rowsPerBed") return planting.rowsPerBed == null;
-  if (fieldName === "daysToHarvest") return planting.daysToHarvest == null;
-  if (fieldName === "bedCover") return planting.bedCover == null;
-  return true;
-}
-
-function plantingReviewInfo(planting: Planting): PlantingReviewInfo {
-  const majorIssues = issueListFromNotes(planting.notes, "Needs manual completion: ");
-  const minorIssues = issueListFromNotes(planting.notes, "Optional fields to review: ");
-  const majorFields = new Set<string>();
-  const minorFields = new Set<string>();
-
-  for (const issue of majorIssues) {
-    fieldsForImportIssue(issue).forEach((field) => {
-      if (plantingFieldStillNeedsReview(planting, field)) {
-        majorFields.add(field);
-      }
-    });
-  }
-  for (const issue of minorIssues) {
-    fieldsForImportIssue(issue).forEach((field) => {
-      if (plantingFieldStillNeedsReview(planting, field)) {
-        minorFields.add(field);
-      }
-    });
-  }
-
-  if (planting.title.startsWith("Needs completion - ")) {
-    majorFields.add("title");
-  }
-  if (planting.cropName === "Needs crop") {
-    majorFields.add("crop");
-  }
-
-  return {
-    severity: majorFields.size > 0 ? "major" : minorFields.size > 0 ? "minor" : null,
-    majorFields,
-    minorFields,
-    majorIssues,
-    minorIssues
-  };
-}
-
-function PlantingReviewBadge({ severity, title }: { severity: PlantingReviewSeverity; title: string }) {
-  return <span className={`review-square review-square-${severity}`} title={title} aria-label={title} />;
-}
-
-function PlantingReviewMarker({ review }: { review: PlantingReviewInfo }) {
-  if (review.severity === "major") {
-    return <PlantingReviewBadge severity="major" title={`Major spreadsheet issue: ${review.majorIssues.join("; ") || "review needed"}`} />;
-  }
-  if (review.severity === "minor") {
-    return <PlantingReviewBadge severity="minor" title={`Optional spreadsheet info missing: ${review.minorIssues.join("; ") || "review suggested"}`} />;
-  }
-  return null;
-}
-
-function fieldReviewSeverity(review: PlantingReviewInfo, fieldName: string): PlantingReviewSeverity | null {
-  if (review.majorFields.has(fieldName)) return "major";
-  if (review.minorFields.has(fieldName)) return "minor";
-  return null;
-}
-
-function FieldLabel({
-  children,
-  review,
-  fieldName,
-  severityOverride
-}: {
-  children: ReactNode;
-  review: PlantingReviewInfo;
-  fieldName: string;
-  severityOverride?: PlantingReviewSeverity | null;
-}) {
-  const severity = severityOverride ?? fieldReviewSeverity(review, fieldName);
-  return (
-    <span className="field-label-with-review">
-      {children}
-      {severity && (
-        <PlantingReviewBadge
-          severity={severity}
-          title={severity === "major" ? "Important spreadsheet value needs correction" : "Optional spreadsheet value is missing"}
-        />
-      )}
-    </span>
-  );
-}
-
-function DetailTerm({ review, fieldName, children }: { review: PlantingReviewInfo; fieldName: string; children: ReactNode }) {
-  const severity = fieldReviewSeverity(review, fieldName);
-  return (
-    <dt className="detail-term-with-review">
-      <span>{children}</span>
-      {severity && (
-        <PlantingReviewBadge
-          severity={severity}
-          title={severity === "major" ? "Important spreadsheet value needs correction" : "Optional spreadsheet value is missing"}
-        />
-      )}
-    </dt>
-  );
-}
-
-// Map labels should stay short. Some internal/default zone names include "area"
-// to explain what the record is in forms, but that wording clutters the map.
-function mapObjectLabel(name: string) {
-  const cleaned = name
-    .trim()
-    .replace(/\s+imported current area$/i, "")
-    .replace(/\s+area\s+\d+$/i, "")
-    .replace(/\s+area$/i, "")
-    .replace(/^area\s+\d+$/i, "")
-    .trim();
-
-  return cleaned || name.replace(/\barea\b/gi, "").replace(/\s+/g, " ").trim();
-}
-
-function defaultZoneName(options: {
-  plannedUse: PlannedUse;
-  explicitName: string;
-  coverCropLabel?: string | null;
-  existingCount: number;
-}) {
-  const explicit = options.explicitName.trim();
-  if (explicit) {
-    return explicit;
-  }
-
-  const nextIndex = options.existingCount + 1;
-  if (options.plannedUse === "cover_crop") {
-    const label = options.coverCropLabel?.trim() || "Cover crop";
-    return `${label} area ${nextIndex}`;
-  }
-  return `Area ${nextIndex}`;
-}
-
-function fieldStyle(isSelected: boolean) {
-  return {
-    color: isSelected ? "#fff5d0" : "#234d35",
-    weight: isSelected ? 4 : 2,
-    fillColor: "#4f8b5c",
-    fillOpacity: isSelected ? 0.26 : 0.18,
-    bubblingMouseEvents: false
-  };
-}
-
-function blockStyle(isSelected: boolean) {
-  return {
-    color: isSelected ? "#fff2d2" : "#9a6429",
-    weight: isSelected ? 4 : 2,
-    fillColor: "#d5a252",
-    fillOpacity: isSelected ? 0.32 : 0.22,
-    dashArray: isSelected ? undefined : "6 4",
-    bubblingMouseEvents: false
-  };
-}
-
-function zoneStyle(plannedUse: PlannedUse, isSelected: boolean) {
-  const palette = plannedUse === "beds"
-    ? { color: "#2f6b45", fill: "#76a86a" }
-    : plannedUse === "cover_crop"
-      ? { color: "#6f8f2c", fill: "#9fbd4c" }
-      : { color: "#7b6f54", fill: "#b7a27b" };
-
-  return {
-    color: isSelected ? "#fff5d0" : palette.color,
-    weight: isSelected ? 4 : 2,
-    fillColor: isSelected ? "#fff0c2" : palette.fill,
-    fillOpacity: isSelected ? 0.4 : 0.2
-  };
-}
-
-function bedStyle(isSelected: boolean, isRoad: boolean) {
-  if (isRoad) {
-    return {
-      color: isSelected ? "#fff4cf" : "#806a4b",
-      weight: isSelected ? 3 : 2,
-      fillColor: "#b7a27b",
-      fillOpacity: isSelected ? 0.58 : 0.42,
-      dashArray: "6 4",
-      bubblingMouseEvents: false
-    };
-  }
-
-  return {
-    color: isSelected ? "#eff7ff" : "#7aa7c7",
-    weight: isSelected ? 2 : 1,
-    fillColor: "#bcd8e8",
-    fillOpacity: isSelected ? 0.5 : 0.34,
-    bubblingMouseEvents: false
-  };
-}
-
-function plannedOverlayStyle() {
-  return {
-    color: "#2f84a7",
-    weight: 3,
-    fillColor: "#bde9f4",
-    fillOpacity: 0.14,
-    dashArray: "3 7",
-    className: "map-plan-path",
-    bubblingMouseEvents: false
-  };
-}
-
-function placementOverlayStyle() {
-  return {
-    color: "#2e7d45",
-    weight: 3,
-    fillColor: "#70b45c",
-    fillOpacity: 0.42,
-    className: "map-actual-path",
-    bubblingMouseEvents: false
-  };
-}
-
 function App() {
   // Most state lives here for prototype speed. Long term, move each major panel
   // into its own component with only the state it needs.
@@ -2132,6 +464,8 @@ function App() {
   const [mapZoom, setMapZoom] = useState(initialView.zoom);
   const [distanceUnit, setDistanceUnit] = useState<DistanceUnit>(() => readSettings().distanceUnit);
   const [themeMode, setThemeMode] = useState<ThemeMode>(() => readSettings().themeMode);
+  const [usageTrackingEnabled, setUsageTrackingEnabled] = useState(false);
+  const [savingUsagePreference, setSavingUsagePreference] = useState(false);
   const [isMobileViewport, setIsMobileViewport] = useState(() => (
     typeof window !== "undefined" ? window.matchMedia(MOBILE_MEDIA_QUERY).matches : false
   ));
@@ -2189,11 +523,13 @@ function App() {
   const canViewOtherFarmMaps = isAdmin;
   const effectiveShowOtherFarmMaps = canViewOtherFarmMaps && showOtherFarmMaps;
   useUsageTracking({
-    enabled: isAuthenticated,
-    page: view,
-    userId: isAuthenticated ? session.user.id : null,
-    farmId: isAuthenticated ? session.user.farmId : null
+    enabled: isAuthenticated && usageTrackingEnabled,
+    page: view
   });
+
+  const updateTractorProfiles = useCallback((tractorProfiles: TractorProfile[]) => {
+    setData((current) => ({ ...current, tractorProfiles }));
+  }, []);
 
   function recordActivity(action: string, details?: Record<string, unknown>) {
     recentActivityRef.current = [
@@ -2323,34 +659,42 @@ function App() {
   async function load(
     _includeAccounts = canPlan,
     includeFeedback = isAdmin,
-    options?: { allowAuthReset?: boolean; authBootstrap?: boolean }
+    options?: {
+      allowAuthReset?: boolean;
+      authBootstrap?: boolean;
+      dashboardResources?: DashboardResourceName[];
+    }
   ) {
     const allowAuthReset = options?.allowAuthReset ?? true;
     const authBootstrap = options?.authBootstrap ?? false;
+    const dashboardResources = options?.dashboardResources;
     setLoading(true);
     setError(null);
     try {
       const [next, nextFeedbackReports, nextMessages, nextUndoSnapshots] = await Promise.all([
-        api.getDashboard(),
+        api.getDashboard(dashboardResources),
         includeFeedback ? api.getFeedbackReports().catch(() => []) : Promise.resolve([]),
         api.getMessages().catch(() => []),
         api.getUndoSnapshots().catch(() => ({ undo: [], redo: [] }))
       ]);
-      setData(next);
+      setData((current) => dashboardResources
+        ? { ...current, ...next }
+        : next as DashboardData
+      );
       setFeedbackReports(nextFeedbackReports);
       setMessages(nextMessages);
       setUndoSnapshots(nextUndoSnapshots.undo);
       setRedoSnapshots(nextUndoSnapshots.redo);
-      if (selectedPlantingId == null && next.plantings[0]) {
+      if (selectedPlantingId == null && next.plantings?.[0]) {
         setSelectedPlantingId(next.plantings[0].id);
       }
-      if (selectedTaskId == null && next.tasks[0]) {
+      if (selectedTaskId == null && next.tasks?.[0]) {
         setSelectedTaskId(next.tasks.find((task) => task.status !== "done")?.id ?? next.tasks[0].id);
       }
-      if (selectedFlowId == null && next.taskFlowTemplates[0]) {
+      if (selectedFlowId == null && next.taskFlowTemplates?.[0]) {
         setSelectedFlowId(next.taskFlowTemplates[0].id);
       }
-      if (selection == null && next.fields[0]) {
+      if (selection == null && next.fields?.[0]) {
         const ownField = next.fields.find((field) => field.farmId === next.farm?.id);
         setSelection({ type: "field", id: (ownField ?? next.fields[0]).id });
       }
@@ -2366,6 +710,10 @@ function App() {
     } finally {
       setLoading(false);
     }
+  }
+
+  async function loadDashboardResources(resources: DashboardResourceName[]) {
+    await load(canPlan, isAdmin, { dashboardResources: resources });
   }
 
   useEffect(() => {
@@ -2391,6 +739,22 @@ function App() {
   useEffect(() => {
     return subscribeSpriteSheetCache(() => setSpriteSheetCacheRevision((current) => current + 1));
   }, []);
+
+  useEffect(() => {
+    if (!isAuthenticated) {
+      setUsageTrackingEnabled(false);
+      return;
+    }
+    let cancelled = false;
+    void api.getUsagePreference()
+      .then(({ enabled }) => {
+        if (!cancelled) setUsageTrackingEnabled(enabled);
+      })
+      .catch(() => {
+        if (!cancelled) setUsageTrackingEnabled(false);
+      });
+    return () => { cancelled = true; };
+  }, [isAuthenticated]);
 
   useEffect(() => {
     if (!canPlan && (view === "flows" || view === "seed-bank")) {
@@ -3145,7 +1509,7 @@ function App() {
         actualDate,
         notes: `Quick completed from task list on ${todayDateInputValue()}`
       });
-      await load();
+      await loadDashboardResources(dashboardRefreshResources.tasks);
       setRecentlyCompletedTaskId(task.id);
       setMapNotice(`Recorded ${task.title}.`);
     } catch (error) {
@@ -3976,7 +2340,7 @@ function App() {
       await api.deletePlanting(plantingId);
       const remaining = data.plantings.filter((item) => item.id !== plantingId);
       setSelectedPlantingId(remaining[0]?.id ?? null);
-      await load(canPlan);
+      await loadDashboardResources(dashboardRefreshResources.plantings);
       setView(remaining.length > 0 ? "plan" : "plan");
       setMapNotice("Planting deleted.");
     } catch (err) {
@@ -4014,7 +2378,7 @@ function App() {
       setSelectedPlanPlantingIds([]);
       const remaining = data.plantings.filter((item) => !selectedIds.includes(item.id));
       setSelectedPlantingId(remaining[0]?.id ?? null);
-      await load(canPlan);
+      await loadDashboardResources(dashboardRefreshResources.plantings);
       setView("plan");
       setMapNotice("Selected plantings deleted.");
     } catch (err) {
@@ -4092,7 +2456,7 @@ function App() {
     try {
       setMapNotice("Copying task flow...");
       const result = await api.copyTaskFlow(selectedFlowId) as { id?: number };
-      await load();
+      await loadDashboardResources(dashboardRefreshResources.taskFlows);
       if (result.id != null) {
         setSelectedFlowId(result.id);
       }
@@ -4123,7 +2487,7 @@ function App() {
       const remaining = data.taskFlowTemplates.filter((flow) => flow.id !== selectedFlowTemplate.id);
       setSelectedFlowId(remaining[0]?.id ?? null);
       setFlowEditorKey((current) => current + 1);
-      await load();
+      await loadDashboardResources(dashboardRefreshResources.taskFlows);
       setMapNotice("Task flow deleted.");
     } catch (error) {
       setMapNotice(error instanceof Error ? error.message : "Task flow delete failed.");
@@ -4531,7 +2895,7 @@ function App() {
 
     try {
       if (mapMode === "draw_field" && !data.farm?.id) {
-        setMapNotice("No farm record found. Run the database seed and reload the app.");
+        setMapNotice("No farm record found. Check that the dashboard finished loading, then check migrations and schema state before reseeding.");
         return;
       }
       if (mapMode === "draw_zone" && !selectedBlockContext) {
@@ -4652,7 +3016,7 @@ function App() {
         }) as SaveResponse;
       }
 
-      await load();
+      await loadDashboardResources(dashboardRefreshResources.map);
       resetMapDrafts();
       if (response?.id != null) {
         setSelection({
@@ -4816,7 +3180,7 @@ function App() {
         }) as SaveResponse;
       }
 
-      await load();
+      await loadDashboardResources(dashboardRefreshResources.map);
       resetMapDrafts();
       setMapNotice(response?.warning ?? "Saved.");
     } catch (err) {
@@ -4859,7 +3223,7 @@ function App() {
 
       setSelection(null);
       resetMapDrafts();
-      await load();
+      await loadDashboardResources(dashboardRefreshResources.map);
       setMapNotice("Deleted.");
     } catch (err) {
       console.error("Delete failed", err);
@@ -5079,7 +3443,7 @@ function App() {
 
   async function handleTaskRecordSave() {
     const completedTaskId = selectedTaskId;
-    await load();
+    await loadDashboardResources(dashboardRefreshResources.tasks);
     if (tutorialOpen && tutorialKind === "full_workflow" && tutorialStepIndex === 8) {
       setTutorialStepIndex(9);
       setTutorialStatus("Work recorded. Check the Tasks-this-week card for Done this week, then open the planting detail to confirm history.");
@@ -6711,7 +5075,7 @@ function App() {
                       }}
                       onCreatePendingSection={(notes) => savePendingWorkSection(notes)}
                       onSave={async () => {
-                        await load();
+                        await loadDashboardResources(dashboardRefreshResources.map);
                         setMapNotice("Unplanned work recorded.");
                       }}
                     />
@@ -6998,7 +5362,7 @@ function App() {
                   }}
                   onPreviewChange={setBedPreviewCoordinates}
                   onStatusChange={setMapNotice}
-                  onSave={load}
+                  onSave={() => loadDashboardResources(dashboardRefreshResources.map)}
                   onBlockFilled={() => {
                     resetMapDrafts("select");
                     setSelection({ type: "block", id: selectedBlockContext.id });
@@ -7034,7 +5398,7 @@ function App() {
                   onPreviewChange={setBedAllocationPreview}
                   onSave={async () => {
                     const flowId = tutorialPlantingDraft?.taskFlowTemplateId ?? null;
-                    await load();
+                    await loadDashboardResources(dashboardRefreshResources.plantings);
                     const savedCount = mapPlantingBeds.length;
                     setBedAllocationPreview([]);
                     setMapPlantingBedIds([]);
@@ -7106,7 +5470,7 @@ function App() {
                   startOpenNewPlanting={selectedBlockIsEmpty}
                   onPreviewChange={setBedAllocationPreview}
                   onSave={async () => {
-                    await load();
+                    await loadDashboardResources(dashboardRefreshResources.plantings);
                     setBedAllocationPreview([]);
                   }}
                 />
@@ -7127,7 +5491,7 @@ function App() {
                   startOpenNewPlanting={selectedBedIsUnassigned}
                   onPreviewChange={setBedAllocationPreview}
                   onSave={async () => {
-                    await load();
+                    await loadDashboardResources(dashboardRefreshResources.plantings);
                     setBedAllocationPreview([]);
                   }}
                 />
@@ -7136,7 +5500,7 @@ function App() {
               {mapWorkflowMode === "field_work" && selectedZone?.plannedUse === "cover_crop" && selectedZone.farmId === data.farm?.id && (
                 <CoverCropWorkCard
                   zone={selectedZone}
-                  onSave={load}
+                  onSave={() => loadDashboardResources(dashboardRefreshResources.map)}
                 />
               )}
 
@@ -7184,7 +5548,7 @@ function App() {
                   }}
                   onCreatePendingSection={(notes) => savePendingWorkSection(notes)}
                   onSave={async () => {
-                    await load();
+                    await loadDashboardResources(dashboardRefreshResources.map);
                     setMapNotice("Unplanned work recorded.");
                   }}
                 />
@@ -7335,7 +5699,7 @@ function App() {
                   highlightSubmit={activeTutorialStep === tutorialCreatePlantingStep}
                   onSave={async () => {
                     const flowId = tutorialPlantingDraft?.taskFlowTemplateId ?? null;
-                    await load();
+                    await loadDashboardResources(dashboardRefreshResources.plantings);
                     if (tutorialOpen && tutorialStepIndex === tutorialCreatePlantingStep) {
                       if (flowId != null) {
                         setTutorialFlowId(flowId);
@@ -7503,12 +5867,15 @@ function App() {
                       distanceUnit={distanceUnit}
                       onCancel={() => setEditingPlantingId(null)}
                       onSave={async () => {
-                        await load(canPlan);
+                        await loadDashboardResources(dashboardRefreshResources.plantings);
                         setEditingPlantingId(null);
                       }}
                     />
                   ) : (
-                    <PlantingActualsCard planting={selectedPlanting} onSave={load} />
+                    <PlantingActualsCard
+                      planting={selectedPlanting}
+                      onSave={() => loadDashboardResources(dashboardRefreshResources.plantings)}
+                    />
                   )}
                 </>
               ) : (
@@ -7662,7 +6029,7 @@ function App() {
                 tractorProfiles={data.tractorProfiles}
                 tutorialActive={tutorialKind === "first_account" && activeTutorialStep === tutorialReviewFlowStep && !tutorialFlowNeedsSelection}
                 onSaved={async (nextId) => {
-                  await load();
+                  await loadDashboardResources(dashboardRefreshResources.taskFlows);
                   setSelectedFlowId(nextId);
                   setFlowEditorKey((current) => current + 1);
                   if (tutorialOpen && tutorialKind === "first_account" && tutorialStepIndex === tutorialReviewFlowStep) {
@@ -7671,13 +6038,17 @@ function App() {
                   }
                 }}
               />
-              <GarageCard tractorProfiles={data.tractorProfiles} />
+              <GarageCard tractorProfiles={data.tractorProfiles} onProfilesChange={updateTractorProfiles} />
             </div>
           </section>
         )}
 
         {view === "seed-bank" && (
-          <SeedBankCard data={ownFarmData} canPlan={canPlan} onSave={load} />
+          <SeedBankCard
+            data={ownFarmData}
+            canPlan={canPlan}
+            onSave={() => loadDashboardResources(dashboardRefreshResources.seeds)}
+          />
         )}
 
         {view === "harvests" && (
@@ -7785,6 +6156,29 @@ function App() {
                   <div><dt>Theme</dt><dd>{themeMode === "dark" ? "Dark" : "Light"}</dd></div>
                 </dl>
               </div>
+              <div className="card">
+                <h2>Privacy</h2>
+                <label className="checkbox-row">
+                  <input
+                    type="checkbox"
+                    checked={usageTrackingEnabled}
+                    disabled={savingUsagePreference}
+                    onChange={(event) => {
+                      const enabled = event.target.checked;
+                      setSavingUsagePreference(true);
+                      void api.setUsagePreference(enabled)
+                        .then((result) => setUsageTrackingEnabled(result.enabled))
+                        .catch((error) => setError(error instanceof Error ? error.message : "Could not save tracking preference."))
+                        .finally(() => setSavingUsagePreference(false));
+                    }}
+                  />
+                  <span>Share anonymous usage information</span>
+                </label>
+                <p className="muted">
+                  Optional and off by default. Records only coarse page activity and broad time ranges.
+                  It does not store your identity, farm, browser ID, raw web address, farm records, clicks, or error text.
+                </p>
+              </div>
               {canPlan && (
                 <div className="card">
                   <h2>Tutorials</h2>
@@ -7815,8 +6209,15 @@ function App() {
                   Log out
                 </button>
               </div>
+              <AccountPasswordCard />
             </div>
             <div className="stack">
+              {canPlan && (
+                <TeamAccountsCard
+                  farmName={session.user.farmName}
+                  currentUserId={session.user.id}
+                />
+              )}
               <div className="card">
                 <h2>Map imagery</h2>
                 <p className="muted">The prototype is currently using the live web basemap only. Offline caching is disabled for now so the map stays predictable while you work on planning.</p>
@@ -8580,328 +6981,6 @@ function PlantingEditCard({
       </form>
     </div>
   );
-}
-
-function MapDrawingEvents({
-  mode,
-  onAddPoint,
-  onClearSelection
-}: {
-  mode: MapMode;
-  onAddPoint: (point: CoordinateDraft) => void;
-  onClearSelection: () => void;
-}) {
-  const map = useMap();
-
-  useEffect(() => {
-    const container = map.getContainer();
-    container.classList.toggle("point-select-map", isPointSelectionMapMode(mode));
-  }, [map, mode]);
-
-  // This invisible component translates Leaflet map clicks into the current
-  // drawing/selecting behavior. React-Leaflet hooks must run inside MapContainer.
-  useMapEvents({
-    click(event) {
-      if (mode === "pick_bed_edge") {
-        return;
-      }
-      if (isPointSelectionMapMode(mode)) {
-        onAddPoint({ lat: event.latlng.lat, lng: event.latlng.lng });
-        return;
-      }
-      if (mode === "select") {
-        onClearSelection();
-      }
-    }
-  });
-
-  return null;
-}
-
-function TutorialAutoScroll({ active, triggerKey }: { active: boolean; triggerKey: string }) {
-  useEffect(() => {
-    if (!active || typeof document === "undefined" || typeof window === "undefined") {
-      return;
-    }
-
-    let animationFrame = 0;
-    const timeout = window.setTimeout(() => {
-      const target = document.querySelector<HTMLElement>(".tutorial-target");
-      if (!target) {
-        return;
-      }
-      const rect = target.getBoundingClientRect();
-      const startY = window.scrollY;
-      const targetY = Math.max(0, startY + rect.top - ((window.innerHeight - rect.height) / 2));
-      const distance = targetY - startY;
-      if (Math.abs(distance) < 2) {
-        return;
-      }
-      const durationMs = 1100;
-      const startTime = window.performance.now();
-      const easeInOutCubic = (value: number) => value < 0.5
-        ? 4 * value * value * value
-        : 1 - Math.pow(-2 * value + 2, 3) / 2;
-      const step = (time: number) => {
-        const progress = Math.min(1, (time - startTime) / durationMs);
-        window.scrollTo(0, startY + distance * easeInOutCubic(progress));
-        if (progress < 1) {
-          animationFrame = window.requestAnimationFrame(step);
-        }
-      };
-      animationFrame = window.requestAnimationFrame(step);
-    }, 180);
-
-    return () => {
-      window.clearTimeout(timeout);
-      if (animationFrame) {
-        window.cancelAnimationFrame(animationFrame);
-      }
-    };
-  }, [active, triggerKey]);
-
-  return null;
-}
-
-function MapLineDragEvents({
-  activeLineIndex,
-  onMoveLine,
-  onStopDrag
-}: {
-  activeLineIndex: number | null;
-  onMoveLine: (index: number, point: CoordinateDraft) => void;
-  onStopDrag: () => void;
-}) {
-  const map = useMap();
-
-  useEffect(() => {
-    if (activeLineIndex == null) {
-      return;
-    }
-
-    map.dragging.disable();
-    return () => {
-      map.dragging.enable();
-    };
-  }, [activeLineIndex, map]);
-
-  useMapEvents({
-    mousemove(event) {
-      if (activeLineIndex == null) {
-        return;
-      }
-      onMoveLine(activeLineIndex, { lat: event.latlng.lat, lng: event.latlng.lng });
-    },
-    mouseup() {
-      if (activeLineIndex != null) {
-        onStopDrag();
-      }
-    }
-  });
-
-  return null;
-}
-
-// On first load, zoom to saved farm geometry unless the user already has a
-// manually stored map position.
-function FitToFarm({ fields, blocks }: { fields: Field[]; blocks: Block[] }) {
-  const map = useMap();
-  const [hasFit, setHasFit] = useState(false);
-
-  useEffect(() => {
-    if (hasFit || hasStoredMapView()) {
-      return;
-    }
-
-    const allPoints = [...fields, ...blocks].flatMap((item) => {
-      const points = geoJsonPolygonToLatLngs(item.boundary);
-      return points.map((point) => [point.lat, point.lng] as LatLngTuple);
-    });
-
-    if (allPoints.length > 0) {
-      map.fitBounds(allPoints, { padding: [30, 30] });
-      setHasFit(true);
-    }
-  }, [fields, blocks, hasFit, map]);
-
-  return null;
-}
-
-// When the user selects a field/block/zone/bed, center that object on screen.
-function FocusSelection({
-  selection,
-  fields,
-  blocks,
-  zones,
-  beds,
-  disabled = false
-}: {
-  selection: MapSelection;
-  fields: Field[];
-  blocks: Block[];
-  zones: BlockZone[];
-  beds: Bed[];
-  disabled?: boolean;
-}) {
-  const map = useMap();
-  const lastHandledSelectionKey = useRef<string | null>(null);
-  const selectionKey = selection ? `${selection.type}:${selection.id}` : null;
-
-  useEffect(() => {
-    if (disabled || !selection || !selectionKey) {
-      lastHandledSelectionKey.current = selectionKey;
-      return;
-    }
-
-    if (lastHandledSelectionKey.current === selectionKey) {
-      return;
-    }
-
-    const points = selection.type === "field"
-      ? geoJsonPolygonToLatLngs(fields.find((field) => field.id === selection.id)?.boundary ?? null)
-      : selection.type === "block"
-        ? geoJsonPolygonToLatLngs(blocks.find((block) => block.id === selection.id)?.boundary ?? null)
-        : selection.type === "zone"
-          ? geoJsonPolygonToLatLngs(zones.find((zone) => zone.id === selection.id)?.boundary ?? null)
-          : geoJsonPolygonToLatLngs(beds.find((bed) => bed.id === selection.id)?.boundary ?? null);
-
-    if (points.length >= 3) {
-      lastHandledSelectionKey.current = selectionKey;
-      map.fitBounds(points.map((point) => [point.lat, point.lng] as LatLngTuple), {
-        padding: [24, 24]
-      });
-    }
-  }, [selection, selectionKey, fields, blocks, zones, beds, disabled, map]);
-
-  return null;
-}
-
-// Centers the Leaflet map after the browser returns a phone GPS location.
-function FocusUserLocation({ location }: { location: UserLocation | null }) {
-  const map = useMap();
-
-  useEffect(() => {
-    if (!location) {
-      return;
-    }
-
-    map.setView([location.lat, location.lng], Math.max(map.getZoom(), 18), {
-      animate: true
-    });
-  }, [location, map]);
-
-  return null;
-}
-
-// Keeps React state aware of Leaflet zoom so labels/layers can simplify at
-// different map scales.
-function MapZoomTracker({ onZoomChange }: { onZoomChange: (zoom: number) => void }) {
-  const map = useMap();
-
-  useEffect(() => {
-    const updateZoom = () => onZoomChange(map.getZoom());
-    updateZoom();
-    map.on("zoomend", updateZoom);
-    return () => {
-      map.off("zoomend", updateZoom);
-    };
-  }, [map, onZoomChange]);
-
-  return null;
-}
-
-// Uses a simple world map when far out and aerial imagery when close in.
-function ResponsiveBasemap() {
-  const map = useMap();
-  const [zoom, setZoom] = useState(map.getZoom());
-
-  useEffect(() => {
-    const updateZoom = () => setZoom(map.getZoom());
-    map.on("zoomend", updateZoom);
-    return () => {
-      map.off("zoomend", updateZoom);
-    };
-  }, [map]);
-
-  const basemap = zoom < 15 ? basemaps.worldLight : basemaps.usAerial;
-
-  return (
-    <TileLayer
-      key={basemap.key}
-      url={basemap.url}
-      attribution={basemap.attribution}
-      maxNativeZoom={19}
-      maxZoom={24}
-      keepBuffer={8}
-    />
-  );
-}
-
-// Saves the user's last map position in this browser so refreshes do not jump
-// back to the default starting location.
-function PersistMapView() {
-  const map = useMap();
-
-  useEffect(() => {
-    const persist = () => {
-      const center = map.getCenter();
-      window.localStorage.setItem(
-        VIEW_STORAGE_KEY,
-        JSON.stringify({
-          center: [center.lat, center.lng],
-          zoom: map.getZoom()
-        })
-      );
-    };
-
-    map.on("moveend", persist);
-    map.on("zoomend", persist);
-    return () => {
-      map.off("moveend", persist);
-      map.off("zoomend", persist);
-    };
-  }, [map]);
-
-  return null;
-}
-
-function hasStoredMapView() {
-  if (typeof window === "undefined") {
-    return false;
-  }
-
-  return Boolean(window.localStorage.getItem(VIEW_STORAGE_KEY));
-}
-
-function readStoredMapView(): { center: LatLngTuple; zoom: number } {
-  if (typeof window === "undefined") {
-    return { center: DEFAULT_CENTER, zoom: DEFAULT_ZOOM };
-  }
-
-  const raw = window.localStorage.getItem(VIEW_STORAGE_KEY);
-  if (!raw) {
-    return { center: DEFAULT_CENTER, zoom: DEFAULT_ZOOM };
-  }
-
-  try {
-    const parsed = JSON.parse(raw) as { center?: [number, number]; zoom?: number };
-    if (
-      Array.isArray(parsed.center) &&
-      parsed.center.length === 2 &&
-      typeof parsed.center[0] === "number" &&
-      typeof parsed.center[1] === "number" &&
-      typeof parsed.zoom === "number"
-    ) {
-      return {
-        center: [parsed.center[0], parsed.center[1]],
-        zoom: parsed.zoom
-      };
-    }
-  } catch {
-    return { center: DEFAULT_CENTER, zoom: DEFAULT_ZOOM };
-  }
-
-  return { center: DEFAULT_CENTER, zoom: DEFAULT_ZOOM };
 }
 
 function BedRecordsCard({
@@ -11576,859 +9655,6 @@ function UnplannedWorkCard({
       </form>
     </div>
   );
-}
-
-function WorkBedPicker({
-  beds,
-  selectedBedIds,
-  bedPickActive,
-  pickLabel,
-  pickingLabel,
-  onBedPickActiveChange,
-  onSelectedBedIdsChange
-}: {
-  beds: Bed[];
-  selectedBedIds: number[];
-  bedPickActive: boolean;
-  pickLabel: string;
-  pickingLabel: string;
-  onBedPickActiveChange: (active: boolean) => void;
-  onSelectedBedIdsChange: (bedIds: number[]) => void;
-}) {
-  const plasticBedIds = beds
-    .filter((item) => (item.bedPresetName ?? item.name).toLowerCase().includes("plastic"))
-    .map((item) => item.id);
-  const bareBedIds = beds
-    .filter((item) => !plasticBedIds.includes(item.id))
-    .map((item) => item.id);
-  const selectedBedIdSet = new Set(selectedBedIds);
-
-  return (
-    <div className="full-span stack">
-      <div className="button-row">
-        <button
-          type="button"
-          className={bedPickActive ? "primary-button" : "secondary-button"}
-          onClick={() => onBedPickActiveChange(!bedPickActive)}
-        >
-          {bedPickActive ? pickingLabel : pickLabel}
-        </button>
-        <button type="button" className="secondary-button" onClick={() => onSelectedBedIdsChange(bareBedIds)}>
-          All bare beds
-        </button>
-        <button type="button" className="secondary-button" onClick={() => onSelectedBedIdsChange(plasticBedIds)}>
-          All plastic beds
-        </button>
-        <button type="button" className="secondary-button" onClick={() => onSelectedBedIdsChange([])}>
-          Clear beds
-        </button>
-      </div>
-      <p className="muted">{selectedBedIds.length} bed{selectedBedIds.length === 1 ? "" : "s"} selected.</p>
-      {beds.length > 0 && (
-        <MobileListLimiter itemCount={beds.length} itemLabel="beds">
-          <div className="checkbox-grid">
-            {beds.map((item) => (
-              <label className="inline-checkbox" key={item.id}>
-                <input
-                  type="checkbox"
-                  checked={selectedBedIdSet.has(item.id)}
-                  onChange={(event) => {
-                    if (event.target.checked) {
-                      onSelectedBedIdsChange([...selectedBedIds, item.id]);
-                    } else {
-                      onSelectedBedIdsChange(selectedBedIds.filter((bedId) => bedId !== item.id));
-                    }
-                  }}
-                />
-                <span>{item.name}{item.bedPresetName ? ` (${item.bedPresetName})` : ""}</span>
-              </label>
-            ))}
-          </div>
-        </MobileListLimiter>
-      )}
-    </div>
-  );
-}
-
-// Work-mode card for recording what actually happened to a cover-crop area.
-function CoverCropWorkCard({
-  zone,
-  onSave
-}: {
-  zone: BlockZone;
-  onSave: () => Promise<void>;
-}) {
-  const [actualSeedDate, setActualSeedDate] = useState(dateInputValue(zone.actualCoverCropSeedDate));
-  const [actualTerminateDate, setActualTerminateDate] = useState(dateInputValue(zone.actualCoverCropTerminateDate));
-  const [actualState, setActualState] = useState<ZoneActualState>(zone.actualState);
-  const [notes, setNotes] = useState(zone.notes ?? "");
-  const [status, setStatus] = useState<string | null>(null);
-  const [saving, setSaving] = useState(false);
-
-  useEffect(() => {
-    setActualSeedDate(dateInputValue(zone.actualCoverCropSeedDate));
-    setActualTerminateDate(dateInputValue(zone.actualCoverCropTerminateDate));
-    setActualState(zone.actualState);
-    setNotes(zone.notes ?? "");
-    setStatus(null);
-  }, [zone]);
-
-  async function saveCoverCropWork(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    if (actualSeedDate && actualSeedDate > todayDateInputValue()) {
-      setStatus("Actual seeded date cannot be in the future.");
-      return;
-    }
-    if (actualTerminateDate && actualTerminateDate > todayDateInputValue()) {
-      setStatus("Actual termination date cannot be in the future.");
-      return;
-    }
-
-    try {
-      setSaving(true);
-      setStatus("Saving cover crop work...");
-      await api.updateCoverCropWork(zone.id, {
-        actualState,
-        actualCoverCropSeedDate: actualSeedDate || null,
-        actualCoverCropTerminateDate: actualTerminateDate || null,
-        notes: notes.trim() || null
-      });
-      await onSave();
-      setStatus("Cover crop work saved.");
-    } catch (error) {
-      setStatus(error instanceof Error ? error.message : "Cover crop work save failed.");
-    } finally {
-      setSaving(false);
-    }
-  }
-
-  return (
-    <div className="card">
-      <h2>Cover crop work</h2>
-      <p className="muted">{zone.coverCropName ?? zone.name} in {zone.blockName}</p>
-      <dl className="detail-list">
-        <div><dt>Planned seed</dt><dd>{formatDate(zone.plannedCoverCropSeedDate)}</dd></div>
-        <div><dt>Planned terminate</dt><dd>{formatDate(zone.plannedCoverCropTerminateDate)}</dd></div>
-      </dl>
-      {status && <p className="muted"><strong>{status}</strong></p>}
-      <form className="form-grid" onSubmit={(event) => void saveCoverCropWork(event)}>
-        <label>
-          <span>Actual seeded date</span>
-          <input type="date" value={actualSeedDate} onChange={(event) => setActualSeedDate(event.target.value)} />
-        </label>
-        <label>
-          <span>Actual termination date</span>
-          <input type="date" value={actualTerminateDate} onChange={(event) => setActualTerminateDate(event.target.value)} />
-        </label>
-        <label>
-          <span>Current state</span>
-          <select value={actualState} onChange={(event) => setActualState(event.target.value as ZoneActualState)}>
-            {zoneActualStateOptions.map((option) => <option key={option} value={option}>{formatZoneActualStateLabel(option)}</option>)}
-          </select>
-        </label>
-        <div className="button-row">
-          <button
-            type="button"
-            className="secondary-button"
-            onClick={() => {
-              setActualSeedDate(todayDateInputValue());
-              setActualState("cover_crop_established");
-            }}
-          >
-            Seeded today
-          </button>
-          <button
-            type="button"
-            className="secondary-button"
-            onClick={() => {
-              setActualTerminateDate(todayDateInputValue());
-              setActualState("finished");
-            }}
-          >
-            Terminated today
-          </button>
-        </div>
-        <label className="full-span">
-          <span>Notes</span>
-          <textarea rows={3} value={notes} onChange={(event) => setNotes(event.target.value)} />
-        </label>
-        <button type="submit" className="primary-button full-span" disabled={saving}>
-          {saving ? "Saving..." : "Save cover crop work"}
-        </button>
-      </form>
-    </div>
-  );
-}
-
-// Simple harvest entry: harvests are logged by bed while still linking back to the parent planting.
-function HarvestForm({ data, onSave }: { data: DashboardData; onSave: () => Promise<void> }) {
-  const plantableBeds = data.beds.filter((bed) => bed.source !== "road");
-
-  return (
-    <div className="card">
-      <h2>Log harvest by bed</h2>
-      <form
-        className="form-grid"
-        onSubmit={(event) =>
-          void handleForm(event, async (form) => {
-            await api.createHarvest({
-              plantingId: Number(form.get("plantingId")),
-              bedId: Number(form.get("bedId")),
-              harvestDate: String(form.get("harvestDate")),
-              quantity: Number(form.get("quantity")),
-              unit: String(form.get("unit")),
-              notes: String(form.get("notes") || "")
-            });
-            await onSave();
-          })
-        }
-      >
-        <label>
-          <span>Planting</span>
-          <select name="plantingId">
-            {data.plantings.map((planting) => <option key={planting.id} value={planting.id}>{planting.title}</option>)}
-          </select>
-        </label>
-        <label>
-          <span>Bed</span>
-          <select name="bedId">
-            {plantableBeds.map((bed) => <option key={bed.id} value={bed.id}>{bed.name}</option>)}
-          </select>
-        </label>
-        <label><span>Date</span><input name="harvestDate" type="date" required /></label>
-        <label><span>Quantity</span><input name="quantity" type="number" step="0.1" required /></label>
-        <label>
-          <span>Unit</span>
-          <select name="unit" defaultValue="lb">
-            <option value="lb">lb</option>
-            <option value="kg">kg</option>
-            <option value="heads">heads</option>
-            <option value="bunches">bunches</option>
-          </select>
-        </label>
-        <label className="full-span"><span>Notes</span><textarea name="notes" rows={3} defaultValue="Harvest note" /></label>
-        <button className="primary-button full-span">Log harvest</button>
-      </form>
-    </div>
-  );
-}
-
-// Global admin page. This is intentionally bare-bones: inspect users, disable
-// user logins, and read submitted feedback.
-// Foldout editor for reusable bed dimensions and path spacing.
-function BedPresetCard({
-  farmId,
-  bedPresets,
-  distanceUnit,
-  onSave
-}: {
-  farmId: number | null;
-  bedPresets: DashboardData["bedPresets"];
-  distanceUnit: DistanceUnit;
-  onSave: () => Promise<void>;
-}) {
-  const [notice, setNotice] = useState<string | null>(null);
-  const [isRoadPreset, setIsRoadPreset] = useState(false);
-
-  async function deletePreset(id: number, name: string) {
-    const confirmed = window.confirm(`Delete bed preset "${name}"? Existing beds will stay on the map.`);
-    if (!confirmed) {
-      return;
-    }
-
-    try {
-      setNotice("Deleting preset...");
-      await api.deleteBedPreset(id);
-      await onSave();
-      setNotice("Preset deleted.");
-    } catch (error) {
-      setNotice(error instanceof Error ? error.message : "Could not delete preset.");
-    }
-  }
-
-  return (
-    <details className="full-span foldout-panel" open={bedPresets.length === 0 ? true : undefined}>
-      <summary>Manage bed presets</summary>
-      <p className="muted">Store each farm bed system once, then reuse it when filling blocks. Bed width is the plantable bed only; path spacing is left as open space. Use a road/path preset for non-plantable access lanes.</p>
-      {notice && <p className="muted"><strong>{notice}</strong></p>}
-      {bedPresets.length > 0 && (
-        <MobileListLimiter itemCount={bedPresets.length} itemLabel="bed presets">
-          <div className="generated-bed-list">
-            {bedPresets.map((preset) => (
-              <span key={preset.id} className="small-chip preset-chip">
-                {preset.isRoad
-                  ? `${preset.name}: ${formatLength(preset.bedWidthM, distanceUnit)} road/path`
-                  : `${preset.name}: ${formatLength(preset.bedWidthM, distanceUnit)} bed / ${formatLength(preset.pathSpacingM, distanceUnit)} path`}
-                <button type="button" className="link-button" onClick={() => void deletePreset(preset.id, preset.name)}>Delete</button>
-              </span>
-            ))}
-          </div>
-        </MobileListLimiter>
-      )}
-      <form
-        className="form-grid"
-        onSubmit={(event) =>
-          void handleForm(event, async (form) => {
-            if (!farmId) {
-              throw new Error("Farm not loaded");
-            }
-            const bedWidthM = parseLengthInputValue(form.get("bedWidthM"), distanceUnit);
-            const pathSpacingM = isRoadPreset ? 0 : parseLengthInputValue(form.get("pathSpacingM"), distanceUnit);
-            if (bedWidthM == null || pathSpacingM == null) {
-              throw new Error(isRoadPreset ? "Road/path width is required" : "Bed width and path spacing are required");
-            }
-            await api.createBedPreset({
-              farmId,
-              name: String(form.get("name")),
-              bedWidthM,
-              pathSpacingM,
-              isRoad: isRoadPreset,
-              notes: String(form.get("notes") || "")
-            });
-            setIsRoadPreset(false);
-            await onSave();
-          })
-        }
-      >
-        <label><span>Name</span><input key={isRoadPreset ? "road-name" : "bed-name"} name="name" defaultValue={isRoadPreset ? "Farm road 12 ft" : "Bare bed 3 ft"} /></label>
-        <label className="inline-checkbox">
-          <input type="checkbox" checked={isRoadPreset} onChange={(event) => setIsRoadPreset(event.target.checked)} />
-          <span>Road/path preset, not plantable</span>
-        </label>
-        <label>
-          <span>{isRoadPreset ? "Road/path width" : "Bed width"} ({distanceUnit})</span>
-          <input
-            key={isRoadPreset ? "road-width" : "bed-width"}
-            name="bedWidthM"
-            type="number"
-            step="0.01"
-            defaultValue={formatLengthInputValue(isRoadPreset ? 12 * FEET_TO_METERS : 3 * FEET_TO_METERS, distanceUnit)}
-          />
-        </label>
-        <label>
-          <span>Path spacing ({distanceUnit})</span>
-          <input
-            name="pathSpacingM"
-            type="number"
-            step="0.01"
-            defaultValue={formatLengthInputValue(2 * FEET_TO_METERS, distanceUnit)}
-            disabled={isRoadPreset}
-          />
-        </label>
-        <label className="full-span"><span>Notes</span><textarea key={isRoadPreset ? "road-notes" : "bed-notes"} name="notes" rows={2} defaultValue={isRoadPreset ? "Default non-plantable farm road: 12 ft wide." : "Default bare bed: 3 ft plantable bed with 2 ft path."} /></label>
-        <button className="primary-button full-span">Save preset</button>
-      </form>
-    </details>
-  );
-}
-
-// Tool for turning a block edge/line into one or many generated bed polygons.
-function BedGeneratorCard({
-  block,
-  zone,
-  farmId,
-  bedPresets,
-  existingBeds,
-  distanceUnit,
-  bedLineCoordinates,
-  bedLineSource,
-  bedLineMode,
-  invertSide,
-  isPickingLine,
-  isPickingEdge,
-  tutorialActive,
-  onPickEdge,
-  onStartLine,
-  onCancelLine,
-  onInvertSideChange,
-  onEntranceSideChange,
-  onPreviewChange,
-  onStatusChange,
-  onSave,
-  onBlockFilled,
-  onTutorialBedsGenerated,
-  onSelectBed
-}: {
-  block: Block;
-  zone: BlockZone | null;
-  farmId: number | null;
-  bedPresets: DashboardData["bedPresets"];
-  existingBeds: Bed[];
-  distanceUnit: DistanceUnit;
-  bedLineCoordinates: CoordinateDraft[];
-  bedLineSource: BedLineSource;
-  bedLineMode: "straight" | "curved";
-  invertSide: boolean;
-  isPickingLine: boolean;
-  isPickingEdge: boolean;
-  tutorialActive: boolean;
-  onPickEdge: () => void;
-  onStartLine: (mode: "straight" | "curved") => void;
-  onCancelLine: () => void;
-  onInvertSideChange: (value: boolean) => void;
-  onEntranceSideChange?: (blockId: number, entranceSide: "start" | "end") => void;
-  onPreviewChange: (points: CoordinateDraft[]) => void;
-  onStatusChange: (message: string | null) => void;
-  onSave: () => Promise<void>;
-  onBlockFilled?: () => void;
-  onTutorialBedsGenerated?: (bedIds: number[]) => void;
-  onSelectBed: (bedId: number) => void;
-}) {
-  const minPoints = bedLineMode === "straight" ? 2 : 3;
-  const maxPoints = bedLineMode === "straight" ? 2 : 12;
-  const [selectedPresetId, setSelectedPresetId] = useState(String(bedPresets[0]?.id ?? ""));
-  const [bedCount, setBedCount] = useState("6");
-  const [namePrefix, setNamePrefix] = useState(`${block.name}-`);
-  const [startNumber, setStartNumber] = useState(existingBeds.length + 1);
-  const [replaceExisting, setReplaceExisting] = useState(false);
-  const [fillWholeBlock, setFillWholeBlock] = useState(false);
-  const [entranceSide, setEntranceSide] = useState<"start" | "end">(block.bedStartEntranceSide ?? "start");
-  const [harvestRoadsEnabled, setHarvestRoadsEnabled] = useState(false);
-  const [harvestRoadEveryBeds, setHarvestRoadEveryBeds] = useState("12");
-  const [harvestRoadWidthBeds, setHarvestRoadWidthBeds] = useState("2");
-  const [isGenerating, setIsGenerating] = useState(false);
-  const [isCreatingStarterPreset, setIsCreatingStarterPreset] = useState(false);
-  const [localNotice, setLocalNotice] = useState<string | null>(null);
-  const selectedPreset = bedPresets.find((preset) => String(preset.id) === selectedPresetId) ?? bedPresets[0];
-  const hasExistingBeds = existingBeds.length > 0;
-  const tutorialBedHint = tutorialActive
-    ? bedLineCoordinates.length < minPoints
-      ? isPickingEdge || isPickingLine
-        ? "Click two points on the map along the block edge that beds should follow."
-        : "Click Begining of first bed, then choose where planting starts."
-      : "The bed edge is ready. Click Fill remaining block to fill the block with beds."
-    : null;
-
-  useEffect(() => {
-    if (!selectedPresetId && bedPresets[0]) {
-      setSelectedPresetId(String(bedPresets[0].id));
-    }
-  }, [bedPresets, selectedPresetId]);
-
-  useEffect(() => {
-    setNamePrefix(`${block.name}-`);
-    setEntranceSide(block.bedStartEntranceSide ?? "start");
-  }, [block.id, block.name, block.bedStartEntranceSide]);
-
-  function updateEntranceSide(checked: boolean) {
-    const nextEntranceSide = checked ? "end" : "start";
-    setEntranceSide(nextEntranceSide);
-    onEntranceSideChange?.(block.id, nextEntranceSide);
-  }
-
-  useEffect(() => {
-    if (!hasExistingBeds && replaceExisting) {
-      setReplaceExisting(false);
-      return;
-    }
-    if (!replaceExisting) {
-      setStartNumber(existingBeds.length + 1);
-    }
-  }, [existingBeds.length, hasExistingBeds, replaceExisting]);
-
-  useEffect(() => {
-    if (!selectedPreset || bedLineCoordinates.length < minPoints || bedLineCoordinates.length > maxPoints) {
-      onPreviewChange([]);
-      return;
-    }
-
-    const roadEvery = harvestRoadsEnabled ? Number(harvestRoadEveryBeds) : null;
-    const roadWidth = harvestRoadsEnabled ? Number(harvestRoadWidthBeds) : 0;
-    const presetPathSpacing = selectedPreset.isRoad ? 0 : Number(selectedPreset.pathSpacingM);
-    const selectedBedEdgeOffsetM = bedLineSource === "selected_bed" && !selectedPreset.isRoad ? presetPathSpacing : 0;
-    const blockBoundary = geoJsonPolygonToLatLngs(block.boundary);
-    const preview = buildNextBedPreview(
-      bedLineCoordinates,
-      Number(selectedPreset.bedWidthM),
-      presetPathSpacing,
-      bedLineSource === "selected_bed" ? 0 : replaceExisting ? 0 : existingBeds.length,
-      selectedBedEdgeOffsetM,
-      invertSide,
-      roadEvery && Number.isFinite(roadEvery) ? roadEvery : null,
-      Number.isFinite(roadWidth) ? roadWidth : 0
-    );
-    onPreviewChange(polygonIsInsideOrOnPolygon(preview, blockBoundary) ? preview : []);
-
-    return () => onPreviewChange([]);
-  }, [
-    bedLineCoordinates,
-    block.boundary,
-    bedLineCoordinates.length,
-    existingBeds.length,
-    bedLineSource,
-    harvestRoadEveryBeds,
-    harvestRoadsEnabled,
-    harvestRoadWidthBeds,
-    invertSide,
-    maxPoints,
-    minPoints,
-    onPreviewChange,
-    replaceExisting,
-    selectedPreset
-  ]);
-
-  async function generateBeds(options: { count: number; fillWholeBlock: boolean }) {
-    if (!farmId) {
-      const message = "Farm not loaded";
-      setLocalNotice(message);
-      onStatusChange(message);
-      return;
-    }
-
-    if (bedLineCoordinates.length < minPoints || bedLineCoordinates.length > maxPoints) {
-      const message = bedLineMode === "straight" ? "Choose the begining of first bed first." : "Pick between 3 and 12 line points first.";
-      setLocalNotice(message);
-      onStatusChange(message);
-      return;
-    }
-
-    const roadEvery = selectedPreset?.isRoad ? null : harvestRoadsEnabled ? Number(harvestRoadEveryBeds) : null;
-    const roadWidth = harvestRoadsEnabled ? Number(harvestRoadWidthBeds) : 0;
-    if (!selectedPreset?.isRoad && harvestRoadsEnabled && (!roadEvery || !Number.isInteger(roadEvery) || roadEvery < 1 || !Number.isInteger(roadWidth) || roadWidth < 1)) {
-      const message = "Harvest roads need a positive bed interval and road width.";
-      setLocalNotice(message);
-      onStatusChange(message);
-      return;
-    }
-
-    const parsedCount = Number(options.count);
-    const parsedStartNumber = Number(startNumber);
-    if (!selectedPreset || !Number.isInteger(parsedCount) || parsedCount < 1 || !Number.isInteger(parsedStartNumber) || parsedStartNumber < 1) {
-      const message = "Choose a preset, count, and start number first.";
-      setLocalNotice(message);
-      onStatusChange(message);
-      return;
-    }
-
-    try {
-      setIsGenerating(true);
-      setLocalNotice("Generating beds...");
-      onStatusChange("Generating beds...");
-
-      const result = await api.generateBeds(block.id, {
-        presetId: selectedPreset.id,
-        zoneId: null,
-        lineMode: bedLineMode,
-        lineCoordinates: bedLineCoordinates,
-        count: parsedCount,
-        layoutStartIndex: bedLineSource === "selected_bed" ? 0 : replaceExisting ? 0 : existingBeds.length,
-        edgeOffsetM: bedLineSource === "selected_bed" && !selectedPreset.isRoad ? Number(selectedPreset.pathSpacingM) : 0,
-        namePrefix,
-        startNumber: parsedStartNumber,
-        isPermanent: true,
-        replaceExisting,
-        invertSide,
-        entranceSide,
-        fillWholeBlock: options.fillWholeBlock,
-        harvestRoadEveryBeds: roadEvery,
-        harvestRoadWidthBeds: roadWidth
-      }) as { inserted?: number; insertedIds?: number[]; isRoad?: boolean };
-
-      await onSave();
-      if (!options.fillWholeBlock && result.insertedIds?.length) {
-        onSelectBed(result.insertedIds[result.insertedIds.length - 1]);
-      }
-      if (options.fillWholeBlock && !result.isRoad) {
-        onBlockFilled?.();
-      }
-
-      const message = result.inserted != null ? `Generated ${result.inserted} beds.` : "Beds generated.";
-      setLocalNotice(message);
-      onStatusChange(message);
-      if (!result.isRoad && result.insertedIds?.length) {
-        onTutorialBedsGenerated?.(result.insertedIds);
-      }
-    } catch (error) {
-      const message = error instanceof Error ? error.message : "Bed generation failed.";
-      console.error("Bed generation failed", error);
-      setLocalNotice(message);
-      onStatusChange(message);
-    } finally {
-      setIsGenerating(false);
-    }
-  }
-
-  async function submitGenerateBeds(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    await generateBeds({
-      count: fillWholeBlock ? 1 : Number(bedCount || 1),
-      fillWholeBlock
-    });
-  }
-
-  async function createStarterPresets() {
-    if (!farmId) {
-      const message = "Farm not loaded";
-      setLocalNotice(message);
-      onStatusChange(message);
-      return;
-    }
-
-    try {
-      setIsCreatingStarterPreset(true);
-      setLocalNotice("Creating starter bed presets...");
-      onStatusChange("Creating starter bed presets...");
-      for (const preset of DEFAULT_BED_PRESETS) {
-        await api.createBedPreset({
-          farmId,
-          name: preset.name,
-          bedWidthM: preset.bedWidthM,
-          pathSpacingM: preset.pathSpacingM,
-          isRoad: preset.isRoad,
-          notes: preset.notes
-        });
-      }
-      await onSave();
-      setLocalNotice("Starter bed presets created. Choose the begining of first bed next.");
-      onStatusChange("Starter bed presets created. Choose the begining of first bed next.");
-    } catch (error) {
-      const message = error instanceof Error ? error.message : "Could not create starter bed presets.";
-      setLocalNotice(message);
-      onStatusChange(message);
-    } finally {
-      setIsCreatingStarterPreset(false);
-    }
-  }
-
-  return (
-    <div className="card">
-      <h2>Generate beds in block</h2>
-      <p className="muted">
-        {zone ? `${zone.name} in ` : ""}{block.name} / {block.fieldName}
-        {!zone ? " (whole block)" : ""}
-      </p>
-      {tutorialBedHint && (
-        <div className="tutorial-helper-bubble">
-          <strong>Tutorial next:</strong> {tutorialBedHint}
-        </div>
-      )}
-      {bedPresets.length === 0 ? (
-        <>
-          <div className="instruction-box">
-            <strong>No bed preset yet:</strong> Before beds can be generated, save the bed width and path spacing to use. You can create starter presets now, then adjust them later if your farm uses different measurements.
-          </div>
-          {localNotice && <p className="muted"><strong>{localNotice}</strong></p>}
-          <div className="button-row">
-            <button
-              type="button"
-              className="primary-button"
-              disabled={isCreatingStarterPreset}
-              onClick={() => void createStarterPresets()}
-            >
-              {isCreatingStarterPreset ? "Creating..." : "Create default bed presets"}
-            </button>
-          </div>
-          <BedPresetCard farmId={farmId} bedPresets={bedPresets} distanceUnit={distanceUnit} onSave={onSave} />
-        </>
-      ) : (
-        <>
-          <form
-            className="form-grid"
-            onSubmit={(event) => {
-              void submitGenerateBeds(event);
-            }}
-          >
-            {bedLineSource !== "selected_bed" && (
-              <>
-                <div className="full-span button-row">
-                  <button
-                    type="button"
-                    className={`primary-button${tutorialActive && bedLineCoordinates.length < minPoints ? " tutorial-target" : ""}`}
-                    onClick={onPickEdge}
-                  >
-                    {isPickingEdge ? "Stop choosing" : "Begining of first bed"}
-                  </button>
-                  <p className="muted full-span">where planting starts</p>
-                  {isPickingLine && (
-                    <button type="button" className="secondary-button" onClick={onCancelLine}>
-                      Cancel line
-                    </button>
-                  )}
-                </div>
-                <div className="full-span generated-bed-list">
-                  {bedLineCoordinates.map((_, index) => (
-                    <span key={index} className="small-chip">Line point {index + 1}</span>
-                  ))}
-                </div>
-                <p className="muted">
-                  {bedLineMode === "straight"
-                    ? `Choose the begining of first bed.`
-                    : `Pick between 3 and 12 points.`}
-                  {" "}Current: {bedLineCoordinates.length} / {maxPoints}
-                </p>
-              </>
-            )}
-            <p className="muted">
-              {bedLineSource === "selected_bed"
-                ? "Selected bed guide: Make one bed will place the next bed beside the selected bed, then select the new bed so you can keep going."
-                : "The shaded shape on the map previews the next bed."}
-            </p>
-            {bedLineSource === "selected_bed" && (
-              <div className="instruction-box full-span">
-                <strong>Next-bed mode:</strong> A bed is selected, so this card is only showing the quick tool for adding one bed beside it. Use the button below to show the full Generate Beds card with count, fill, line, and road controls.
-                <div className="button-row">
-                <button type="button" className="primary-button" onClick={onPickEdge}>
-                  Show full bed generator
-                </button>
-                </div>
-              </div>
-            )}
-            {bedLineSource !== "selected_bed" && (
-              <div className="instruction-box full-span">
-                <strong>Full bed generator:</strong> Count, fill, entrance-side, and harvest-road controls are available below.
-              </div>
-            )}
-            {bedLineSource !== "selected_bed" && (
-              <div className="full-span button-row">
-                <button type="button" className="secondary-button" onClick={onPickEdge}>
-                  Change begining of first bed
-                </button>
-              </div>
-            )}
-            {localNotice && <p className="muted"><strong>{localNotice}</strong></p>}
-            <label>
-              <span>Preset</span>
-              <select value={selectedPresetId} onChange={(event) => setSelectedPresetId(event.target.value)}>
-                {bedPresets.map((preset) => (
-                  <option key={preset.id} value={preset.id}>
-                    {preset.isRoad
-                      ? `${preset.name} (${formatLength(preset.bedWidthM, distanceUnit)} road/path)`
-                      : `${preset.name} (${formatLength(preset.bedWidthM, distanceUnit)} bed / ${formatLength(preset.pathSpacingM, distanceUnit)} path)`}
-                  </option>
-                ))}
-              </select>
-            </label>
-            {!selectedPreset?.isRoad && (
-              <label>
-                <span>First-bed entrance side</span>
-                <select
-                  value={entranceSide}
-                  onChange={(event) => updateEntranceSide(event.target.value === "end")}
-                >
-                  <option value="start">Start side of first bed</option>
-                  <option value="end">Far side of first bed</option>
-                </select>
-              </label>
-            )}
-            <div className="button-row">
-              <button
-                type="button"
-                className="secondary-button"
-                disabled={bedLineCoordinates.length < minPoints || bedLineCoordinates.length > maxPoints || isGenerating}
-                onClick={() => void generateBeds({ count: 1, fillWholeBlock: false })}
-              >
-                {isGenerating ? "Generating..." : selectedPreset?.isRoad ? "Make one road/path" : "Make one bed"}
-              </button>
-            </div>
-            {bedLineSource !== "selected_bed" && !selectedPreset?.isRoad && (
-              <label>
-                <span>How many beds</span>
-                <input value={bedCount} onChange={(event) => setBedCount(event.target.value)} type="number" min="1" max="100" disabled={fillWholeBlock} />
-              </label>
-            )}
-            <label><span>Name prefix</span><input value={namePrefix} onChange={(event) => setNamePrefix(event.target.value)} /></label>
-            <label><span>{bedLineSource === "selected_bed" ? "Next bed number" : "Start number"}</span><input value={startNumber} onChange={(event) => setStartNumber(Number(event.target.value))} type="number" min="1" /></label>
-            {bedLineSource !== "selected_bed" && (
-              <>
-                <label>
-                  <span>Existing beds</span>
-                  <select
-                    value={String(replaceExisting)}
-                    disabled={!hasExistingBeds}
-                    onChange={(event) => {
-                      const nextValue = event.target.value === "true";
-                      setReplaceExisting(nextValue);
-                      setStartNumber(nextValue ? 1 : existingBeds.length + 1);
-                    }}
-                  >
-                    <option value="false">{hasExistingBeds ? "Keep existing beds" : "No existing beds"}</option>
-                    <option value="true">Replace beds in block</option>
-                  </select>
-                </label>
-                <label className="inline-checkbox">
-                  <input type="checkbox" checked={fillWholeBlock} onChange={(event) => setFillWholeBlock(event.target.checked)} />
-                  <span>Fill whole block</span>
-                </label>
-              </>
-            )}
-            {bedLineSource !== "selected_bed" && (
-              <details className="full-span foldout-panel">
-                <summary>Harvest roads</summary>
-                <label className="inline-checkbox">
-                  <input type="checkbox" checked={harvestRoadsEnabled} onChange={(event) => setHarvestRoadsEnabled(event.target.checked)} />
-                  <span>Leave gaps while generating beds</span>
-                </label>
-                <div className="form-grid">
-                  <label>
-                    <span>Road after every</span>
-                    <input value={harvestRoadEveryBeds} onChange={(event) => setHarvestRoadEveryBeds(event.target.value)} type="number" min="1" disabled={!harvestRoadsEnabled} />
-                  </label>
-                  <label>
-                    <span>Road width in bed slots</span>
-                    <input value={harvestRoadWidthBeds} onChange={(event) => setHarvestRoadWidthBeds(event.target.value)} type="number" min="1" max="20" disabled={!harvestRoadsEnabled} />
-                  </label>
-                </div>
-                <button
-                  type="button"
-                  className="secondary-button"
-                  onClick={() => {
-                    setHarvestRoadsEnabled(true);
-                    setHarvestRoadEveryBeds("12");
-                    setHarvestRoadWidthBeds("2");
-                  }}
-                >
-                  Demo road preset: skip 2 beds every 12
-                </button>
-                <p className="muted">Example: road width 2 leaves the space of two beds before continuing.</p>
-              </details>
-            )}
-            {bedLineSource !== "selected_bed" && (
-              <div className="full-span">
-                <MobileListLimiter itemCount={existingBeds.length} itemLabel="existing beds">
-                  <div className="generated-bed-list">
-                    {existingBeds.map((bed) => (
-                      <span key={bed.id} className="small-chip">{bed.name}</span>
-                    ))}
-                  </div>
-                </MobileListLimiter>
-              </div>
-            )}
-            {bedLineSource !== "selected_bed" && (
-              <div className="button-row full-span">
-                <button
-                  type="submit"
-                  className="primary-button"
-                  disabled={bedLineCoordinates.length < minPoints || bedLineCoordinates.length > maxPoints || isGenerating}
-                >
-                  {isGenerating ? "Generating..." : fillWholeBlock ? "Fill block" : "Generate count"}
-                </button>
-                <button
-                  type="button"
-                  className={`secondary-button${tutorialActive && bedLineCoordinates.length >= minPoints ? " tutorial-target" : ""}`}
-                  disabled={bedLineCoordinates.length < minPoints || bedLineCoordinates.length > maxPoints || isGenerating}
-                  onClick={() => void generateBeds({ count: 1, fillWholeBlock: true })}
-                >
-                  Fill remaining block
-                </button>
-              </div>
-            )}
-          </form>
-          <BedPresetCard farmId={farmId} bedPresets={bedPresets} distanceUnit={distanceUnit} onSave={onSave} />
-        </>
-      )}
-    </div>
-  );
-}
-
-// Small helper for old/simple uncontrolled forms. Newer forms often use local state instead.
-async function handleForm(
-  event: FormEvent<HTMLFormElement>,
-  action: (form: FormData) => Promise<void> | Promise<unknown>
-) {
-  event.preventDefault();
-  const formElement = event.currentTarget;
-  await action(new FormData(formElement));
-  formElement.reset();
 }
 
 export default App;

@@ -1,7 +1,7 @@
-import { FormEvent, useState } from "react";
+import { FormEvent, useEffect, useState } from "react";
 import { api } from "../api";
-import { EMAIL_VERIFICATION_BYPASS_ADDRESS, validateAccountInputs } from "../account-utils";
-import { SessionInfo } from "../types";
+import { validateAccountInputs } from "../account-utils";
+import { AuthCapabilities, InvitationPreview, SessionInfo } from "../types";
 
 type LoginScreenProps = {
   error: string | null;
@@ -17,12 +17,20 @@ export function LoginScreen({
   onRegister,
   themeMode
 }: LoginScreenProps) {
-  const [mode, setMode] = useState<"login" | "register">("login");
+  const initialParams = typeof window === "undefined" ? new URLSearchParams() : new URLSearchParams(window.location.search);
+  const [mode, setMode] = useState<"login" | "register" | "forgot" | "resend" | "reset" | "invite">(
+    initialParams.has("reset-password") ? "reset" : initialParams.has("accept-invite") ? "invite" : "login"
+  );
+  const [actionToken] = useState(initialParams.get("token") ?? "");
   const [farmName, setFarmName] = useState("");
   const [email, setEmail] = useState("");
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
+  const [confirmPassword, setConfirmPassword] = useState("");
   const [displayName, setDisplayName] = useState("");
+  const [capabilities, setCapabilities] = useState<AuthCapabilities | null>(null);
+  const [invitation, setInvitation] = useState<InvitationPreview | null>(null);
+  const [developmentActionUrl, setDevelopmentActionUrl] = useState<string | null>(null);
   const [status, setStatus] = useState<string | null>(() => {
     if (typeof window === "undefined") {
       return null;
@@ -42,8 +50,20 @@ export function LoginScreen({
   const [feedbackStatus, setFeedbackStatus] = useState<string | null>(null);
   const [isSavingFeedback, setIsSavingFeedback] = useState(false);
   const passwordHelp = "Password requirements: at least 8 characters, including one letter and one number.";
-  const emailHelp = `Use a real email for beta accounts. ${EMAIL_VERIFICATION_BYPASS_ADDRESS} is reusable for throwaway testing accounts.`;
   const repoUrl = "https://github.com/Maybe-Bot/FarmfieldValley";
+
+  useEffect(() => {
+    void api.getAuthCapabilities().then(setCapabilities).catch(() => setCapabilities(null));
+  }, []);
+
+  useEffect(() => {
+    if (mode !== "invite" || !actionToken) {
+      return;
+    }
+    void api.inspectInvitation(actionToken)
+      .then(setInvitation)
+      .catch((inviteError) => setStatus(inviteError instanceof Error ? inviteError.message : "Could not open invitation."));
+  }, [mode, actionToken]);
 
   async function submitLoginFeedback(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -173,13 +193,37 @@ export function LoginScreen({
         </section>
         <div className="card auth-card">
           <p className="eyebrow">Account access</p>
-          <h2>{mode === "login" ? "Farm login" : "Create farm account"}</h2>
+          <h2>
+            {mode === "login" ? "Farm login"
+              : mode === "register" ? "Create farm account"
+                : mode === "forgot" ? "Reset your password"
+                  : mode === "resend" ? "Resend verification"
+                  : mode === "reset" ? "Choose a new password"
+                    : "Accept farm invitation"}
+          </h2>
           <p className="muted">
             {mode === "login"
               ? "Sign in to your farm account. Planner accounts can manage plans. Worker accounts can record completed work."
-              : "Create a new farm and its first planner account. After that, create worker or planner logins from Settings."}
+              : mode === "register"
+                ? capabilities?.emailVerificationEnabled
+                  ? "Create a new farm and its first planner account. We will email you a verification link before you can log in."
+                  : "Create a new farm and its first planner account. Email verification is disabled on this development server."
+                : mode === "forgot"
+                  ? "Enter your account email. If it matches an active account, we will send a one-hour reset link."
+                  : mode === "resend"
+                    ? "Enter your account email. If it still needs verification, we will send a new 24-hour link."
+                  : mode === "reset"
+                    ? "This will replace your password and sign out other devices."
+                    : invitation
+                      ? invitation.existingAccount
+                        ? `Join ${invitation.farmName} using the password for your existing ${invitation.email} account.`
+                        : `Join ${invitation.farmName}. Choose your own username and password.`
+                      : "Checking this invitation..."}
           </p>
           {(error || status) && <p className="muted"><strong>{status ?? error}</strong></p>}
+          {developmentActionUrl && (
+            <p className="muted"><a href={developmentActionUrl}>Open development email link</a></p>
+          )}
           <form
             className="form-grid"
             onSubmit={(event) => {
@@ -192,21 +236,65 @@ export function LoginScreen({
                     return;
                   }
                 }
+                if ((mode === "register" || mode === "reset" || (mode === "invite" && !invitation?.existingAccount)) && password !== confirmPassword) {
+                  setStatus("Passwords do not match.");
+                  return;
+                }
                 try {
                   setSaving(true);
-                  setStatus(mode === "login" ? "Signing in..." : "Creating account...");
+                  setDevelopmentActionUrl(null);
                   if (mode === "login") {
+                    setStatus("Signing in...");
                     await onLogin(username, password);
-                  } else {
+                    setStatus(null);
+                  } else if (mode === "register") {
+                    setStatus("Creating account...");
                     const nextSession = await onRegister(farmName, displayName, email, username, password);
                     if (!nextSession.authenticated && nextSession.verificationRequired) {
-                      setStatus(`Check ${nextSession.email ?? "your email"} for the verification link before logging in.`);
+                      setDevelopmentActionUrl(nextSession.developmentActionUrl ?? null);
+                      setStatus(nextSession.developmentActionUrl
+                        ? "Account created. Open the development verification link below."
+                        : `Check ${nextSession.email ?? "your email"} for the verification link before logging in.`);
+                      return;
+                    }
+                    setStatus(null);
+                  } else if (mode === "forgot") {
+                    setStatus("Requesting reset link...");
+                    const result = await api.forgotPassword({ email });
+                    setDevelopmentActionUrl(result.developmentActionUrl ?? null);
+                    setStatus(result.developmentActionUrl
+                      ? "Open the development reset link below."
+                      : "If that email matches an active account, a reset link has been sent.");
+                  } else if (mode === "resend") {
+                    setStatus("Requesting verification email...");
+                    const result = await api.resendVerification({ email });
+                    setDevelopmentActionUrl(result.developmentActionUrl ?? null);
+                    setStatus(result.developmentActionUrl
+                      ? "Open the development verification link below."
+                      : "If that account still needs verification, a new link has been sent.");
+                  } else if (mode === "reset") {
+                    setStatus("Changing password...");
+                    await api.resetPassword({ token: actionToken, newPassword: password });
+                    setPassword("");
+                    setConfirmPassword("");
+                    setMode("login");
+                    window.history.replaceState({}, "", window.location.pathname);
+                    setStatus("Password changed. You can log in now.");
+                  } else if (mode === "invite") {
+                    setStatus("Accepting invitation...");
+                    const nextSession = await api.acceptInvitation({
+                      token: actionToken,
+                      username: invitation?.existingAccount ? undefined : username,
+                      password
+                    });
+                    if (nextSession.authenticated) {
+                      window.history.replaceState({}, "", window.location.pathname);
+                      window.location.reload();
                       return;
                     }
                   }
-                  setStatus(null);
                 } catch (loginError) {
-                  setStatus(loginError instanceof Error ? loginError.message : mode === "login" ? "Login failed." : "Account creation failed.");
+                  setStatus(loginError instanceof Error ? loginError.message : "Account request failed.");
                 } finally {
                   setSaving(false);
                 }
@@ -227,32 +315,75 @@ export function LoginScreen({
                   <span>Email</span>
                   <input value={email} onChange={(event) => setEmail(event.target.value)} type="email" autoComplete="email" placeholder="you@example.com" required />
                 </label>
-                <p className="muted full-span">{emailHelp}</p>
               </>
             )}
-            <label className="full-span">
-              <span>Username</span>
-              <input value={username} onChange={(event) => setUsername(event.target.value)} autoComplete="username" required minLength={3} />
-            </label>
-            <label className="full-span">
-              <span>Password</span>
-              <input
-                value={password}
-                onChange={(event) => setPassword(event.target.value)}
-                type="password"
-                autoComplete={mode === "login" ? "current-password" : "new-password"}
-                required
-                minLength={mode === "register" ? 8 : undefined}
-              />
-            </label>
-            {mode === "register" && <p className="muted full-span">{passwordHelp}</p>}
+            {(mode === "forgot" || mode === "resend") && (
+              <label className="full-span">
+                <span>Email</span>
+                <input value={email} onChange={(event) => setEmail(event.target.value)} type="email" autoComplete="email" required />
+              </label>
+            )}
+            {(mode === "login" || mode === "register" || (mode === "invite" && !invitation?.existingAccount)) && (
+              <label className="full-span">
+                <span>Username</span>
+                <input value={username} onChange={(event) => setUsername(event.target.value)} autoComplete="username" required minLength={3} />
+              </label>
+            )}
+            {(mode === "login" || mode === "register" || mode === "reset" || mode === "invite") && (
+              <label className="full-span">
+                <span>{mode === "invite" && invitation?.existingAccount ? "Existing account password" : mode === "login" ? "Password" : "New password"}</span>
+                <input
+                  value={password}
+                  onChange={(event) => setPassword(event.target.value)}
+                  type="password"
+                  autoComplete={mode === "login" || (mode === "invite" && invitation?.existingAccount) ? "current-password" : "new-password"}
+                  required
+                  minLength={mode === "login" ? undefined : 8}
+                />
+              </label>
+            )}
+            {(mode === "register" || mode === "reset" || (mode === "invite" && !invitation?.existingAccount)) && (
+              <label className="full-span">
+                <span>Confirm password</span>
+                <input
+                  value={confirmPassword}
+                  onChange={(event) => setConfirmPassword(event.target.value)}
+                  type="password"
+                  autoComplete="new-password"
+                  required
+                  minLength={8}
+                />
+              </label>
+            )}
+            {(mode === "register" || mode === "reset" || (mode === "invite" && !invitation?.existingAccount)) && <p className="muted full-span">{passwordHelp}</p>}
             <button
               className="primary-button full-span"
-              disabled={saving}
+              disabled={saving || (mode === "invite" && !invitation)}
             >
-              {saving ? (mode === "login" ? "Signing in..." : "Creating...") : (mode === "login" ? "Log in" : "Create farm account")}
+              {saving ? "Saving..."
+                : mode === "login" ? "Log in"
+                  : mode === "register" ? "Create farm account"
+                    : mode === "forgot" ? "Send reset link"
+                      : mode === "resend" ? "Send verification link"
+                      : mode === "reset" ? "Change password"
+                        : "Accept invitation"}
             </button>
           </form>
+          {mode === "login" && (
+            <>
+              <button type="button" className="secondary-button full-span" onClick={() => { setMode("forgot"); setStatus(null); }}>
+                Forgot password
+              </button>
+              <button type="button" className="secondary-button full-span" onClick={() => { setMode("resend"); setStatus(null); }}>
+                Resend verification email
+              </button>
+            </>
+          )}
+          {(mode === "forgot" || mode === "resend" || mode === "reset") && (
+            <button type="button" className="secondary-button full-span" onClick={() => { setMode("login"); setStatus(null); }}>
+              Back to login
+            </button>
+          )}
         </div>
       </main>
       <footer className="page-feedback-bar auth-feedback-bar">

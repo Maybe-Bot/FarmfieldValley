@@ -1,0 +1,33 @@
+FARMMAN USAGE TRACKING PRIVACY POLICY
+
+Usage tracking is optional and off by default.
+
+When enabled, the app may store:
+- A small allow-listed event name such as page_view or page_leave.
+- A coarse page label such as map, tasks, or seed-bank.
+- A broad time range instead of an exact duration.
+- The server time when the event was received.
+
+Usage events do not store:
+- User identity, email, username, or farm identity.
+- Farm records or user-entered content.
+- Browser, device, advertising, anonymous, or session identifiers.
+- Raw web addresses, query strings, click labels, or page titles.
+- Browser user-agent strings, viewport sizes, frontend errors, or error text.
+
+Security and spam controls:
+- Usage submissions require a signed-in account. Anonymous submissions are rejected.
+- Normal CSRF protection applies; there is no beacon or usage-route exemption.
+- The database permits 30 submissions per account per minute by default.
+- Rate-limit account identifiers are kept separately and expire after two hours.
+
+Retention and deletion:
+- Usage information is automatically deleted after 90 days by default.
+- Administrators can delete all stored usage information immediately.
+- Configure limits with USAGE_RETENTION_DAYS and USAGE_RATE_LIMIT_PER_MINUTE.
+
+User control:
+- Each user can enable or disable sharing under Settings > Privacy.
+- The updated tracker removes the browser identifier created by the old implementation.
+- Disabling sharing stops new records.
+- Existing records cannot be linked back to a user because usage rows contain no user or farm identifier.

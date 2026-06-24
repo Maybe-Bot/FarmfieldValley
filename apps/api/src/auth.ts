@@ -108,6 +108,25 @@ export function csrfTokenForRequest(req: express.Request) {
   return sessionToken ? csrfTokenForSession(sessionToken) : null;
 }
 
+export const AUTH_CONTEXT_QUERY = `
+  select
+    session.user_id,
+    app_user.username,
+    app_user.display_name,
+    session.farm_id,
+    farm.name as farm_name,
+    membership.role,
+    app_user.is_admin
+  from user_sessions session
+  join app_users app_user on app_user.id = session.user_id
+  join farm_memberships membership on membership.user_id = session.user_id and membership.farm_id = session.farm_id
+  join farms farm on farm.id = session.farm_id
+  where session.session_token = $1
+    and session.expires_at > now()
+    and app_user.is_active = true
+  limit 1
+`;
+
 // Converts the session cookie into the user, farm, farm role, and admin flag.
 export async function resolveAuthContext(req: express.Request) {
   const sessionToken = readSessionToken(req);
@@ -123,27 +142,7 @@ export async function resolveAuthContext(req: express.Request) {
     farm_name: string;
     role: FarmRole;
     is_admin: boolean;
-  }>(
-    `
-      select
-        session.user_id,
-        app_user.username,
-        app_user.display_name,
-        session.farm_id,
-        farm.name as farm_name,
-        membership.role,
-        app_user.is_admin
-      from user_sessions session
-      join app_users app_user on app_user.id = session.user_id
-      join farm_memberships membership on membership.user_id = session.user_id and membership.farm_id = session.farm_id
-      join farms farm on farm.id = session.farm_id
-      where session.session_token = $1
-        and session.expires_at > now()
-        and app_user.is_active = true
-      limit 1
-    `,
-    [sessionToken]
-  );
+  }>(AUTH_CONTEXT_QUERY, [sessionToken]);
 
   const row = result.rows[0];
   if (!row) {

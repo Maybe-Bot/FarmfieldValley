@@ -13,12 +13,10 @@
  */
 import express from "express";
 import cors from "cors";
-import crypto from "node:crypto";
 import fs from "node:fs/promises";
 import { PoolClient } from "pg";
 import { z } from "zod";
-import { isEmailVerificationBypassAddress, normalizeAccountEmail } from "./account-email";
-import { AuthContext, AuthenticatedRequest, clearSessionCookie, createSessionToken, csrfTokenForRequest, csrfTokenForSession, hashPassword, readSessionToken, resolveAuthContext, setSessionCookie, verifyPassword } from "./auth";
+import { AuthContext, AuthenticatedRequest, csrfTokenForRequest, resolveAuthContext } from "./auth";
 import {
   BedLineMode,
   extendStraightLine,
@@ -33,6 +31,21 @@ import {
 } from "./beds";
 import { pool } from "./db";
 import { config } from "./config";
+import {
+  ensureBedInFarm,
+  ensureBedPresetInFarm,
+  ensureBlockInFarm,
+  ensureBlockZoneInFarm,
+  ensureCoverCropNameInFarm,
+  ensureFieldInFarm,
+  ensurePlantableBedInFarm,
+  ensurePlantingInFarm,
+  ensureSeedItemInFarm,
+  ensureSeedItemLot,
+  ensureTaskFlowInFarm,
+  ensureTaskInFarm,
+  ensureTractorProfileInFarm
+} from "./farm-permissions";
 import { seedStarterSeedCatalog } from "./default-seed-catalog";
 import { boundingBox, normalizeCoordinates, polygonWkt } from "./geometry";
 import {
@@ -40,27 +53,29 @@ import {
   findBestCachedTile,
   readOfflineImageryManifest
 } from "./offline-imagery";
-import { roleMeetsRequirement } from "./permissions";
+import { publicErrorResponse } from "./public-error-response";
+import { asyncHandler, requireRole } from "./route-helpers";
+import { registerAdminRoutes } from "./routes/admin";
+import { registerAuthRoutes } from "./routes/auth";
 import { registerFarmRoutes } from "./routes/farm-routes";
+import { registerAccountManagementRoutes } from "./routes/account-management";
 import { registerUsageEventRoutes } from "./routes/usage-events";
 import { recalculatePlantingTasks } from "./scheduler";
+import { startExpiredSessionCleanup } from "./session-cleanup";
 import {
-  accountCreateSchema,
   BlockPlacementPlanRow,
-  farmSettingsSchema,
-  feedbackReplySchema,
-  feedbackSchema,
-  loginSchema,
   PlantingInput,
-  registerSchema,
   SeedItemLotInput,
   ZoneActualStateInput
 } from "./schemas";
 import { ActualEventType, FarmRole, isCurrentTaskType, isLegacyTaskType, PlantingStatus, TaskType } from "./types";
 import { taskFlowScheduleProblem } from "./task-flow-validation";
-import { assertUndoRestoreIsAccountSafe } from "./undo-safety";
+import {
+  registerUndoRoutes
+} from "./undo";
 
 const app = express();
+app.set("trust proxy", config.trustProxy);
 app.use(cors({
   credentials: true,
   exposedHeaders: ["Content-Disposition"],
@@ -78,186 +93,8 @@ app.use(cors({
 app.use("/api/import/spreadsheet", express.json({ limit: "12mb" }));
 app.use(express.json({ limit: "512kb" }));
 
-async function seedDefaultBedPresets(client: PoolClient, farmId: number) {
-  await client.query(
-    `
-      insert into bed_presets (farm_id, name, bed_width_m, path_spacing_m, is_road, notes)
-      values
-        ($1, 'Bare bed 3 ft', 0.9144, 0.6096, false, 'Default bare bed: 3 ft plantable bed with 2 ft path.'),
-        ($1, 'Plastic bed 3 ft', 0.9144, 0.9144, false, 'Default plastic bed: 3 ft bed with 3 ft path.'),
-        ($1, 'Farm road 12 ft', 3.6576, 0, true, 'Default non-plantable farm road: 12 ft wide.')
-      on conflict (farm_id, name) do update
-      set bed_width_m = excluded.bed_width_m,
-          path_spacing_m = excluded.path_spacing_m,
-          is_road = excluded.is_road,
-          notes = excluded.notes,
-          updated_at = now()
-    `,
-    [farmId]
-  );
-}
 
-type RateLimitBucket = {
-  count: number;
-  resetAt: number;
-};
-
-type LoginLockoutBucket = {
-  failures: number;
-  failureWindowResetAt: number;
-  lockedUntil: number;
-};
-
-const rateLimitBuckets = new Map<string, RateLimitBucket>();
-const loginLockoutBuckets = new Map<string, LoginLockoutBucket>();
-
-function pruneBuckets<T extends { resetAt?: number; failureWindowResetAt?: number; lockedUntil?: number }>(
-  store: Map<string, T>,
-  now: number
-) {
-  for (const [key, value] of store.entries()) {
-    const expiresAt = Math.max(value.resetAt ?? 0, value.failureWindowResetAt ?? 0, value.lockedUntil ?? 0);
-    if (expiresAt <= now) {
-      store.delete(key);
-    }
-  }
-}
-
-function requestIp(req: express.Request) {
-  return req.ip || req.socket.remoteAddress || "unknown";
-}
-
-function enforceRateLimit(
-  req: express.Request,
-  res: express.Response,
-  key: string,
-  options: { limit: number; windowMs: number; message: string }
-) {
-  const now = Date.now();
-  pruneBuckets(rateLimitBuckets, now);
-  const bucket = rateLimitBuckets.get(key);
-  if (!bucket || bucket.resetAt <= now) {
-    rateLimitBuckets.set(key, { count: 1, resetAt: now + options.windowMs });
-    return true;
-  }
-  if (bucket.count >= options.limit) {
-    res.setHeader("Retry-After", String(Math.max(1, Math.ceil((bucket.resetAt - now) / 1000))));
-    res.status(429).json({ error: options.message });
-    return false;
-  }
-  bucket.count += 1;
-  return true;
-}
-
-function loginLockoutKey(req: express.Request, username: string) {
-  return `${requestIp(req)}:${username.trim().toLowerCase()}`;
-}
-
-function enforceLoginLockout(req: express.Request, res: express.Response, username: string) {
-  const now = Date.now();
-  pruneBuckets(loginLockoutBuckets, now);
-  const bucket = loginLockoutBuckets.get(loginLockoutKey(req, username));
-  if (!bucket || bucket.lockedUntil <= now) {
-    return true;
-  }
-  res.setHeader("Retry-After", String(Math.max(1, Math.ceil((bucket.lockedUntil - now) / 1000))));
-  res.status(429).json({ error: "Too many failed login attempts. Try again later." });
-  return false;
-}
-
-function recordLoginFailure(req: express.Request, username: string) {
-  const now = Date.now();
-  const key = loginLockoutKey(req, username);
-  const existing = loginLockoutBuckets.get(key);
-  if (!existing || existing.failureWindowResetAt <= now) {
-    loginLockoutBuckets.set(key, {
-      failures: 1,
-      failureWindowResetAt: now + 15 * 60 * 1000,
-      lockedUntil: 0
-    });
-    return;
-  }
-  existing.failures += 1;
-  if (existing.failures >= 10) {
-    existing.lockedUntil = now + 30 * 60 * 1000;
-  }
-}
-
-function clearLoginFailures(req: express.Request, username: string) {
-  loginLockoutBuckets.delete(loginLockoutKey(req, username));
-}
-
-function createEmailVerificationToken() {
-  return crypto.randomBytes(32).toString("base64url");
-}
-
-function emailVerificationTokenHash(token: string) {
-  return crypto.createHash("sha256").update(token).digest("hex");
-}
-
-function emailVerificationUrl(token: string) {
-  const url = new URL("/api/auth/verify-email", config.publicApiUrl);
-  url.searchParams.set("token", token);
-  return url.toString();
-}
-
-async function sendVerificationEmail(email: string, username: string, token: string) {
-  const url = emailVerificationUrl(token);
-  // There is no SMTP dependency in this prototype yet. Logging the link keeps
-  // local/dev signup usable and gives hosted deployments a single integration
-  // point for a real mail provider later.
-  console.info(`[email verification] ${email} (${username}): ${url}`);
-}
-
-async function createVerifiedSession(
-  client: PoolClient,
-  res: express.Response,
-  user: { id: number; username: string; display_name: string | null; is_admin: boolean },
-  membership: { farm_id: number; farm_name: string; role: FarmRole }
-) {
-  const token = createSessionToken();
-  await client.query(
-    `
-      insert into user_sessions (user_id, farm_id, session_token, expires_at)
-      values ($1, $2, $3, now() + ($4::text || ' days')::interval)
-    `,
-    [user.id, membership.farm_id, token, String(config.sessionMaxAgeDays)]
-  );
-  setSessionCookie(res, token);
-  return {
-    authenticated: true,
-    user: {
-      id: user.id,
-      username: user.username,
-      displayName: user.display_name,
-      farmId: membership.farm_id,
-      farmName: membership.farm_name,
-      role: membership.role,
-      isAdmin: user.is_admin
-    },
-    csrfToken: csrfTokenForSession(token)
-  };
-}
-
-function stringifiedLength(value: unknown) {
-  return JSON.stringify(value).length;
-}
-
-function assertFeedbackPayloadLimits(body: {
-  context?: Record<string, unknown>;
-  recentActivity?: Array<Record<string, unknown>>;
-}) {
-  const contextLength = stringifiedLength(body.context ?? {});
-  const recentActivityLength = stringifiedLength(body.recentActivity ?? []);
-  if (contextLength > 50_000) {
-    throw new Error("Feedback context is too large");
-  }
-  if (recentActivityLength > 50_000) {
-    throw new Error("Feedback activity details are too large");
-  }
-}
-
-function actualUpdateForTaskType(taskType: string): { eventType: ActualEventType; field: string; status: PlantingStatus } | null {
+export function actualUpdateForTaskType(taskType: string): { eventType: ActualEventType; field: string; status: PlantingStatus } | null {
   switch (taskType) {
     case "seed_in_tray":
       return { eventType: "tray_seeding", field: "actual_tray_seeding_date", status: "seeded_in_tray" };
@@ -272,25 +109,17 @@ function actualUpdateForTaskType(taskType: string): { eventType: ActualEventType
   }
 }
 
-function asyncHandler(
-  handler: (req: express.Request, res: express.Response, next: express.NextFunction) => Promise<void>
-) {
-  return (req: express.Request, res: express.Response, next: express.NextFunction) => {
-    void handler(req, res, next).catch(next);
-  };
-}
-
-function todayIsoDate() {
+export function todayIsoDate() {
   return new Date().toISOString().slice(0, 10);
 }
 
-function assertNoFuturePlantingDate(eventType: string, actualDate: string) {
+export function assertNoFuturePlantingDate(eventType: string, actualDate: string) {
   if ((eventType === "tray_seeding" || eventType === "direct_seeding" || eventType === "transplant") && actualDate > todayIsoDate()) {
     throw new Error("Planted dates cannot be in the future");
   }
 }
 
-function assertNoFuturePlantingStatusDate(status: string, sowDate?: string | null, transplantDate?: string | null) {
+export function assertNoFuturePlantingStatusDate(status: string, sowDate?: string | null, transplantDate?: string | null) {
   if ((status === "seeded_in_tray" || status === "direct_seeded") && sowDate && sowDate > todayIsoDate()) {
     throw new Error("Planted dates cannot be in the future");
   }
@@ -299,53 +128,20 @@ function assertNoFuturePlantingStatusDate(status: string, sowDate?: string | nul
   }
 }
 
-function currentAuth(req: express.Request) {
-  return (req as AuthenticatedRequest).auth ?? null;
-}
-
-function requireRole(role: FarmRole = "worker") {
-  return (req: express.Request, res: express.Response, next: express.NextFunction) => {
-    const auth = currentAuth(req);
-    if (!auth) {
-      res.status(401).json({ error: "Login required" });
-      return;
-    }
-
-    if (!roleMeetsRequirement(auth, role)) {
-      res.status(403).json({ error: "Planner access required" });
-      return;
-    }
-
-    next();
-  };
-}
-
-function requireAdmin() {
-  return (req: express.Request, res: express.Response, next: express.NextFunction) => {
-    const auth = currentAuth(req);
-    if (!auth) {
-      res.status(401).json({ error: "Login required" });
-      return;
-    }
-
-    if (!auth.isAdmin) {
-      res.status(403).json({ error: "Admin access required" });
-      return;
-    }
-
-    next();
-  };
-}
-
-// Attach auth data to API requests. Auth bootstrap/session/offline imagery are
-// allowed to run without an existing authenticated farm session.
+// Attach auth data to API requests. Auth bootstrap/session routes are allowed
+// to run without an existing authenticated farm session.
 app.use("/api", asyncHandler(async (req, _res, next) => {
   if (
     req.path === "/auth/login" ||
     req.path === "/auth/register" ||
     req.path === "/auth/verify-email" ||
-    req.path === "/session" ||
-    req.path.startsWith("/offline-imagery/")
+    req.path === "/auth/capabilities" ||
+    req.path === "/auth/forgot-password" ||
+    req.path === "/auth/resend-verification" ||
+    req.path === "/auth/reset-password" ||
+    req.path === "/invitations/inspect" ||
+    req.path === "/invitations/accept" ||
+    req.path === "/session"
   ) {
     next();
     return;
@@ -357,11 +153,6 @@ app.use("/api", asyncHandler(async (req, _res, next) => {
 
 app.use("/api", (req, res, next) => {
   if (["GET", "HEAD", "OPTIONS"].includes(req.method)) {
-    next();
-    return;
-  }
-
-  if (req.path === "/usage/events") {
     next();
     return;
   }
@@ -383,7 +174,7 @@ app.use("/api", (req, res, next) => {
   next();
 });
 
-function rectangleWkt(x: number, y: number, width: number, height: number) {
+export function rectangleWkt(x: number, y: number, width: number, height: number) {
   const x2 = x + width;
   const y2 = y + height;
   return `POLYGON((${x} ${y}, ${x2} ${y}, ${x2} ${y2}, ${x} ${y2}, ${x} ${y}))`;
@@ -391,153 +182,6 @@ function rectangleWkt(x: number, y: number, width: number, height: number) {
 
 // "ensureXInFarm" helpers prevent users from editing records that belong to a
 // different farm. Keep using this pattern when adding new farm-owned records.
-async function ensureFieldInFarm(client: PoolClient, fieldId: number, farmId: number) {
-  const result = await client.query<{ id: number }>(
-    `select id from fields where id = $1 and farm_id = $2`,
-    [fieldId, farmId]
-  );
-  if (!result.rows[0]) {
-    throw new Error("Field not found in this farm");
-  }
-}
-
-async function ensureBlockInFarm(client: PoolClient, blockId: number, farmId: number) {
-  const result = await client.query<{ id: number }>(
-    `
-      select block.id
-      from blocks block
-      join fields field on field.id = block.field_id
-      where block.id = $1 and field.farm_id = $2
-    `,
-    [blockId, farmId]
-  );
-  if (!result.rows[0]) {
-    throw new Error("Block not found in this farm");
-  }
-}
-
-async function ensureBlockZoneInFarm(client: PoolClient, zoneId: number, farmId: number) {
-  const result = await client.query<{ id: number }>(
-    `
-      select zone.id
-      from block_zones zone
-      join blocks block on block.id = zone.block_id
-      join fields field on field.id = block.field_id
-      where zone.id = $1 and field.farm_id = $2
-    `,
-    [zoneId, farmId]
-  );
-  if (!result.rows[0]) {
-    throw new Error("Block zone not found in this farm");
-  }
-}
-
-async function ensureBedInFarm(client: PoolClient, bedId: number, farmId: number) {
-  const result = await client.query<{ id: number }>(
-    `
-      select bed.id
-      from beds bed
-      join blocks block on block.id = bed.block_id
-      join fields field on field.id = block.field_id
-      where bed.id = $1 and field.farm_id = $2
-    `,
-    [bedId, farmId]
-  );
-  if (!result.rows[0]) {
-    throw new Error("Bed not found in this farm");
-  }
-}
-
-async function ensurePlantableBedInFarm(client: PoolClient, bedId: number, farmId: number) {
-  const result = await client.query<{ id: number; source: string }>(
-    `
-      select bed.id, bed.source
-      from beds bed
-      join blocks block on block.id = bed.block_id
-      join fields field on field.id = block.field_id
-      where bed.id = $1 and field.farm_id = $2
-    `,
-    [bedId, farmId]
-  );
-  const bed = result.rows[0];
-  if (!bed) {
-    throw new Error("Bed not found in this farm");
-  }
-  if (bed.source === "road") {
-    throw new Error("Road/path presets are not plantable beds");
-  }
-}
-
-async function ensurePlantingInFarm(client: PoolClient, plantingId: number, farmId: number) {
-  const result = await client.query<{ id: number }>(
-    `select id from plantings where id = $1 and farm_id = $2`,
-    [plantingId, farmId]
-  );
-  if (!result.rows[0]) {
-    throw new Error("Planting not found in this farm");
-  }
-}
-
-async function ensureTaskInFarm(client: PoolClient, taskId: number, farmId: number) {
-  const result = await client.query<{ id: number }>(
-    `select id from tasks where id = $1 and farm_id = $2`,
-    [taskId, farmId]
-  );
-  if (!result.rows[0]) {
-    throw new Error("Task not found in this farm");
-  }
-}
-
-async function ensureTaskFlowInFarm(client: PoolClient, taskFlowId: number, farmId: number) {
-  const result = await client.query<{ id: number }>(
-    `select id from task_flow_templates where id = $1 and farm_id = $2`,
-    [taskFlowId, farmId]
-  );
-  if (!result.rows[0]) {
-    throw new Error("Task flow template not found in this farm");
-  }
-}
-
-async function ensureBedPresetInFarm(client: PoolClient, presetId: number, farmId: number) {
-  const result = await client.query<{ id: number }>(
-    `select id from bed_presets where id = $1 and farm_id = $2`,
-    [presetId, farmId]
-  );
-  if (!result.rows[0]) {
-    throw new Error("Bed preset not found in this farm");
-  }
-}
-
-async function ensureTractorProfileInFarm(client: PoolClient, profileId: number, farmId: number) {
-  const result = await client.query<{ id: number }>(
-    `select id from tractor_profiles where id = $1 and farm_id = $2`,
-    [profileId, farmId]
-  );
-  if (!result.rows[0]) {
-    throw new Error("Tractor not found in this farm");
-  }
-}
-
-async function ensureCoverCropNameInFarm(client: PoolClient, coverCropNameId: number, farmId: number) {
-  const result = await client.query<{ id: number }>(
-    `select id from cover_crop_names where id = $1 and farm_id = $2`,
-    [coverCropNameId, farmId]
-  );
-  if (!result.rows[0]) {
-    throw new Error("Cover crop name not found in this farm");
-  }
-}
-
-async function ensureSeedItemInFarm(client: PoolClient, seedItemId: number, farmId: number) {
-  const result = await client.query<{ id: number }>(
-    `select id from seed_items where id = $1 and farm_id = $2`,
-    [seedItemId, farmId]
-  );
-  if (!result.rows[0]) {
-    throw new Error("Seed item not found in this farm");
-  }
-}
-
 function normalizedSeedLots(lots: SeedItemLotInput[] | undefined, fallbackLotNumber?: string | null, fallbackStockQuantity?: number | null) {
   const rawLots = lots && lots.length > 0
     ? lots
@@ -601,27 +245,7 @@ async function replaceSeedItemLots(
   );
 }
 
-async function ensureSeedItemLot(client: PoolClient, seedItemId: number, farmId: number, lotNumber: string) {
-  await ensureSeedItemInFarm(client, seedItemId, farmId);
-  await client.query(
-    `
-      insert into seed_item_lots (seed_item_id, lot_number)
-      values ($1, $2)
-      on conflict (seed_item_id, lot_number) do update set updated_at = now()
-    `,
-    [seedItemId, lotNumber]
-  );
-  await client.query(
-    `
-      update seed_items
-      set lot_number = coalesce(lot_number, $2), updated_at = now()
-      where id = $1 and farm_id = $3
-    `,
-    [seedItemId, lotNumber, farmId]
-  );
-}
-
-async function learnSeedItemSpacingFromPlanting(client: PoolClient, farmId: number, plantingId: number) {
+export async function learnSeedItemSpacingFromPlanting(client: PoolClient, farmId: number, plantingId: number) {
   const result = await client.query<{
     seed_item_id: number | null;
     spacing: string | null;
@@ -664,7 +288,7 @@ async function learnSeedItemSpacingFromPlanting(client: PoolClient, farmId: numb
   );
 }
 
-async function upsertCoverCropName(
+export async function upsertCoverCropName(
   client: PoolClient,
   options: { farmId: number; coverCropNameId?: number | null; coverCropName?: string | null }
 ) {
@@ -693,10 +317,11 @@ async function upsertCoverCropName(
 
 // Builds bed polygons in PostGIS by offsetting the selected line, clipping each
 // bed to the block, and inserting the resulting footprints.
-async function insertGeneratedBeds(
+export async function insertGeneratedBeds(
   client: PoolClient,
   options: {
     blockId: number;
+    farmId: number;
     presetId: number;
     zoneId?: number | null;
     lineMode: BedLineMode;
@@ -718,8 +343,8 @@ async function insertGeneratedBeds(
   }
 ) {
   const presetResult = await client.query<{ bed_width_m: string; path_spacing_m: string; name: string; is_road: boolean }>(
-    `select bed_width_m, path_spacing_m, name, is_road from bed_presets where id = $1`,
-    [options.presetId]
+    `select bed_width_m, path_spacing_m, name, is_road from bed_presets where id = $1 and farm_id = $2`,
+    [options.presetId, options.farmId]
   );
   if (!presetResult.rows[0]) {
     throw new Error("Bed preset not found");
@@ -727,9 +352,29 @@ async function insertGeneratedBeds(
 
   if (options.replaceExisting) {
     if (options.zoneId != null) {
-      await client.query(`delete from beds where zone_id = $1`, [options.zoneId]);
+      await client.query(
+        `
+          delete from beds bed
+          using blocks block, fields field
+          where bed.block_id = block.id
+            and block.field_id = field.id
+            and field.farm_id = $2
+            and bed.zone_id = $1
+        `,
+        [options.zoneId, options.farmId]
+      );
     } else {
-      await client.query(`delete from beds where block_id = $1`, [options.blockId]);
+      await client.query(
+        `
+          delete from beds bed
+          using blocks block, fields field
+          where bed.block_id = block.id
+            and block.field_id = field.id
+            and field.farm_id = $2
+            and bed.block_id = $1
+        `,
+        [options.blockId, options.farmId]
+      );
     }
   }
 
@@ -776,8 +421,11 @@ async function insertGeneratedBeds(
       block_geom as (
         select ST_Transform(coalesce(zone.boundary, block.boundary), 3857) as geom
         from blocks block
+        join fields field on field.id = block.field_id
         left join block_zones zone on zone.id = $13
         where block.id = $1
+          and field.farm_id = $16
+          and ($13::integer is null or zone.id is not null)
       ),
       base_line as (
         select ST_GeomFromText($2, 3857) as geom
@@ -832,7 +480,10 @@ async function insertGeneratedBeds(
           exists (
             select 1
             from beds existing
+            join blocks existing_block on existing_block.id = existing.block_id
+            join fields existing_field on existing_field.id = existing_block.field_id
             where existing.block_id = $1
+              and existing_field.farm_id = $16
               and not (existing.id = any($15::integer[]))
               and ST_Area(ST_Intersection(existing.geom, bounded.geom)) > greatest(ST_Area(bounded.geom) * 0.01, 0.05)
           ) as overlaps_existing
@@ -873,8 +524,11 @@ async function insertGeneratedBeds(
       block_geom as (
         select ST_Transform(coalesce(zone.boundary, block.boundary), 3857) as geom
         from blocks block
+        join fields field on field.id = block.field_id
         left join block_zones zone on zone.id = $12
         where block.id = $1
+          and field.farm_id = $15
+          and ($12::integer is null or zone.id is not null)
       ),
       base_line as (
         select ST_GeomFromText($2, 3857) as geom
@@ -940,7 +594,10 @@ async function insertGeneratedBeds(
           exists (
             select 1
             from beds existing
+            join blocks existing_block on existing_block.id = existing.block_id
+            join fields existing_field on existing_field.id = existing_block.field_id
             where existing.block_id = $1
+              and existing_field.farm_id = $15
               and not (existing.id = any($14::integer[]))
               and ST_Area(ST_Intersection(existing.geom, bounded.geom)) > greatest(ST_Area(bounded.geom) * 0.01, 0.05)
           ) as overlaps_existing
@@ -995,7 +652,8 @@ async function insertGeneratedBeds(
           options.startNumber + sequenceIndex,
           options.zoneId ?? null,
           isRoadPreset ? "road" : "generated",
-          options.ignoreBedIds ?? []
+          options.ignoreBedIds ?? [],
+          options.farmId
         ]
       : [
           options.blockId,
@@ -1011,7 +669,8 @@ async function insertGeneratedBeds(
           options.startNumber + sequenceIndex,
           options.zoneId ?? null,
           isRoadPreset ? "road" : "generated",
-          options.ignoreBedIds ?? []
+          options.ignoreBedIds ?? [],
+          options.farmId
         ];
     const result = await client.query<{ id: number }>(sql, params);
     return result.rows[0]?.id ?? null;
@@ -1046,7 +705,17 @@ async function insertGeneratedBeds(
   }
 
   if (primaryIds.length > 0) {
-    await client.query(`delete from beds where id = any($1::int[])`, [primaryIds]);
+    await client.query(
+      `
+        delete from beds bed
+        using blocks block, fields field
+        where bed.block_id = block.id
+          and block.field_id = field.id
+          and field.farm_id = $2
+          and bed.id = any($1::int[])
+      `,
+      [primaryIds, options.farmId]
+    );
   }
 
   const alternateIds = await generateForSide(alternateSide);
@@ -1056,7 +725,17 @@ async function insertGeneratedBeds(
   }
 
   if (alternateIds.length > 0) {
-    await client.query(`delete from beds where id = any($1::int[])`, [alternateIds]);
+    await client.query(
+      `
+        delete from beds bed
+        using blocks block, fields field
+        where bed.block_id = block.id
+          and block.field_id = field.id
+          and field.farm_id = $2
+          and bed.id = any($1::int[])
+      `,
+      [alternateIds, options.farmId]
+    );
   }
 
   if (primaryIds.length > 0) {
@@ -1073,7 +752,7 @@ async function insertGeneratedBeds(
   throw new Error("Beds do not fit inside the selected block from the chosen line, or they overlap current beds");
 }
 
-async function blockIdForBed(client: PoolClient, bedId: number, farmId: number) {
+export async function blockIdForBed(client: PoolClient, bedId: number, farmId: number) {
   const result = await client.query<{ block_id: number }>(
     `
       select bed.block_id
@@ -1087,7 +766,7 @@ async function blockIdForBed(client: PoolClient, bedId: number, farmId: number) 
   return result.rows[0]?.block_id ?? null;
 }
 
-async function fieldIdForBlock(client: PoolClient, blockId: number, farmId: number) {
+export async function fieldIdForBlock(client: PoolClient, blockId: number, farmId: number) {
   const result = await client.query<{ field_id: number }>(
     `
       select block.field_id
@@ -1100,7 +779,7 @@ async function fieldIdForBlock(client: PoolClient, blockId: number, farmId: numb
   return result.rows[0]?.field_id ?? null;
 }
 
-async function plantingLocationIds(client: PoolClient, auth: AuthContext, body: PlantingInput) {
+export async function plantingLocationIds(client: PoolClient, auth: AuthContext, body: PlantingInput) {
   let intendedFieldId = body.intendedFieldId ?? null;
   let intendedBlockId = body.intendedBlockId ?? null;
 
@@ -1121,7 +800,7 @@ async function plantingLocationIds(client: PoolClient, auth: AuthContext, body: 
   return { intendedFieldId, intendedBlockId };
 }
 
-async function createPlantingFromInput(client: PoolClient, auth: AuthContext, body: PlantingInput) {
+export async function createPlantingFromInput(client: PoolClient, auth: AuthContext, body: PlantingInput) {
   assertNoFuturePlantingStatusDate(body.status, body.plannedSowDate, body.plannedTransplantDate);
   if (body.intendedBedId != null) {
     await ensurePlantableBedInFarm(client, body.intendedBedId, auth.farmId);
@@ -1193,14 +872,18 @@ async function createPlantingFromInput(client: PoolClient, auth: AuthContext, bo
   return { plantingId, intendedBlockId };
 }
 
-async function upsertBlockBedMakingTask(client: PoolClient, farmId: number, blockId: number) {
+export async function upsertBlockBedMakingTask(client: PoolClient, farmId: number, blockId: number) {
   const context = await client.query<{ block_name: string; field_name: string; first_bed_id: number | null; scheduled_date: string | null }>(
     `
       with first_bed as (
-        select id
-        from beds
-        where block_id = $2 and source <> 'road'
-        order by sequence_no nulls last, id
+        select bed.id
+        from beds bed
+        join blocks block on block.id = bed.block_id
+        join fields field on field.id = block.field_id
+        where bed.block_id = $2
+          and field.farm_id = $1
+          and bed.source <> 'road'
+        order by bed.sequence_no nulls last, bed.id
         limit 1
       ),
       first_planting_date as (
@@ -1386,7 +1069,7 @@ async function blockHasAutoPlacementPlan(client: PoolClient, farmId: number, blo
   return Number(result.rows[0]?.count ?? 0) > 0;
 }
 
-async function reflowBlockPlacementPlan(
+export async function reflowBlockPlacementPlan(
   client: PoolClient,
   farmId: number,
   blockId: number,
@@ -1397,13 +1080,16 @@ async function reflowBlockPlacementPlan(
 
   const bedsResult = await client.query<{ id: number; bed_length_m: string }>(
     `
-      select id, bed_length_m
-      from beds
-      where block_id = $1
-        and source <> 'road'
-      order by sequence_no nulls last, id
+      select bed.id, bed.bed_length_m
+      from beds bed
+      join blocks block on block.id = bed.block_id
+      join fields field on field.id = block.field_id
+      where bed.block_id = $1
+        and field.farm_id = $2
+        and bed.source <> 'road'
+      order by bed.sequence_no nulls last, bed.id
     `,
-    [blockId]
+    [blockId, farmId]
   );
 
   await client.query(
@@ -1536,7 +1222,7 @@ async function reflowBlockPlacementPlan(
   }
 }
 
-async function reflowExistingBlockPlacementPlan(client: PoolClient, farmId: number, blockId: number) {
+export async function reflowExistingBlockPlacementPlan(client: PoolClient, farmId: number, blockId: number) {
   if (!await blockHasAutoPlacementPlan(client, farmId, blockId)) {
     return;
   }
@@ -1548,7 +1234,7 @@ async function reflowExistingBlockPlacementPlan(client: PoolClient, farmId: numb
   await reflowBlockPlacementPlan(client, farmId, blockId, block.rows[0]?.entrance_side ?? "start", rows);
 }
 
-async function moveBlockBedAssignmentsToOverflowForReplacement(
+export async function moveBlockBedAssignmentsToOverflowForReplacement(
   client: PoolClient,
   farmId: number,
   blockId: number,
@@ -1669,10 +1355,13 @@ async function moveBlockBedAssignmentsToOverflowForReplacement(
   await client.query(
     `
       with target_beds as (
-        select id
-        from beds
-        where block_id = $2
-          and ($3::integer is null or zone_id = $3)
+        select bed.id
+        from beds bed
+        join blocks block on block.id = bed.block_id
+        join fields field on field.id = block.field_id
+        where bed.block_id = $2
+          and field.farm_id = $1
+          and ($3::integer is null or bed.zone_id = $3)
       )
       delete from block_placement_gaps gap
       using target_beds target
@@ -1684,10 +1373,13 @@ async function moveBlockBedAssignmentsToOverflowForReplacement(
   await client.query(
     `
       with target_beds as (
-        select id
-        from beds
-        where block_id = $2
-          and ($3::integer is null or zone_id = $3)
+        select bed.id
+        from beds bed
+        join blocks block on block.id = bed.block_id
+        join fields field on field.id = block.field_id
+        where bed.block_id = $2
+          and field.farm_id = $1
+          and ($3::integer is null or bed.zone_id = $3)
       )
       delete from planting_placements placement
       using target_beds target, plantings planting
@@ -1700,10 +1392,13 @@ async function moveBlockBedAssignmentsToOverflowForReplacement(
   await client.query(
     `
       with target_beds as (
-        select id
-        from beds
-        where block_id = $2
-          and ($3::integer is null or zone_id = $3)
+        select bed.id
+        from beds bed
+        join blocks block on block.id = bed.block_id
+        join fields field on field.id = block.field_id
+        where bed.block_id = $2
+          and field.farm_id = $1
+          and ($3::integer is null or bed.zone_id = $3)
       )
       update plantings planting
       set intended_bed_id = null, updated_at = now()
@@ -1745,7 +1440,7 @@ async function moveBlockBedAssignmentsToOverflowForReplacement(
   }
 }
 
-async function appendPlantingToBlockPlacementPlan(client: PoolClient, farmId: number, blockId: number, plantingId: number) {
+export async function appendPlantingToBlockPlacementPlan(client: PoolClient, farmId: number, blockId: number, plantingId: number) {
   if (!await blockHasPlantableBeds(client, blockId, farmId)) {
     return;
   }
@@ -1782,7 +1477,7 @@ async function appendPlantingToBlockPlacementPlan(client: PoolClient, farmId: nu
   ]);
 }
 
-async function clearIntendedBedsForField(client: PoolClient, fieldId: number) {
+export async function clearIntendedBedsForField(client: PoolClient, fieldId: number, farmId: number) {
   await client.query(
     `
       update plantings
@@ -1791,31 +1486,38 @@ async function clearIntendedBedsForField(client: PoolClient, fieldId: number) {
         select bed.id
         from beds bed
         join blocks block on block.id = bed.block_id
+        join fields field on field.id = block.field_id
         where block.field_id = $1
+          and field.farm_id = $2
       )
+        and farm_id = $2
     `,
-    [fieldId]
+    [fieldId, farmId]
   );
 }
 
-async function clearIntendedBedsForBlock(client: PoolClient, blockId: number) {
+export async function clearIntendedBedsForBlock(client: PoolClient, blockId: number, farmId: number) {
   await client.query(
     `
       update plantings
       set intended_bed_id = null, updated_at = now()
       where intended_bed_id in (
-        select id
-        from beds
-        where block_id = $1
+        select bed.id
+        from beds bed
+        join blocks block on block.id = bed.block_id
+        join fields field on field.id = block.field_id
+        where bed.block_id = $1
+          and field.farm_id = $2
       )
+        and farm_id = $2
     `,
-    [blockId]
+    [blockId, farmId]
   );
 }
 
 // Field/block/zone geometry helpers write both old bounding-box columns and new
 // PostGIS geometry columns so older prototype UI code and newer map code agree.
-async function upsertFieldGeometry(
+export async function upsertFieldGeometry(
   client: PoolClient,
   options: {
     id?: number;
@@ -1856,7 +1558,7 @@ async function upsertFieldGeometry(
     return result.rows[0].id;
   }
 
-  await client.query(
+  const updateResult = await client.query(
     `
       update fields
       set
@@ -1871,10 +1573,13 @@ async function upsertFieldGeometry(
         centroid = ST_Centroid(ST_GeomFromText($8, 4326)),
         area_sqm = ST_Area(ST_GeomFromText($8, 4326)::geography),
         updated_at = now()
-      where id = $1
+      where id = $1 and farm_id = $9
     `,
-    [options.id, options.name, options.notes ?? null, box.x, box.y, box.width, box.height, wkt]
+    [options.id, options.name, options.notes ?? null, box.x, box.y, box.width, box.height, wkt, options.farmId]
   );
+  if (updateResult.rowCount !== 1) {
+    throw new Error("Field not found in this farm");
+  }
   console.info("Updated field geometry", { fieldId: options.id, pointCount: coordinates.length });
   return options.id;
 }
@@ -1882,6 +1587,7 @@ async function upsertFieldGeometry(
 async function validateBlockBoundary(
   client: PoolClient,
   fieldId: number,
+  farmId: number,
   wkt: string
 ) {
   const result = await client.query<{ outside_sqm: number; is_valid: boolean }>(
@@ -1890,9 +1596,9 @@ async function validateBlockBoundary(
         coalesce(ST_Area(ST_Difference(ST_GeomFromText($2, 4326), boundary)::geography), 0) as outside_sqm,
         ST_IsValid(ST_GeomFromText($2, 4326)) as is_valid
       from fields
-      where id = $1
+      where id = $1 and farm_id = $3
     `,
-    [fieldId, wkt]
+    [fieldId, wkt, farmId]
   );
 
   const row = result.rows[0];
@@ -1911,11 +1617,12 @@ async function validateBlockBoundary(
   return null;
 }
 
-async function upsertBlockGeometry(
+export async function upsertBlockGeometry(
   client: PoolClient,
   options: {
     id?: number;
     fieldId: number;
+    farmId: number;
     name: string;
     notes?: string | null;
     coordinates: Array<{ lat: number; lng: number }>;
@@ -1924,7 +1631,7 @@ async function upsertBlockGeometry(
   const coordinates = normalizeCoordinates(options.coordinates);
   const wkt = polygonWkt(coordinates);
   const box = boundingBox(coordinates);
-  const warning = await validateBlockBoundary(client, options.fieldId, wkt);
+  const warning = await validateBlockBoundary(client, options.fieldId, options.farmId, wkt);
 
   if (options.id == null) {
     const result = await client.query<{ id: number }>(
@@ -1944,7 +1651,7 @@ async function upsertBlockGeometry(
     return { id: result.rows[0].id, warning };
   }
 
-  await client.query(
+  const updateResult = await client.query(
     `
       update blocks
       set
@@ -1961,13 +1668,17 @@ async function upsertBlockGeometry(
         area_sqm = ST_Area(ST_GeomFromText($9, 4326)::geography),
         updated_at = now()
       where id = $1
+        and field_id in (select id from fields where farm_id = $10)
     `,
-    [options.id, options.fieldId, options.name, options.notes ?? null, box.x, box.y, box.width, box.height, wkt]
+    [options.id, options.fieldId, options.name, options.notes ?? null, box.x, box.y, box.width, box.height, wkt, options.farmId]
   );
+  if (updateResult.rowCount !== 1) {
+    throw new Error("Block not found in this farm");
+  }
   return { id: options.id, warning };
 }
 
-async function ensureDefaultBlockArea(
+export async function ensureDefaultBlockArea(
   client: PoolClient,
   options: {
     blockId: number;
@@ -1978,8 +1689,15 @@ async function ensureDefaultBlockArea(
   }
 ) {
   const existing = await client.query<{ id: number }>(
-    `select id from block_zones where block_id = $1 limit 1`,
-    [options.blockId]
+    `
+      select zone.id
+      from block_zones zone
+      join blocks block on block.id = zone.block_id
+      join fields field on field.id = block.field_id
+      where zone.block_id = $1 and field.farm_id = $2
+      limit 1
+    `,
+    [options.blockId, options.farmId]
   );
 
   if (existing.rows[0]) {
@@ -1999,7 +1717,7 @@ async function ensureDefaultBlockArea(
   return area.id;
 }
 
-async function getBedContext(client: PoolClient, bedId: number) {
+export async function getBedContext(client: PoolClient, bedId: number, farmId: number) {
   const result = await client.query<{
     field_id: number;
     block_id: number;
@@ -2017,9 +1735,9 @@ async function getBedContext(client: PoolClient, bedId: number) {
       from beds bed
       join blocks block on block.id = bed.block_id
       join fields field on field.id = block.field_id
-      where bed.id = $1
+      where bed.id = $1 and field.farm_id = $2
     `,
-    [bedId]
+    [bedId, farmId]
   );
 
   const row = result.rows[0];
@@ -2032,7 +1750,7 @@ async function getBedContext(client: PoolClient, bedId: number) {
 
 // Farm events are the dated history layer: what happened, where, and what it
 // changed. The map time slider can use these records to reconstruct state.
-async function recordFarmEvent(
+export async function recordFarmEvent(
   client: PoolClient,
   options: {
     farmId: number;
@@ -2088,304 +1806,11 @@ async function recordFarmEvent(
   );
 }
 
-const undoSnapshotTableNames = [
-  "fields",
-  "blocks",
-  "cover_crop_names",
-  "seed_items",
-  "seed_item_lots",
-  "bed_presets",
-  "tractor_profiles",
-  "block_zones",
-  "beds",
-  "task_flow_templates",
-  "task_flow_steps",
-  "task_flow_nodes",
-  "task_flow_edges",
-  "plantings",
-  "planting_placements",
-  "block_placement_gaps",
-  "block_placement_overflows",
-  "tasks",
-  "harvest_records",
-  "farm_events"
-] as const;
-
-const undoSnapshotSequenceNames = [
-  "fields",
-  "blocks",
-  "cover_crop_names",
-  "seed_items",
-  "seed_item_lots",
-  "bed_presets",
-  "tractor_profiles",
-  "block_zones",
-  "beds",
-  "task_flow_templates",
-  "task_flow_steps",
-  "task_flow_nodes",
-  "task_flow_edges",
-  "plantings",
-  "planting_placements",
-  "block_placement_gaps",
-  "block_placement_overflows",
-  "tasks",
-  "harvest_records",
-  "farm_events"
-] as const;
-
-async function captureFarmSnapshot(
-  client: PoolClient,
-  farmId: number
-) {
-  const result = await client.query<{ snapshot: Record<string, unknown> }>(
-    `
-      select jsonb_build_object(
-        'fields', (select coalesce(jsonb_agg(to_jsonb(field) order by field.id), '[]'::jsonb) from fields field where field.farm_id = $1),
-        'blocks', (
-          select coalesce(jsonb_agg(to_jsonb(block) order by block.id), '[]'::jsonb)
-          from blocks block
-          join fields field on field.id = block.field_id
-          where field.farm_id = $1
-        ),
-        'cover_crop_names', (select coalesce(jsonb_agg(to_jsonb(cover_crop) order by cover_crop.id), '[]'::jsonb) from cover_crop_names cover_crop where cover_crop.farm_id = $1),
-        'seed_items', (select coalesce(jsonb_agg(to_jsonb(seed) order by seed.id), '[]'::jsonb) from seed_items seed where seed.farm_id = $1),
-        'seed_item_lots', (
-          select coalesce(jsonb_agg(to_jsonb(lot) order by lot.id), '[]'::jsonb)
-          from seed_item_lots lot
-          join seed_items seed on seed.id = lot.seed_item_id
-          where seed.farm_id = $1
-        ),
-        'bed_presets', (select coalesce(jsonb_agg(to_jsonb(preset) order by preset.id), '[]'::jsonb) from bed_presets preset where preset.farm_id = $1),
-        'tractor_profiles', (select coalesce(jsonb_agg(to_jsonb(profile) order by profile.id), '[]'::jsonb) from tractor_profiles profile where profile.farm_id = $1),
-        'block_zones', (
-          select coalesce(jsonb_agg(to_jsonb(zone) order by zone.id), '[]'::jsonb)
-          from block_zones zone
-          join blocks block on block.id = zone.block_id
-          join fields field on field.id = block.field_id
-          where field.farm_id = $1
-        ),
-        'beds', (
-          select coalesce(jsonb_agg(to_jsonb(bed) order by bed.id), '[]'::jsonb)
-          from beds bed
-          join blocks block on block.id = bed.block_id
-          join fields field on field.id = block.field_id
-          where field.farm_id = $1
-        ),
-        'task_flow_templates', (select coalesce(jsonb_agg(to_jsonb(template) order by template.id), '[]'::jsonb) from task_flow_templates template where template.farm_id = $1),
-        'task_flow_steps', (
-          select coalesce(jsonb_agg(to_jsonb(step) order by step.id), '[]'::jsonb)
-          from task_flow_steps step
-          join task_flow_templates template on template.id = step.flow_template_id
-          where template.farm_id = $1
-        ),
-        'task_flow_nodes', (
-          select coalesce(jsonb_agg(to_jsonb(node) order by node.id), '[]'::jsonb)
-          from task_flow_nodes node
-          join task_flow_templates template on template.id = node.flow_template_id
-          where template.farm_id = $1
-        ),
-        'task_flow_edges', (
-          select coalesce(jsonb_agg(to_jsonb(edge) order by edge.id), '[]'::jsonb)
-          from task_flow_edges edge
-          join task_flow_templates template on template.id = edge.flow_template_id
-          where template.farm_id = $1
-        ),
-        'plantings', (select coalesce(jsonb_agg(to_jsonb(planting) order by planting.id), '[]'::jsonb) from plantings planting where planting.farm_id = $1),
-        'planting_placements', (
-          select coalesce(jsonb_agg(to_jsonb(placement) order by placement.id), '[]'::jsonb)
-          from planting_placements placement
-          join plantings planting on planting.id = placement.planting_id
-          where planting.farm_id = $1
-        ),
-        'block_placement_gaps', (select coalesce(jsonb_agg(to_jsonb(gap) order by gap.id), '[]'::jsonb) from block_placement_gaps gap where gap.farm_id = $1),
-        'block_placement_overflows', (select coalesce(jsonb_agg(to_jsonb(overflow) order by overflow.id), '[]'::jsonb) from block_placement_overflows overflow where overflow.farm_id = $1),
-        'tasks', (select coalesce(jsonb_agg(to_jsonb(task) order by task.id), '[]'::jsonb) from tasks task where task.farm_id = $1),
-        'harvest_records', (select coalesce(jsonb_agg(to_jsonb(harvest) order by harvest.id), '[]'::jsonb) from harvest_records harvest where harvest.farm_id = $1),
-        'farm_events', (select coalesce(jsonb_agg(to_jsonb(event) order by event.id), '[]'::jsonb) from farm_events event where event.farm_id = $1)
-      ) as snapshot
-    `,
-    [farmId]
-  );
-
-  return result.rows[0]?.snapshot ?? {};
-}
-
-// Undo/redo is snapshot-based. Before a change, we capture the important farm
-// tables, then restore that JSON later if the user clicks Undo.
-async function createUndoSnapshot(
-  client: PoolClient,
-  auth: AuthContext,
-  label: string
-) {
-  // This is a prototype-friendly undo model: capture the farm's mutable planning
-  // tables before a write, then restore the latest snapshot if the user clicks Undo.
-  // A new write after Undo clears the redo branch, matching normal undo/redo behavior.
-  await client.query(
-    `delete from undo_snapshots where farm_id = $1 and user_id = $2 and undone_at is not null`,
-    [auth.farmId, auth.userId]
-  );
-  const snapshot = await captureFarmSnapshot(client, auth.farmId);
-
-  await client.query(
-    `
-      insert into undo_snapshots (farm_id, user_id, label, snapshot)
-      values ($1, $2, $3, $4::jsonb)
-    `,
-    [auth.farmId, auth.userId, label, JSON.stringify(snapshot)]
-  );
-}
-
-async function pruneUndoSnapshots(client: PoolClient, auth: AuthContext) {
-  await client.query(
-    `
-      delete from undo_snapshots
-      where farm_id = $1
-        and user_id = $2
-        and id not in (
-          select id
-          from undo_snapshots
-          where farm_id = $1 and user_id = $2 and undone_at is null
-          order by created_at desc, id desc
-          limit 8
-        )
-        and id not in (
-          select id
-          from undo_snapshots
-          where farm_id = $1 and user_id = $2 and undone_at is not null
-          order by created_at desc, id desc
-          limit 4
-        )
-    `,
-    [auth.farmId, auth.userId]
-  );
-}
-
-async function resetSerialSequence(client: PoolClient, tableName: string) {
-  await client.query(`
-    select setval(
-      pg_get_serial_sequence('${tableName}', 'id'),
-      greatest(coalesce((select max(id) from ${tableName}), 0), 1),
-      coalesce((select max(id) from ${tableName}), 0) > 0
-    )
-  `);
-}
-
-async function restoreFarmSnapshot(
-  client: PoolClient,
-  farmId: number,
-  snapshot: Record<string, unknown>
-) {
-  const snapshotHasSeedItemLots = Object.prototype.hasOwnProperty.call(snapshot, "seed_item_lots");
-  const fallbackSeedItemLots = snapshotHasSeedItemLots
-    ? null
-    : await client.query<{ lots: unknown }>(
-        `
-          select coalesce(jsonb_agg(to_jsonb(lot) order by lot.id), '[]'::jsonb) as lots
-          from seed_item_lots lot
-          join seed_items seed on seed.id = lot.seed_item_id
-          where seed.farm_id = $1
-        `,
-        [farmId]
-      ).then((result) => result.rows[0]?.lots ?? []);
-  await client.query(`delete from farm_events where farm_id = $1`, [farmId]);
-  await client.query(`delete from harvest_records where farm_id = $1`, [farmId]);
-  await client.query(`delete from tasks where farm_id = $1`, [farmId]);
-  await client.query(`delete from block_placement_overflows where farm_id = $1`, [farmId]);
-  await client.query(`delete from block_placement_gaps where farm_id = $1`, [farmId]);
-  await client.query(`delete from planting_placements where planting_id in (select id from plantings where farm_id = $1)`, [farmId]);
-  await client.query(`delete from plantings where farm_id = $1`, [farmId]);
-  await client.query(`delete from task_flow_edges where flow_template_id in (select id from task_flow_templates where farm_id = $1)`, [farmId]);
-  await client.query(`delete from task_flow_nodes where flow_template_id in (select id from task_flow_templates where farm_id = $1)`, [farmId]);
-  await client.query(`delete from task_flow_steps where flow_template_id in (select id from task_flow_templates where farm_id = $1)`, [farmId]);
-  await client.query(`delete from task_flow_templates where farm_id = $1`, [farmId]);
-  await client.query(
-    `
-      delete from beds
-      where block_id in (
-        select block.id
-        from blocks block
-        join fields field on field.id = block.field_id
-        where field.farm_id = $1
-      )
-    `,
-    [farmId]
-  );
-  await client.query(
-    `
-      delete from block_zones
-      where block_id in (
-        select block.id
-        from blocks block
-        join fields field on field.id = block.field_id
-        where field.farm_id = $1
-      )
-    `,
-    [farmId]
-  );
-  await client.query(`delete from cover_crop_names where farm_id = $1`, [farmId]);
-  if (snapshotHasSeedItemLots) {
-    await client.query(`delete from seed_item_lots where seed_item_id in (select id from seed_items where farm_id = $1)`, [farmId]);
-  }
-  await client.query(`delete from seed_items where farm_id = $1`, [farmId]);
-  await client.query(`delete from bed_presets where farm_id = $1`, [farmId]);
-  await client.query(`delete from tractor_profiles where farm_id = $1`, [farmId]);
-  await client.query(`delete from blocks where field_id in (select id from fields where farm_id = $1)`, [farmId]);
-  await client.query(`delete from fields where farm_id = $1`, [farmId]);
-
-  // jsonb_populate_recordset lets Postgres rehydrate date, numeric, array, jsonb,
-  // and PostGIS geometry columns using the same text representations it exported.
-  for (const tableName of undoSnapshotTableNames) {
-    if (tableName === "seed_item_lots" && !snapshotHasSeedItemLots) {
-      continue;
-    }
-    await client.query(
-      `insert into ${tableName} select * from jsonb_populate_recordset(null::${tableName}, $1::jsonb->'${tableName}')`,
-      [JSON.stringify(snapshot)]
-    );
-  }
-
-  if (!snapshotHasSeedItemLots && fallbackSeedItemLots) {
-    await client.query(
-      `
-        insert into seed_item_lots
-        select lot.*
-        from jsonb_populate_recordset(null::seed_item_lots, $1::jsonb) as lot
-        where exists (select 1 from seed_items seed where seed.id = lot.seed_item_id)
-      `,
-      [JSON.stringify(fallbackSeedItemLots)]
-    );
-  }
-
-  for (const tableName of undoSnapshotSequenceNames) {
-    await resetSerialSequence(client, tableName);
-  }
-}
-
-async function runWithUndoSnapshot<T>(
-  auth: AuthContext,
-  label: string,
-  work: (client: PoolClient) => Promise<T>
-) {
-  const client = await pool.connect();
-  try {
-    await client.query("begin");
-    await createUndoSnapshot(client, auth, label);
-    const result = await work(client);
-    await pruneUndoSnapshots(client, auth);
-    await client.query("commit");
-    return result;
-  } catch (error) {
-    await client.query("rollback");
-    throw error;
-  } finally {
-    client.release();
-  }
-}
 
 async function validateBlockZoneBoundary(
   client: PoolClient,
   blockId: number,
+  farmId: number,
   wkt: string
 ) {
   const result = await client.query<{ outside_sqm: number; is_valid: boolean }>(
@@ -2393,10 +1818,11 @@ async function validateBlockZoneBoundary(
       select
         coalesce(ST_Area(ST_Difference(ST_GeomFromText($2, 4326), boundary)::geography), 0) as outside_sqm,
         ST_IsValid(ST_GeomFromText($2, 4326)) as is_valid
-      from blocks
-      where id = $1
+      from blocks block
+      join fields field on field.id = block.field_id
+      where block.id = $1 and field.farm_id = $3
     `,
-    [blockId, wkt]
+    [blockId, wkt, farmId]
   );
 
   const row = result.rows[0];
@@ -2415,7 +1841,7 @@ async function validateBlockZoneBoundary(
   return null;
 }
 
-async function upsertBlockZoneGeometry(
+export async function upsertBlockZoneGeometry(
   client: PoolClient,
   options: {
     id?: number;
@@ -2437,7 +1863,7 @@ async function upsertBlockZoneGeometry(
   const coordinates = normalizeCoordinates(options.coordinates);
   const wkt = polygonWkt(coordinates);
   const box = boundingBox(coordinates);
-  const warning = await validateBlockZoneBoundary(client, options.blockId, wkt);
+  const warning = await validateBlockZoneBoundary(client, options.blockId, options.farmId, wkt);
   const coverCropNameId = options.plannedUse === "cover_crop"
     ? await upsertCoverCropName(client, {
         farmId: options.farmId,
@@ -2491,7 +1917,7 @@ async function upsertBlockZoneGeometry(
     return { id: result.rows[0].id, warning };
   }
 
-  await client.query(
+  const updateResult = await client.query(
     `
       update block_zones
       set
@@ -2515,6 +1941,12 @@ async function upsertBlockZoneGeometry(
         area_sqm = ST_Area(ST_GeomFromText($16, 4326)::geography),
         updated_at = now()
       where id = $1
+        and block_id in (
+          select block.id
+          from blocks block
+          join fields field on field.id = block.field_id
+          where field.farm_id = $17
+        )
     `,
     [
       options.id,
@@ -2532,18 +1964,23 @@ async function upsertBlockZoneGeometry(
       box.y,
       box.width,
       box.height,
-      wkt
+      wkt,
+      options.farmId
     ]
   );
+  if (updateResult.rowCount !== 1) {
+    throw new Error("Block zone not found in this farm");
+  }
 
   return { id: options.id, warning };
 }
 
 // Splits one block polygon into a target zone and one or more remainder zones.
-async function splitBlockBoundaryIntoZoneCoordinates(
+export async function splitBlockBoundaryIntoZoneCoordinates(
   client: PoolClient,
   options: {
     blockId: number;
+    farmId: number;
     lineCoordinates?: Array<{ lat: number; lng: number }>;
     splitLines?: Array<Array<{ lat: number; lng: number }>>;
     firstBedSidePoint?: { lat: number; lng: number } | null;
@@ -2567,9 +2004,10 @@ async function splitBlockBoundaryIntoZoneCoordinates(
     `
       with
       block_geom as (
-        select ST_Transform(boundary, 3857) as geom
-        from blocks
-        where id = $1
+        select ST_Transform(block.boundary, 3857) as geom
+        from blocks block
+        join fields field on field.id = block.field_id
+        where block.id = $1 and field.farm_id = $5
       ),
       split_line_a as (
         select ST_GeomFromText($2, 3857) as geom
@@ -2636,7 +2074,8 @@ async function splitBlockBoundaryIntoZoneCoordinates(
       options.blockId,
       lineWkts[0],
       lineWkts[1] ?? null,
-      anchorPoint ? `POINT(${anchorPoint.x} ${anchorPoint.y})` : null
+      anchorPoint ? `POINT(${anchorPoint.x} ${anchorPoint.y})` : null,
+      options.farmId
     ]
   );
 
@@ -2763,7 +2202,7 @@ async function recalculatePlantingsForTaskFlow(
 
 // Saving a task flow replaces its graph in one transaction, then refreshes
 // affected plantings so their generated tasks match the edited flow.
-async function saveTaskFlowTemplate(
+export async function saveTaskFlowTemplate(
   client: PoolClient,
   options: {
     id?: number;
@@ -2824,7 +2263,7 @@ async function saveTaskFlowTemplate(
     );
     flowTemplateId = result.rows[0].id;
   } else {
-    await client.query(
+    const updateResult = await client.query(
       `
         update task_flow_templates
         set
@@ -2833,10 +2272,13 @@ async function saveTaskFlowTemplate(
           notes = $4,
           is_default = $5,
           updated_at = now()
-        where id = $1
+        where id = $1 and ($6::integer is null or farm_id = $6)
       `,
-      [flowTemplateId, options.cropId ?? null, options.name, options.notes ?? null, options.isDefault]
+      [flowTemplateId, options.cropId ?? null, options.name, options.notes ?? null, options.isDefault, options.farmId ?? null]
     );
+    if (updateResult.rowCount !== 1) {
+      throw new Error("Task flow template not found in this farm");
+    }
     await client.query(`delete from task_flow_edges where flow_template_id = $1`, [flowTemplateId]);
     await client.query(`delete from task_flow_nodes where flow_template_id = $1`, [flowTemplateId]);
   }
@@ -2949,919 +2391,14 @@ app.get("/health", asyncHandler(async (_req, res) => {
   res.json({ ok: true });
 }));
 
-// Authentication and account setup routes.
-app.get("/api/session", asyncHandler(async (req, res) => {
-  const auth = await resolveAuthContext(req);
-  if (!auth) {
-    res.json({ authenticated: false });
-    return;
-  }
-
-  res.json({
-    authenticated: true,
-    user: {
-      id: auth.userId,
-      username: auth.username,
-      displayName: auth.displayName,
-      farmId: auth.farmId,
-      farmName: auth.farmName,
-      role: auth.role,
-      isAdmin: auth.isAdmin
-    },
-    csrfToken: csrfTokenForRequest(req)
-  });
-}));
-
-app.post("/api/auth/login", asyncHandler(async (req, res) => {
-  const body = loginSchema.parse(req.body);
-  if (!enforceRateLimit(req, res, `login:${requestIp(req)}`, {
-    limit: 20,
-    windowMs: 15 * 60 * 1000,
-    message: "Too many login attempts. Try again later."
-  })) {
-    return;
-  }
-  if (!enforceLoginLockout(req, res, body.username)) {
-    return;
-  }
-  const client = await pool.connect();
-  try {
-    const userResult = await client.query<{
-      id: number;
-      username: string;
-      display_name: string | null;
-      email: string;
-      email_verified_at: string | null;
-      password_hash: string;
-      is_active: boolean;
-      is_admin: boolean;
-    }>(
-      `
-        select id, username, display_name, email, email_verified_at, password_hash, is_active, is_admin
-        from app_users
-        where lower(username) = lower($1)
-        limit 1
-      `,
-      [body.username]
-    );
-    const user = userResult.rows[0];
-    if (!user || !user.is_active || !verifyPassword(body.password, user.password_hash)) {
-      recordLoginFailure(req, body.username);
-      res.status(401).json({ error: "Invalid username or password" });
-      return;
-    }
-    if (config.requireEmailVerification && !isEmailVerificationBypassAddress(user.email) && !user.email_verified_at) {
-      recordLoginFailure(req, body.username);
-      res.status(403).json({ error: "Check your email to verify this account before logging in." });
-      return;
-    }
-    clearLoginFailures(req, body.username);
-
-    const membershipsResult = await client.query<{
-      farm_id: number;
-      farm_name: string;
-      role: FarmRole;
-    }>(
-      `
-        select membership.farm_id, farm.name as farm_name, membership.role
-        from farm_memberships membership
-        join farms farm on farm.id = membership.farm_id
-        where membership.user_id = $1
-          and ($2::integer is null or membership.farm_id = $2)
-        order by membership.farm_id
-      `,
-      [user.id, body.farmId ?? null]
-    );
-    const membership = membershipsResult.rows[0];
-    if (!membership) {
-      res.status(403).json({ error: "This account does not belong to the requested farm" });
-      return;
-    }
-
-    res.status(201).json(await createVerifiedSession(client, res, user, membership));
-  } finally {
-    client.release();
-  }
-}));
-
-app.post("/api/auth/register", asyncHandler(async (req, res) => {
-  const body = registerSchema.parse(req.body);
-  const email = normalizeAccountEmail(body.email);
-  const bypassEmailVerification = isEmailVerificationBypassAddress(email);
-  const verificationRequired = config.requireEmailVerification && !bypassEmailVerification;
-  const verificationToken = verificationRequired ? createEmailVerificationToken() : null;
-  if (!enforceRateLimit(req, res, `register:${requestIp(req)}`, {
-    limit: 8,
-    windowMs: 60 * 60 * 1000,
-    message: "Too many account creation attempts. Try again later."
-  })) {
-    return;
-  }
-  const client = await pool.connect();
-  try {
-    await client.query("begin");
-    const farmResult = await client.query<{ id: number; name: string }>(
-      `
-        insert into farms (name, notes, maps_private)
-        values ($1, 'Created from the Loam Ledger landing page', true)
-        returning id, name
-      `,
-      [body.farmName.trim()]
-    );
-    const farm = farmResult.rows[0];
-    await seedStarterSeedCatalog(client, farm.id);
-    await seedDefaultBedPresets(client, farm.id);
-    const userResult = await client.query<{
-      id: number;
-      username: string;
-      display_name: string | null;
-      is_admin: boolean;
-    }>(
-      `
-        insert into app_users (
-          email,
-          username,
-          password_hash,
-          display_name,
-          email_verified_at,
-          email_verification_token_hash,
-          email_verification_expires_at
-        )
-        values ($1, $2, $3, $4, $5, $6, $7)
-        returning id, username, display_name, is_admin
-      `,
-      [
-        email,
-        body.username.trim(),
-        hashPassword(body.password),
-        body.displayName?.trim() || null,
-        verificationRequired ? null : new Date().toISOString(),
-        verificationToken ? emailVerificationTokenHash(verificationToken) : null,
-        verificationToken ? new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString() : null
-      ]
-    );
-    const user = userResult.rows[0];
-
-    await client.query(
-      `
-        insert into farm_memberships (farm_id, user_id, role)
-        values ($1, $2, 'planner')
-      `,
-      [farm.id, user.id]
-    );
-
-    await client.query("commit");
-    if (verificationToken) {
-      await sendVerificationEmail(email, user.username, verificationToken);
-      res.status(201).json({
-        authenticated: false,
-        verificationRequired: true,
-        email
-      });
-      return;
-    }
-
-    res.status(201).json(await createVerifiedSession(client, res, user, {
-      farm_id: farm.id,
-      farm_name: farm.name,
-      role: "planner" satisfies FarmRole
-    }));
-  } catch (error) {
-    await client.query("rollback");
-    const maybeError = error as { code?: string };
-    if (maybeError.code === "23505") {
-      res.status(400).json({ error: "That username is already taken. Choose a new username, or use a different email." });
-      return;
-    }
-    throw error;
-  } finally {
-    client.release();
-  }
-}));
-
-async function verifyEmailTokenAndCreateSession(token: string, res: express.Response) {
-  const tokenHash = emailVerificationTokenHash(token);
-  const client = await pool.connect();
-  try {
-    await client.query("begin");
-    const userResult = await client.query<{
-      id: number;
-      username: string;
-      display_name: string | null;
-      is_admin: boolean;
-    }>(
-      `
-        update app_users
-        set
-          email_verified_at = now(),
-          email_verification_token_hash = null,
-          email_verification_expires_at = null,
-          updated_at = now()
-        where email_verification_token_hash = $1
-          and email_verification_expires_at > now()
-          and is_active = true
-        returning id, username, display_name, is_admin
-      `,
-      [tokenHash]
-    );
-    const user = userResult.rows[0];
-    if (!user) {
-      await client.query("rollback");
-      return null;
-    }
-
-    const membershipResult = await client.query<{
-      farm_id: number;
-      farm_name: string;
-      role: FarmRole;
-    }>(
-      `
-        select membership.farm_id, farm.name as farm_name, membership.role
-        from farm_memberships membership
-        join farms farm on farm.id = membership.farm_id
-        where membership.user_id = $1
-        order by membership.farm_id
-        limit 1
-      `,
-      [user.id]
-    );
-    const membership = membershipResult.rows[0];
-    if (!membership) {
-      await client.query("rollback");
-      return null;
-    }
-
-    const sessionInfo = await createVerifiedSession(client, res, user, membership);
-    await client.query("commit");
-    return sessionInfo;
-  } catch (error) {
-    await client.query("rollback");
-    throw error;
-  } finally {
-    client.release();
-  }
-}
-
-app.post("/api/auth/verify-email", asyncHandler(async (req, res) => {
-  const token = z.object({ token: z.string().min(20) }).parse(req.body).token;
-  const sessionInfo = await verifyEmailTokenAndCreateSession(token, res);
-  if (!sessionInfo) {
-    res.status(400).json({ error: "That verification link is invalid or expired." });
-    return;
-  }
-  res.status(201).json(sessionInfo);
-}));
-
-app.get("/api/auth/verify-email", asyncHandler(async (req, res) => {
-  const token = typeof req.query.token === "string" ? req.query.token : "";
-  if (!token) {
-    res.redirect(`${config.publicWebUrl}?verified=missing`);
-    return;
-  }
-  const sessionInfo = await verifyEmailTokenAndCreateSession(token, res);
-  res.redirect(`${config.publicWebUrl}?verified=${sessionInfo ? "1" : "invalid"}`);
-}));
-
-app.post("/api/auth/logout", asyncHandler(async (req, res) => {
-  const sessionToken = readSessionToken(req);
-  if (sessionToken) {
-    await pool.query(`delete from user_sessions where session_token = $1`, [sessionToken]);
-  }
-  clearSessionCookie(res);
-  res.json({ ok: true });
-}));
-
-// Farm user management: planners can create worker/planner accounts for their farm.
-app.get("/api/accounts", requireRole("planner"), asyncHandler(async (req, res) => {
-  const auth = currentAuth(req) as AuthContext;
-  const result = await pool.query<{
-    id: number;
-    username: string;
-    display_name: string | null;
-    role: FarmRole;
-    created_at: string;
-  }>(
-    `
-      select
-        app_user.id,
-        app_user.username,
-        app_user.display_name,
-        membership.role,
-        app_user.created_at
-      from farm_memberships membership
-      join app_users app_user on app_user.id = membership.user_id
-      where membership.farm_id = $1
-      order by
-        case when membership.role = 'planner' then 0 else 1 end,
-        app_user.username
-    `,
-    [auth.farmId]
-  );
-
-  res.json(result.rows.map((row: {
-    id: number;
-    username: string;
-    display_name: string | null;
-    role: FarmRole;
-    created_at: string;
-  }) => ({
-    id: row.id,
-    username: row.username,
-    displayName: row.display_name,
-    role: row.role,
-    createdAt: row.created_at
-  })));
-}));
-
-app.post("/api/accounts", requireRole("planner"), asyncHandler(async (req, res) => {
-  const auth = currentAuth(req) as AuthContext;
-  const body = accountCreateSchema.parse(req.body);
-  const email = normalizeAccountEmail(body.email);
-  const bypassEmailVerification = isEmailVerificationBypassAddress(email);
-  const verificationRequired = config.requireEmailVerification && !bypassEmailVerification;
-  const verificationToken = verificationRequired ? createEmailVerificationToken() : null;
-  const client = await pool.connect();
-  try {
-    await client.query("begin");
-    const userResult = await client.query<{
-      id: number;
-      username: string;
-      display_name: string | null;
-      created_at: string;
-    }>(
-      `
-        insert into app_users (
-          email,
-          username,
-          password_hash,
-          display_name,
-          email_verified_at,
-          email_verification_token_hash,
-          email_verification_expires_at
-        )
-        values ($1, $2, $3, $4, $5, $6, $7)
-        returning id, username, display_name, created_at
-      `,
-      [
-        email,
-        body.username.trim(),
-        hashPassword(body.password),
-        body.displayName?.trim() || null,
-        verificationRequired ? null : new Date().toISOString(),
-        verificationToken ? emailVerificationTokenHash(verificationToken) : null,
-        verificationToken ? new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString() : null
-      ]
-    );
-    await client.query(
-      `
-        insert into farm_memberships (farm_id, user_id, role)
-        values ($1, $2, $3)
-      `,
-      [auth.farmId, userResult.rows[0].id, body.role]
-    );
-    await client.query("commit");
-    if (verificationToken) {
-      await sendVerificationEmail(email, userResult.rows[0].username, verificationToken);
-    }
-    res.status(201).json({
-      id: userResult.rows[0].id,
-      username: userResult.rows[0].username,
-      displayName: userResult.rows[0].display_name,
-      role: body.role,
-      createdAt: userResult.rows[0].created_at,
-      verificationRequired: Boolean(verificationToken)
-    });
-  } catch (error) {
-    await client.query("rollback");
-    const maybeError = error as { code?: string };
-    if (maybeError.code === "23505") {
-      res.status(400).json({ error: "That username is already taken. Choose a new username, or use a different email." });
-      return;
-    }
-    throw error;
-  } finally {
-    client.release();
-  }
-}));
-
-// Admin panel routes. Admin is separate from the normal farm planner/worker role.
-app.get("/api/admin/users", requireAdmin(), asyncHandler(async (_req, res) => {
-  const result = await pool.query<{
-    id: number;
-    username: string;
-    display_name: string | null;
-    is_active: boolean;
-    is_admin: boolean;
-    created_at: string;
-    last_session_at: string | null;
-    feedback_count: string;
-    memberships: Array<{ farmId: number; farmName: string; role: FarmRole }>;
-  }>(
-    `
-      select
-        app_user.id,
-        app_user.username,
-        app_user.display_name,
-        app_user.is_active,
-        app_user.is_admin,
-        app_user.created_at,
-        max(session.created_at) as last_session_at,
-        count(distinct feedback.id)::text as feedback_count,
-        coalesce(
-          jsonb_agg(
-            distinct jsonb_build_object(
-              'farmId', farm.id,
-              'farmName', farm.name,
-              'role', membership.role
-            )
-          ) filter (where farm.id is not null),
-          '[]'::jsonb
-        ) as memberships
-      from app_users app_user
-      left join farm_memberships membership on membership.user_id = app_user.id
-      left join farms farm on farm.id = membership.farm_id
-      left join user_sessions session on session.user_id = app_user.id
-      left join feedback_reports feedback on feedback.user_id = app_user.id
-      group by app_user.id
-      order by app_user.is_admin desc, app_user.is_active desc, app_user.created_at desc, app_user.username
-    `
-  );
-
-  res.json(result.rows.map((row) => ({
-    id: row.id,
-    username: row.username,
-    displayName: row.display_name,
-    isActive: row.is_active,
-    isAdmin: row.is_admin,
-    createdAt: row.created_at,
-    lastSessionAt: row.last_session_at,
-    feedbackCount: Number(row.feedback_count),
-    memberships: row.memberships
-  })));
-}));
-
-app.delete("/api/admin/users/:id", requireAdmin(), asyncHandler(async (req, res) => {
-  const auth = currentAuth(req) as AuthContext;
-  const userId = Number(req.params.id);
-  if (userId === auth.userId) {
-    res.status(400).json({ error: "You cannot delete the admin account you are currently using." });
-    return;
-  }
-
-  const client = await pool.connect();
-  try {
-    await client.query("begin");
-    await client.query(`delete from user_sessions where user_id = $1`, [userId]);
-    await client.query(
-      `
-        update app_users
-        set is_active = false, updated_at = now()
-        where id = $1
-      `,
-      [userId]
-    );
-    await client.query("commit");
-    res.json({ ok: true });
-  } catch (error) {
-    await client.query("rollback").catch(() => undefined);
-    throw error;
-  } finally {
-    client.release();
-  }
-}));
-
-app.get("/api/messages", requireRole("worker"), asyncHandler(async (req, res) => {
-  const auth = currentAuth(req) as AuthContext;
-  const result = await pool.query<{
-    id: number;
-    farm_id: number | null;
-    sender_user_id: number | null;
-    sender_username: string | null;
-    sender_display_name: string | null;
-    recipient_user_id: number;
-    related_feedback_report_id: number | null;
-    subject: string;
-    body: string;
-    read_at: string | null;
-    created_at: string;
-  }>(
-    `
-      select
-        message.id,
-        message.farm_id,
-        message.sender_user_id,
-        sender.username as sender_username,
-        sender.display_name as sender_display_name,
-        message.recipient_user_id,
-        message.related_feedback_report_id,
-        message.subject,
-        message.body,
-        message.read_at,
-        message.created_at
-      from user_messages message
-      left join app_users sender on sender.id = message.sender_user_id
-      where message.recipient_user_id = $1
-      order by message.created_at desc, message.id desc
-      limit 100
-    `,
-    [auth.userId]
-  );
-
-  res.json(result.rows.map((row) => ({
-    id: row.id,
-    farmId: row.farm_id,
-    senderUserId: row.sender_user_id,
-    senderUsername: row.sender_username,
-    senderDisplayName: row.sender_display_name,
-    recipientUserId: row.recipient_user_id,
-    relatedFeedbackReportId: row.related_feedback_report_id,
-    subject: row.subject,
-    body: row.body,
-    readAt: row.read_at,
-    createdAt: row.created_at
-  })));
-}));
-
-app.post("/api/messages/:id/read", requireRole("worker"), asyncHandler(async (req, res) => {
-  const auth = currentAuth(req) as AuthContext;
-  const messageId = Number(req.params.id);
-  await pool.query(
-    `
-      update user_messages
-      set read_at = coalesce(read_at, now())
-      where id = $1
-        and recipient_user_id = $2
-    `,
-    [messageId, auth.userId]
-  );
-  res.json({ ok: true });
-}));
-
-// Farm-wide settings and feedback/suggestion reporting.
-app.put("/api/farm/settings", requireAdmin(), asyncHandler(async (req, res) => {
-  const auth = currentAuth(req) as AuthContext;
-  const body = farmSettingsSchema.parse(req.body);
-  await pool.query(
-    `
-      update farms
-      set maps_private = $2, updated_at = now()
-      where id = $1
-    `,
-    [auth.farmId, body.mapsPrivate]
-  );
-  res.json({ ok: true });
-}));
-
-app.post("/api/feedback", asyncHandler(async (req, res) => {
-  if (!enforceRateLimit(req, res, `feedback:${requestIp(req)}`, {
-    limit: 40,
-    windowMs: 60 * 60 * 1000,
-    message: "Too many feedback submissions. Try again later."
-  })) {
-    return;
-  }
-  const auth = currentAuth(req);
-  const body = feedbackSchema.parse(req.body);
-  assertFeedbackPayloadLimits(body);
-  const result = await pool.query<{ id: number }>(
-    `
-      insert into feedback_reports (
-        farm_id, user_id, page, comment, context, recent_activity, user_agent
-      )
-      values ($1, $2, $3, $4, $5::jsonb, $6::jsonb, $7)
-      returning id
-    `,
-    [
-      auth?.farmId ?? null,
-      auth?.userId ?? null,
-      body.page,
-      body.comment?.trim() || null,
-      JSON.stringify(body.context ?? {}),
-      JSON.stringify(body.recentActivity ?? []),
-      req.get("user-agent") ?? null
-    ]
-  );
-
-  res.status(201).json({ id: result.rows[0].id });
-}));
-
-app.get("/api/feedback", requireAdmin(), asyncHandler(async (req, res) => {
-  const auth = currentAuth(req) as AuthContext;
-  type FeedbackReportRow = {
-    id: number;
-    farm_id: number | null;
-    user_id: number | null;
-    username: string | null;
-    display_name: string | null;
-    page: string;
-    comment: string | null;
-    context: Record<string, unknown>;
-    recent_activity: Array<Record<string, unknown>>;
-    user_agent: string | null;
-    created_at: string;
-    reply_count: string;
-    last_reply_at: string | null;
-  };
-  let rows: FeedbackReportRow[];
-  try {
-    const result = await pool.query<FeedbackReportRow>(
-      `
-        select
-          report.id,
-          report.farm_id,
-          report.user_id,
-          app_user.username,
-          app_user.display_name,
-          report.page,
-          report.comment,
-          report.context,
-          report.recent_activity,
-          report.user_agent,
-          report.created_at,
-          count(reply.id)::text as reply_count,
-          max(reply.created_at) as last_reply_at
-        from feedback_reports report
-        left join app_users app_user on app_user.id = report.user_id
-        left join user_messages reply on reply.related_feedback_report_id = report.id
-        where $1::boolean = true
-        group by report.id, app_user.id
-        order by report.created_at desc, report.id desc
-        limit 50
-      `,
-      [auth.isAdmin]
-    );
-    rows = result.rows;
-  } catch (error) {
-    if ((error as { code?: string }).code !== "42P01") {
-      throw error;
-    }
-    const result = await pool.query<FeedbackReportRow>(
-      `
-        select
-          report.id,
-          report.farm_id,
-          report.user_id,
-          app_user.username,
-          app_user.display_name,
-          report.page,
-          report.comment,
-          report.context,
-          report.recent_activity,
-          report.user_agent,
-          report.created_at,
-          '0'::text as reply_count,
-          null::timestamptz as last_reply_at
-        from feedback_reports report
-        left join app_users app_user on app_user.id = report.user_id
-        where $1::boolean = true
-        order by report.created_at desc, report.id desc
-        limit 50
-      `,
-      [auth.isAdmin]
-    );
-    rows = result.rows;
-  }
-
-  res.json(rows.map((row) => ({
-    id: row.id,
-    farmId: row.farm_id,
-    userId: row.user_id,
-    username: row.username ?? "anonymous",
-    displayName: row.display_name,
-    page: row.page,
-    comment: row.comment,
-    context: row.context,
-    recentActivity: row.recent_activity,
-    userAgent: row.user_agent,
-    createdAt: row.created_at,
-    replyCount: Number(row.reply_count),
-    lastReplyAt: row.last_reply_at
-  })));
-}));
-
-app.post("/api/feedback/:id/replies", requireAdmin(), asyncHandler(async (req, res) => {
-  const auth = currentAuth(req) as AuthContext;
-  const feedbackId = Number(req.params.id);
-  const body = feedbackReplySchema.parse(req.body);
-  const reportResult = await pool.query<{
-    id: number;
-    farm_id: number | null;
-    user_id: number | null;
-    comment: string | null;
-  }>(
-    `
-      select id, farm_id, user_id, comment
-      from feedback_reports
-      where id = $1
-      limit 1
-    `,
-    [feedbackId]
-  );
-  const report = reportResult.rows[0];
-  if (!report) {
-    res.status(404).json({ error: "Feedback report not found" });
-    return;
-  }
-  if (report.user_id == null) {
-    res.status(400).json({ error: "Anonymous reports cannot receive inbox replies." });
-    return;
-  }
-
-  const result = await pool.query<{
-    id: number;
-    farm_id: number | null;
-    sender_user_id: number | null;
-    sender_username: string | null;
-    sender_display_name: string | null;
-    recipient_user_id: number;
-    related_feedback_report_id: number | null;
-    subject: string;
-    body: string;
-    read_at: string | null;
-    created_at: string;
-  }>(
-    `
-      with inserted as (
-        insert into user_messages (
-          farm_id,
-          sender_user_id,
-          recipient_user_id,
-          related_feedback_report_id,
-          subject,
-          body
-        )
-        values ($1, $2, $3, $4, $5, $6)
-        returning *
-      )
-      select
-        inserted.id,
-        inserted.farm_id,
-        inserted.sender_user_id,
-        sender.username as sender_username,
-        sender.display_name as sender_display_name,
-        inserted.recipient_user_id,
-        inserted.related_feedback_report_id,
-        inserted.subject,
-        inserted.body,
-        inserted.read_at,
-        inserted.created_at
-      from inserted
-      left join app_users sender on sender.id = inserted.sender_user_id
-    `,
-    [
-      report.farm_id,
-      auth.userId,
-      report.user_id,
-      report.id,
-      "Reply to your suggestion/problem report",
-      body.body
-    ]
-  );
-  const row = result.rows[0];
-
-  res.status(201).json({
-    id: row.id,
-    farmId: row.farm_id,
-    senderUserId: row.sender_user_id,
-    senderUsername: row.sender_username,
-    senderDisplayName: row.sender_display_name,
-    recipientUserId: row.recipient_user_id,
-    relatedFeedbackReportId: row.related_feedback_report_id,
-    subject: row.subject,
-    body: row.body,
-    readAt: row.read_at,
-    createdAt: row.created_at
-  });
-}));
-
-// Recent undo/redo controls for the current farm user.
-app.get("/api/undo", requireRole("worker"), asyncHandler(async (req, res) => {
-  const auth = currentAuth(req) as AuthContext;
-  const [undoResult, redoResult] = await Promise.all([
-    pool.query(
-      `
-        select
-          id,
-          label,
-          created_at as "createdAt"
-        from undo_snapshots
-        where farm_id = $1
-          and user_id = $2
-          and undone_at is null
-        order by created_at desc, id desc
-        limit 8
-      `,
-      [auth.farmId, auth.userId]
-    ),
-    pool.query(
-      `
-        select
-          id,
-          label,
-          undone_at as "createdAt"
-        from undo_snapshots
-        where farm_id = $1
-          and user_id = $2
-          and undone_at is not null
-          and redo_snapshot is not null
-        order by undone_at desc, id desc
-        limit 8
-      `,
-      [auth.farmId, auth.userId]
-    )
-  ]);
-  res.json({ undo: undoResult.rows, redo: redoResult.rows });
-}));
-
-app.post("/api/undo", requireRole("worker"), asyncHandler(async (req, res) => {
-  const auth = currentAuth(req) as AuthContext;
-  const client = await pool.connect();
-  try {
-    await client.query("begin");
-    const result = await client.query<{ id: number; label: string; snapshot: Record<string, unknown>; created_at: string }>(
-      `
-        select id, label, snapshot, created_at
-        from undo_snapshots
-        where farm_id = $1
-          and user_id = $2
-          and undone_at is null
-        order by created_at desc, id desc
-        limit 1
-        for update
-      `,
-      [auth.farmId, auth.userId]
-    );
-    const snapshot = result.rows[0];
-    if (!snapshot) {
-      await client.query("rollback");
-      res.status(404).json({ error: "Nothing to undo" });
-      return;
-    }
-
-    await assertUndoRestoreIsAccountSafe(client, auth, snapshot.created_at, "undo");
-    const redoSnapshot = await captureFarmSnapshot(client, auth.farmId);
-    await restoreFarmSnapshot(client, auth.farmId, snapshot.snapshot);
-    await client.query(
-      `update undo_snapshots set undone_at = now(), redo_snapshot = $2::jsonb, redone_at = null where id = $1`,
-      [snapshot.id, JSON.stringify(redoSnapshot)]
-    );
-    await client.query("commit");
-    res.json({ ok: true, label: snapshot.label });
-  } catch (error) {
-    await client.query("rollback");
-    throw error;
-  } finally {
-    client.release();
-  }
-}));
-
-app.post("/api/redo", requireRole("worker"), asyncHandler(async (req, res) => {
-  const auth = currentAuth(req) as AuthContext;
-  const client = await pool.connect();
-  try {
-    await client.query("begin");
-    const result = await client.query<{ id: number; label: string; redo_snapshot: Record<string, unknown>; undone_at: string }>(
-      `
-        select id, label, redo_snapshot, undone_at
-        from undo_snapshots
-        where farm_id = $1
-          and user_id = $2
-          and undone_at is not null
-          and redo_snapshot is not null
-        order by undone_at desc, id desc
-        limit 1
-        for update
-      `,
-      [auth.farmId, auth.userId]
-    );
-    const snapshot = result.rows[0];
-    if (!snapshot) {
-      await client.query("rollback");
-      res.status(404).json({ error: "Nothing to redo" });
-      return;
-    }
-
-    await assertUndoRestoreIsAccountSafe(client, auth, snapshot.undone_at, "redo");
-    await restoreFarmSnapshot(client, auth.farmId, snapshot.redo_snapshot);
-    await client.query(`update undo_snapshots set undone_at = null, redone_at = now() where id = $1`, [snapshot.id]);
-    await client.query("commit");
-    res.json({ ok: true, label: snapshot.label });
-  } catch (error) {
-    await client.query("rollback");
-    throw error;
-  } finally {
-    client.release();
-  }
-}));
-
 // Optional offline tile status and tile serving. Normal online basemaps do not
 // need these routes, but the UI can fall back to them when cached imagery exists.
-app.get("/api/offline-imagery/status", asyncHandler(async (_req, res) => {
+app.get("/api/offline-imagery/status", requireRole("worker"), asyncHandler(async (_req, res) => {
   const manifest = await readOfflineImageryManifest();
   res.json(manifest ?? defaultOfflineImageryStatus());
 }));
 
-app.get("/api/offline-imagery/tiles/:z/:x/:y", asyncHandler(async (req, res) => {
+app.get("/api/offline-imagery/tiles/:z/:x/:y", requireRole("worker"), asyncHandler(async (req, res) => {
   const z = Number(req.params.z);
   const x = Number(req.params.x);
   const y = Number(req.params.y);
@@ -3877,7 +2414,7 @@ app.get("/api/offline-imagery/tiles/:z/:x/:y", asyncHandler(async (req, res) => 
     return;
   }
 
-  res.setHeader("Cache-Control", "public, max-age=31536000, immutable");
+  res.setHeader("Cache-Control", "private, max-age=31536000, immutable");
   if (tile.zoomDelta === 0) {
     res.type(tile.contentType);
     res.sendFile(tile.filePath);
@@ -3908,19 +2445,13 @@ app.get("/api/offline-imagery/tiles/:z/:x/:y", asyncHandler(async (req, res) => 
 
 // Main dashboard payload. Most frontend screens are hydrated from this one route
 // instead of making many smaller requests after every save/reload.
-registerUsageEventRoutes(app, {
-  asyncHandler,
-  currentAuth,
-  requireAdmin
-});
+registerUsageEventRoutes(app);
+registerAuthRoutes(app);
+registerAdminRoutes(app);
+registerUndoRoutes(app);
+registerAccountManagementRoutes(app);
 
 registerFarmRoutes(app, {
-  asyncHandler,
-  currentAuth,
-  requireRole,
-  runWithUndoSnapshot,
-  createUndoSnapshot,
-  pruneUndoSnapshots,
   normalizedSeedLots,
   replaceSeedItemLots,
   ensureFieldInFarm,
@@ -4079,16 +2610,12 @@ app.use((error: unknown, _req: express.Request, res: express.Response, _next: ex
     res.status(400).json({ error: error.message });
     return;
   }
-  if (error && typeof error === "object" && "message" in error) {
-    const message = typeof error.message === "string" ? error.message : "Internal server error";
-    const detail = "detail" in error && typeof error.detail === "string" ? error.detail : undefined;
-    res.status(500).json({ error: detail ? `${message}: ${detail}` : message });
-    return;
-  }
-  res.status(500).json({ error: "Internal server error" });
+  const publicError = publicErrorResponse(error);
+  res.status(publicError.status).json({ error: publicError.error });
 });
 
 // Start the HTTP server after all middleware/routes have been registered.
+startExpiredSessionCleanup();
 app.listen(config.port, () => {
   console.log(`API listening on http://localhost:${config.port}`);
 });

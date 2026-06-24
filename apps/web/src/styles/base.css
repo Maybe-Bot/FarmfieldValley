@@ -1,0 +1,59 @@
+/*
+ * Main stylesheet for the Loam Ledger frontend.
+ *
+ * The app uses CSS variables for colors so light/dark themes can swap values
+ * without duplicating every component style. Layout styles, map controls, forms,
+ * cards, and task-flow visuals are all currently in this file for prototype
+ * speed; future cleanup could split this into smaller CSS modules.
+ */
+:root {
+  font-family: "IBM Plex Sans", "Segoe UI", sans-serif;
+  line-height: 1.4;
+  font-weight: 400;
+  --app-text: #1e241c;
+  --app-muted: #6c7462;
+  --app-bg:
+    radial-gradient(circle at top left, rgba(246, 238, 212, 0.8), transparent 30%),
+    linear-gradient(180deg, #d6dfbf 0%, #c9d7b5 18%, #eef1e5 100%);
+  --sidebar-bg: rgba(31, 52, 28, 0.92);
+  --sidebar-text: #f3efdf;
+  --sidebar-muted: #d7debf;
+  --eyebrow: #cfd7b2;
+  --card-bg: rgba(251, 249, 240, 0.92);
+  --card-border: rgba(55, 76, 40, 0.12);
+  --card-shadow: 0 10px 30px rgba(38, 51, 31, 0.08);
+  --surface-soft: #eef2e4;
+  --surface-soft-2: #edf2e0;
+  --surface-soft-3: #edf2df;
+  --surface-soft-4: #e3ead2;
+  --surface-panel: #f7f4e7;
+  --surface-canvas:
+    linear-gradient(0deg, rgba(69, 92, 44, 0.03) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(69, 92, 44, 0.03) 1px, transparent 1px),
+    #fbf9f0;
+  --input-bg: #fffef8;
+  --input-border: #c2cab2;
+  --text-subtle: #465041;
+  --nav-bg: rgba(255, 255, 255, 0.08);
+  --nav-active-bg: #d9dfbc;
+  --nav-active-text: #24311e;
+  --button-primary: #445c2c;
+  --button-primary-text: #f7f3e8;
+  --button-secondary: #dfe6ca;
+  --button-secondary-text: #22311e;
+  --button-danger: #8f4330;
+  --button-danger-text: #fff5ef;
+  --list-bg: #edf2df;
+  --list-text: #23311d;
+  --table-border: #dde2d3;
+  --table-subtle: #65705d;
+  --detail-term: #54614f;
+  --chip-bg: #e7eef3;
+  --chip-text: #36556b;
+  color: var(--app-text);
+  background: var(--app-bg);
+}
+
+* {
+  box-sizing: border-box;
+}

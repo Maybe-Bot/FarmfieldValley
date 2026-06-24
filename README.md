@@ -66,7 +66,9 @@ Local prototype for farm project management and annual crop planning.
 
 7. Open the app at `http://localhost:5173` and log in with one of the seeded demo accounts below.
 
-If you want a brand-new farm instead of the seeded demo farms, use `Create account` on the landing page to create a new farm and its first planner login. New real-email accounts must be verified before login. In local development the API prints the verification link to the terminal; `junk@trash.com` is reserved for reusable test accounts and skips verification and email uniqueness.
+If you want a brand-new farm instead of the seeded demo farms, use `Create account` on the landing page to create a new farm and its first planner login. Production accounts must verify their email before login. In local development, verification/reset/invitation links are returned only to the browser that made the request; they are not printed to server logs.
+
+Team members are invited from Settings. The invitee chooses their own username and password. Planners can change farm roles or remove a membership without disabling the person’s account on other farms.
 
 If you need the first global admin account for the admin panel, create it from the terminal instead of the public login page:
 
@@ -104,10 +106,22 @@ CORS_ALLOWED_ORIGINS=https://your-frontend.example.com
 PUBLIC_WEB_URL=https://your-frontend.example.com
 PUBLIC_API_URL=https://your-api.example.com
 CSRF_SECRET=replace-with-a-long-random-string
-REQUIRE_EMAIL_VERIFICATION=false
+REQUIRE_EMAIL_VERIFICATION=true
+EMAIL_DELIVERY_MODE=resend
+RESEND_API_KEY=re_your_resend_api_key
+EMAIL_FROM=Loam Ledger <accounts@your-verified-domain.example>
+TRUST_PROXY=1
+USAGE_RETENTION_DAYS=90
+USAGE_RATE_LIMIT_PER_MINUTE=30
 SESSION_COOKIE_SECURE=true
 SESSION_COOKIE_SAMESITE=Lax
 ```
+
+Render terminates requests behind one proxy hop, so production uses `TRUST_PROXY=1`.
+This lets Express use Render's forwarded client address for login, registration,
+and feedback limits instead of treating every visitor as the proxy. Run
+`npm run db:migrate` during deployment so the shared rate-limit tables exist
+before the API starts.
 
 Use `SESSION_COOKIE_SAMESITE=None` only if the frontend and API are on different sites and browser cookies are not being sent. If you use `None`, `SESSION_COOKIE_SECURE=true` is required.
 
@@ -117,7 +131,7 @@ The first admin account is no longer created from the public website. Create it 
 
 The admin password is read from the `ADMIN_CREATE_PASSWORD` environment variable so it does not need to be passed on the command line.
 
-Email verification is off by default because the prototype does not include a real mail provider yet. Leave `REQUIRE_EMAIL_VERIFICATION=false` until SMTP or another email service is wired in; otherwise real-email users will be told to check email for a link that never arrives.
+Production startup fails if email verification, the public API/web URLs, or Resend delivery settings are missing. Verify the sending domain in Resend before deploying. Local development uses `EMAIL_DELIVERY_MODE=development`; one-time links are shown only in the requesting browser and are never written to production logs.
 
 ## User spreadsheet import and backup
 

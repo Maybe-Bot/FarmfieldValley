@@ -5,7 +5,7 @@
  * shared request helper attaches cookies, sends JSON, and turns backend error
  * responses into normal JavaScript Error objects for the UI to display.
  */
-import { AdminUser, DashboardData, FarmAccount, FeedbackReport, OfflineImageryStatus, SessionInfo, TractorProfile, UndoState, UsageEvent, UserMessage } from "./types";
+import { AdminUser, AuthCapabilities, DashboardData, DashboardResourceName, FarmAccount, FarmInvitation, FeedbackReport, InvitationPreview, OfflineImageryStatus, SessionInfo, TractorProfile, UndoState, UsageEvent, UserMessage } from "./types";
 
 // Vite exposes only variables prefixed with VITE_ to browser code. Local dev
 // keeps the old localhost default, while hosted builds can point at a deployed API.
@@ -43,11 +43,6 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
           message = messages.join(" ");
         }
       }
-    } else {
-      const text = await response.text();
-      if (text) {
-        message = text;
-      }
     }
 
     throw new Error(message);
@@ -79,11 +74,6 @@ async function download(path: string) {
       if (typeof payload?.error === "string") {
         message = payload.error;
       }
-    } else {
-      const text = await response.text();
-      if (text) {
-        message = text;
-      }
     }
     throw new Error(message);
   }
@@ -106,24 +96,55 @@ function defaultBackupFilename() {
 
 export const api = {
   getSession: () => request<SessionInfo>("/api/session"),
+  getAuthCapabilities: () => request<AuthCapabilities>("/api/auth/capabilities"),
   login: (body: unknown) => request<SessionInfo>("/api/auth/login", { method: "POST", body: JSON.stringify(body) }),
   register: (body: unknown) => request<SessionInfo>("/api/auth/register", { method: "POST", body: JSON.stringify(body) }),
+  forgotPassword: (body: unknown) => request<{ ok: boolean; developmentActionUrl?: string | null }>("/api/auth/forgot-password", { method: "POST", body: JSON.stringify(body) }),
+  resendVerification: (body: unknown) => request<{ ok: boolean; developmentActionUrl?: string | null }>("/api/auth/resend-verification", { method: "POST", body: JSON.stringify(body) }),
+  resetPassword: (body: unknown) => request<{ ok: boolean }>("/api/auth/reset-password", { method: "POST", body: JSON.stringify(body) }),
+  inspectInvitation: (token: string) => request<InvitationPreview>(`/api/invitations/inspect?token=${encodeURIComponent(token)}`),
+  acceptInvitation: (body: unknown) => request<SessionInfo>("/api/invitations/accept", { method: "POST", body: JSON.stringify(body) }),
   logout: () => request("/api/auth/logout", { method: "POST" }),
+  changePassword: (body: unknown) => request<{ ok: boolean }>("/api/account/password", { method: "POST", body: JSON.stringify(body) }),
   getAdminUsers: () => request<AdminUser[]>("/api/admin/users"),
   deleteAdminUser: (id: number) => request<{ ok: boolean }>(`/api/admin/users/${id}`, { method: "DELETE" }),
   getAccounts: () => request<FarmAccount[]>("/api/accounts"),
-  createAccount: (body: unknown) => request<FarmAccount>("/api/accounts", { method: "POST", body: JSON.stringify(body) }),
+  updateAccountRole: (id: number, role: string) => request<{ ok: boolean }>(`/api/accounts/${id}`, { method: "PATCH", body: JSON.stringify({ role }) }),
+  removeAccountFromFarm: (id: number) => request<{ ok: boolean }>(`/api/accounts/${id}`, { method: "DELETE" }),
+  getInvitations: () => request<FarmInvitation[]>("/api/invitations"),
+  createInvitation: (body: unknown) => request<FarmInvitation>("/api/invitations", { method: "POST", body: JSON.stringify(body) }),
+  cancelInvitation: (id: number) => request<{ ok: boolean }>(`/api/invitations/${id}`, { method: "DELETE" }),
   updateFarmSettings: (body: unknown) => request<{ ok: boolean }>("/api/farm/settings", { method: "PUT", body: JSON.stringify(body) }),
   createFeedback: (body: unknown) => request<{ id: number }>("/api/feedback", { method: "POST", body: JSON.stringify(body) }),
   getFeedbackReports: () => request<FeedbackReport[]>("/api/feedback"),
   replyToFeedbackReport: (id: number, body: unknown) => request<UserMessage>(`/api/feedback/${id}/replies`, { method: "POST", body: JSON.stringify(body) }),
   getMessages: () => request<UserMessage[]>("/api/messages"),
   markMessageRead: (id: number) => request<{ ok: boolean }>(`/api/messages/${id}/read`, { method: "POST" }),
-  getUsageEvents: (limit = 200) => request<UsageEvent[]>(`/api/usage/events?limit=${encodeURIComponent(String(limit))}`),
+  getUsagePreference: () => request<{ enabled: boolean }>("/api/usage/preference"),
+  setUsagePreference: (enabled: boolean) => request<{ enabled: boolean }>("/api/usage/preference", {
+    method: "PUT",
+    body: JSON.stringify({ enabled })
+  }),
+  recordUsageEvent: (body: {
+    eventType: "page_view" | "page_leave" | "feature_used";
+    page: string;
+    feature?: string;
+    durationSeconds?: number;
+  }) => request<{ ok: boolean; recorded: boolean }>("/api/usage/events", {
+    method: "POST",
+    body: JSON.stringify(body)
+  }),
+  getUsageEvents: (limit = 200) => request<{ events: UsageEvent[]; retentionDays: number }>(`/api/usage/events?limit=${encodeURIComponent(String(limit))}`),
+  deleteUsageEvents: () => request<{ ok: boolean; deleted: number }>("/api/usage/events", { method: "DELETE" }),
   getUndoSnapshots: () => request<UndoState>("/api/undo"),
   undoLastChange: () => request<{ ok: boolean; label: string }>("/api/undo", { method: "POST" }),
   redoLastChange: () => request<{ ok: boolean; label: string }>("/api/redo", { method: "POST" }),
-  getDashboard: () => request<DashboardData>("/api/dashboard"),
+  getDashboard: (resources?: DashboardResourceName[]) => {
+    const query = resources?.length
+      ? `?resources=${encodeURIComponent(resources.join(","))}`
+      : "";
+    return request<Partial<DashboardData>>(`/api/dashboard${query}`);
+  },
   exportSpreadsheet: () => download("/api/export/spreadsheet"),
   getOfflineImageryStatus: () => request<OfflineImageryStatus>("/api/offline-imagery/status"),
   createTaskFlow: (body: unknown) => request("/api/task-flows", { method: "POST", body: JSON.stringify(body) }),

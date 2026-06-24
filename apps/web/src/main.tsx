@@ -27,8 +27,7 @@ class AppErrorBoundary extends React.Component<{ children: React.ReactNode }, { 
         <div className="auth-shell">
           <div className="card auth-card">
             <h2>The app hit a display error</h2>
-            <p className="muted">This is a frontend crash, not your farm data being deleted. Send this message if it keeps happening:</p>
-            <pre className="feedback-context">{this.state.error.message}</pre>
+            <p className="muted">This is a frontend display problem, not your farm data being deleted. Reload the app and try again.</p>
             <button className="primary-button" type="button" onClick={() => window.location.reload()}>
               Reload app
             </button>

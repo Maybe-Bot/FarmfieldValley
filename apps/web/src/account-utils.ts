@@ -1,6 +1,5 @@
 import { FarmRole } from "./types";
 
-export const EMAIL_VERIFICATION_BYPASS_ADDRESS = "junk@trash.com";
 const EMAIL_PATTERN = /^[a-z0-9.!#$%&'*+/=?^_`{|}~-]+@[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)+$/i;
 
 // Shared account text/validation helpers used by both the login screen and
@@ -12,10 +11,6 @@ export function roleLabel(role: FarmRole) {
 
 export function normalizeAccountEmail(email: string) {
   return email.trim().toLowerCase();
-}
-
-export function isEmailVerificationBypassAddress(email: string) {
-  return normalizeAccountEmail(email) === EMAIL_VERIFICATION_BYPASS_ADDRESS;
 }
 
 export function isTightAccountEmail(email: string) {
@@ -38,7 +33,7 @@ export function validateAccountInputs(options: {
       return "Email is required.";
     }
     if (!isTightAccountEmail(options.email)) {
-      return `Enter a valid email address. Use ${EMAIL_VERIFICATION_BYPASS_ADDRESS} only for testing.`;
+      return "Enter a valid email address.";
     }
   }
   if (!options.username.trim()) {
