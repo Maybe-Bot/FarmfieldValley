@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { z } from "zod";
 import { publicErrorResponse } from "./public-error-response";
 
 test("PostgreSQL details and rejected values are never returned", () => {
@@ -30,6 +31,22 @@ test("unknown internal errors return only a generic message", () => {
   assert.deepEqual(response, {
     status: 500,
     error: "Internal server error"
+  });
+});
+
+test("validation errors return a safe bad request message", () => {
+  let validationError: unknown;
+  try {
+    z.object({ fieldId: z.number() }).parse({ fieldId: "private" });
+  } catch (error) {
+    validationError = error;
+  }
+
+  const response = publicErrorResponse(validationError);
+
+  assert.deepEqual(response, {
+    status: 400,
+    error: "One or more fields are invalid."
   });
 });
 

@@ -1,5 +1,5 @@
 import express from "express";
-import { AuthenticatedRequest, AuthContext } from "./auth";
+import { AuthenticatedRequest, AuthContext, csrfTokenForRequest } from "./auth";
 import { roleMeetsRequirement } from "./permissions";
 import { FarmRole } from "./types";
 
@@ -47,4 +47,25 @@ export function requireAdmin() {
 
     next();
   };
+}
+
+export function requireValidCsrfForAuthenticatedWrites(req: express.Request, res: express.Response, next: express.NextFunction) {
+  if (["GET", "HEAD", "OPTIONS"].includes(req.method)) {
+    next();
+    return;
+  }
+
+  if (!currentAuth(req)) {
+    next();
+    return;
+  }
+
+  const expectedToken = csrfTokenForRequest(req);
+  const providedToken = req.header("x-csrf-token");
+  if (!expectedToken || providedToken !== expectedToken) {
+    res.status(403).json({ error: "Invalid CSRF token" });
+    return;
+  }
+
+  next();
 }

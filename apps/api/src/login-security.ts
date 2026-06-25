@@ -30,8 +30,8 @@ export function assessLoginCredentials(
   if (requireEmailVerification && !user.email_verified_at) {
     return {
       allowed: false,
-      status: 403,
-      error: UNVERIFIED_EMAIL_LOGIN_ERROR,
+      status: 401,
+      error: INVALID_LOGIN_ERROR,
       recordFailure: true
     };
   }

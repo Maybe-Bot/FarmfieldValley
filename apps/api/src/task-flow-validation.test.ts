@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { taskFlowScheduleProblem } from "./task-flow-validation";
+import { taskFlowScheduleProblem, validateTaskFlowGraph } from "./task-flow-validation";
 
 const baseNode = {
   iconColor: "#111111",
@@ -38,4 +38,38 @@ test("taskFlowScheduleProblem catches cleanup before crop work", () => {
   ], [{ fromNodeKey: "cleanup", toNodeKey: "seed", delayDays: 7 }]);
 
   assert.match(problem ?? "", /Cleanup.*before.*Direct seed/);
+});
+
+test("validateTaskFlowGraph rejects cycles before import or save writes the flow", () => {
+  assert.throws(() => validateTaskFlowGraph([
+    { nodeKey: "seed", label: "Seed trays" },
+    { nodeKey: "transplant", label: "Transplant" }
+  ], [
+    { fromNodeKey: "seed", toNodeKey: "transplant" },
+    { fromNodeKey: "transplant", toNodeKey: "seed" }
+  ]), /dependencies cannot contain a loop/);
+});
+
+test("validateTaskFlowGraph rejects blank labels and disconnected nodes", () => {
+  assert.throws(() => validateTaskFlowGraph([
+    { nodeKey: "seed", label: " " }
+  ], []), /needs a label/);
+
+  assert.throws(() => validateTaskFlowGraph([
+    { nodeKey: "seed", label: "Seed trays" },
+    { nodeKey: "transplant", label: "Transplant" },
+    { nodeKey: "cleanup", label: "Cleanup" }
+  ], [
+    { fromNodeKey: "seed", toNodeKey: "transplant" }
+  ]), /Cleanup.*disconnected/);
+
+  assert.throws(() => validateTaskFlowGraph([
+    { nodeKey: "seed", label: "Seed trays" },
+    { nodeKey: "transplant", label: "Transplant" },
+    { nodeKey: "wash", label: "Wash totes" },
+    { nodeKey: "pack", label: "Pack totes" }
+  ], [
+    { fromNodeKey: "seed", toNodeKey: "transplant" },
+    { fromNodeKey: "wash", toNodeKey: "pack" }
+  ]), /Wash totes.*disconnected/);
 });

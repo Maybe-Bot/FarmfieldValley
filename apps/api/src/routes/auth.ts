@@ -351,7 +351,10 @@ export function registerAuthRoutes(app: express.Express) {
     }
   }));
 
+  const verifyEmailRateLimit = { limit: 20, windowMs: 60 * 60 * 1000, message: "Too many verification attempts. Try again later." };
+
   app.post("/api/auth/verify-email", asyncHandler(async (req, res) => {
+    if (!(await enforceRateLimit(req, res, `verify-email:${requestIp(req)}`, verifyEmailRateLimit))) return;
     const token = z.object({ token: z.string().min(20) }).parse(req.body).token;
     const sessionInfo = await verifyEmailTokenAndCreateSession(token, res);
     if (!sessionInfo) {
@@ -362,6 +365,7 @@ export function registerAuthRoutes(app: express.Express) {
   }));
 
   app.get("/api/auth/verify-email", asyncHandler(async (req, res) => {
+    if (!(await enforceRateLimit(req, res, `verify-email:${requestIp(req)}`, verifyEmailRateLimit))) return;
     const token = typeof req.query.token === "string" ? req.query.token : "";
     if (!token) {
       res.redirect(`${config.publicWebUrl}?verified=missing`);

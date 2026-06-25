@@ -787,31 +787,6 @@ textarea {
   justify-content: flex-end;
 }
 
-.toolbar-map-tools {
-  width: 100%;
-  justify-content: flex-start;
-}
-
-.toolbar-workflow-toggle {
-  display: inline-flex;
-  flex: 0 0 auto;
-  grid-template-columns: none;
-  gap: 0;
-  margin: 0;
-  padding: 0.1rem;
-  border: 1px solid var(--card-border);
-  border-radius: 999px;
-  background: var(--surface-soft);
-}
-
-.toolbar-workflow-toggle button {
-  border-radius: 999px;
-}
-
-.toolbar-workflow-toggle .secondary-button {
-  background: transparent;
-}
-
 .status-pill {
   display: inline-flex;
   align-items: center;
@@ -1152,4 +1127,3 @@ textarea {
 .tractor-model-open {
   --tractor-frame-y: 100%;
 }
-

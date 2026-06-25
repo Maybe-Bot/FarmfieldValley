@@ -31,6 +31,26 @@ type MapRouteDeps = Pick<FarmRouteDeps,
   | "rectangleWkt"
 >;
 
+function safeMapSaveLog(options: {
+  farmId: number;
+  route: string;
+  recordId?: number | null;
+  error: unknown;
+}) {
+  const errorWithCode = options.error as { code?: unknown; message?: unknown };
+  return {
+    farmId: options.farmId,
+    route: options.route,
+    recordId: options.recordId ?? null,
+    errorCode: typeof errorWithCode.code === "string" || typeof errorWithCode.code === "number" ? errorWithCode.code : null,
+    errorMessage: options.error instanceof Error
+      ? options.error.message
+      : typeof errorWithCode.message === "string"
+        ? errorWithCode.message
+        : "Unknown map save error"
+  };
+}
+
 export function registerMapRoutes(app: express.Express, deps: MapRouteDeps) {
   const { ensureFieldInFarm, ensureBlockInFarm, ensureBlockZoneInFarm, ensureBedInFarm, ensurePlantableBedInFarm, ensureBedPresetInFarm, insertGeneratedBeds, reflowBlockPlacementPlan, reflowExistingBlockPlacementPlan, moveBlockBedAssignmentsToOverflowForReplacement, clearIntendedBedsForField, clearIntendedBedsForBlock, upsertFieldGeometry, upsertBlockGeometry, upsertBlockZoneGeometry, ensureDefaultBlockArea, upsertBlockBedMakingTask, recordFarmEvent, rectangleWkt } = deps;
   // Map hierarchy routes: fields, blocks, generated beds, and editable bed geometry.
@@ -52,7 +72,7 @@ export function registerMapRoutes(app: express.Express, deps: MapRouteDeps) {
       await client.query("commit");
       res.status(201).json({ id });
     } catch (error) {
-      console.error("Field save failed", { body, error });
+      console.error("Map save failed", safeMapSaveLog({ farmId: auth.farmId, route: "POST /api/fields", error }));
       await client.query("rollback");
       throw error;
     } finally {
@@ -85,7 +105,7 @@ export function registerMapRoutes(app: express.Express, deps: MapRouteDeps) {
       await client.query("commit");
       res.json({ ok: true });
     } catch (error) {
-      console.error("Field update failed", { fieldId: id, body, error });
+      console.error("Map save failed", safeMapSaveLog({ farmId: auth.farmId, route: "PUT /api/fields/:id", recordId: id, error }));
       await client.query("rollback");
       throw error;
     } finally {
@@ -139,6 +159,7 @@ export function registerMapRoutes(app: express.Express, deps: MapRouteDeps) {
       await client.query("commit");
       res.status(201).json(result);
     } catch (error) {
+      console.error("Map save failed", safeMapSaveLog({ farmId: auth.farmId, route: "POST /api/blocks", error }));
       await client.query("rollback");
       throw error;
     } finally {
@@ -210,6 +231,7 @@ export function registerMapRoutes(app: express.Express, deps: MapRouteDeps) {
       await client.query("commit");
       res.status(201).json(result);
     } catch (error) {
+      console.error("Map save failed", safeMapSaveLog({ farmId: auth.farmId, route: "POST /api/blocks/:id/generate-beds", recordId: blockId, error }));
       await client.query("rollback");
       throw error;
     } finally {
@@ -277,6 +299,7 @@ export function registerMapRoutes(app: express.Express, deps: MapRouteDeps) {
       await client.query("commit");
       res.json({ ok: true, warning: result.warning });
     } catch (error) {
+      console.error("Map save failed", safeMapSaveLog({ farmId: auth.farmId, route: "PUT /api/blocks/:id", recordId: id, error }));
       await client.query("rollback");
       throw error;
     } finally {

@@ -136,7 +136,7 @@ export function GarageCard({
   onProfilesChange
 }: {
   tractorProfiles: TractorProfile[];
-  onProfilesChange?: (profiles: TractorProfile[]) => void;
+  onProfilesChange?: (profiles: TractorProfile[]) => void | Promise<void>;
 }) {
   const [savedProfiles, setSavedProfiles] = useState<TractorProfile[]>(tractorProfiles);
   const [draft, setDraft] = useState(emptyGarageDraft);
@@ -171,7 +171,7 @@ export function GarageCard({
     return () => {
       cancelled = true;
     };
-  }, [onProfilesChange]);
+  }, []);
 
   function editProfile(profile: TractorProfile) {
     setEditingId(profile.id);
@@ -202,12 +202,12 @@ export function GarageCard({
         const savedProfile = await api.createTractorProfile(payload);
         const nextProfiles = upsertSavedTractorProfile(savedProfiles, savedProfile);
         setSavedProfiles(nextProfiles);
-        onProfilesChange?.(nextProfiles);
+        await onProfilesChange?.(nextProfiles);
       } else {
         const savedProfile = await api.updateTractorProfile(editingId, payload);
         const nextProfiles = upsertSavedTractorProfile(savedProfiles, savedProfile);
         setSavedProfiles(nextProfiles);
-        onProfilesChange?.(nextProfiles);
+        await onProfilesChange?.(nextProfiles);
       }
       resetGarageForm();
       setStatus("Saved.");
@@ -225,7 +225,7 @@ export function GarageCard({
       await api.deleteTractorProfile(profile.id);
       const nextProfiles = removeSavedTractorProfile(savedProfiles, profile.id);
       setSavedProfiles(nextProfiles);
-      onProfilesChange?.(nextProfiles);
+      await onProfilesChange?.(nextProfiles);
       if (editingId === profile.id) {
         resetGarageForm();
       }

@@ -7,6 +7,7 @@ services:
     buildCommand: npm install && npm run build:api
     preDeployCommand: npm run db:migrate
     startCommand: npm --workspace apps/api run start
+    healthCheckPath: /health
     envVars:
       - key: NODE_ENV
         value: production

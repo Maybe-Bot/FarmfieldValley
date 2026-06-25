@@ -598,6 +598,39 @@ export function TaskFlowEditorCard({
       setStatus("Add at least one node.");
       return;
     }
+    const blankLabelNode = localNodes.find((node) => !node.label.trim());
+    if (blankLabelNode) {
+      setStatus("Every task in the flow needs a label before saving.");
+      setSelectedNodeKey(blankLabelNode.nodeKey);
+      setOpenNodeEditorKey(blankLabelNode.nodeKey);
+      return;
+    }
+    if (localNodes.length > 1) {
+      const adjacentNodeKeys = new Map(localNodes.map((node) => [node.nodeKey, [] as string[]]));
+      for (const edge of localEdges) {
+        adjacentNodeKeys.get(edge.fromNodeKey)?.push(edge.toNodeKey);
+        adjacentNodeKeys.get(edge.toNodeKey)?.push(edge.fromNodeKey);
+      }
+      const connectedNodeKeys = new Set<string>();
+      const queue = [localNodes[0].nodeKey];
+      while (queue.length > 0) {
+        const nodeKey = queue.shift() as string;
+        if (connectedNodeKeys.has(nodeKey)) continue;
+        connectedNodeKeys.add(nodeKey);
+        queue.push(...(adjacentNodeKeys.get(nodeKey) ?? []));
+      }
+      if (connectedNodeKeys.size !== localNodes.length) {
+        const disconnectedNode = localNodes.find((node) => !connectedNodeKeys.has(node.nodeKey));
+        if (!disconnectedNode) {
+          setStatus("Task flow has disconnected tasks. Connect every task into one flow before saving.");
+          return;
+        }
+        setStatus(`"${disconnectedNode?.label ?? "Task"}" is disconnected. Connect every task into one flow or remove the disconnected task before saving.`);
+        setSelectedNodeKey(disconnectedNode.nodeKey);
+        setOpenNodeEditorKey(disconnectedNode.nodeKey);
+        return;
+      }
+    }
     if (taskFlowHasCycle(localNodes, localEdges)) {
       setStatus("Task flow has a dependency loop. Remove one link before saving.");
       return;

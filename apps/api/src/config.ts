@@ -177,3 +177,11 @@ if (config.emailDeliveryMode === "resend" && (!config.resendApiKey || !config.em
 if (config.sessionCookieSameSite === "None" && !config.sessionCookieSecure) {
   throw new Error("SESSION_COOKIE_SECURE=true is required when SESSION_COOKIE_SAMESITE=None");
 }
+
+if (config.isProduction && !process.env.DATABASE_URL) {
+  throw new Error("DATABASE_URL is required when NODE_ENV=production");
+}
+
+if (config.isProduction && !process.env.CORS_ALLOWED_ORIGINS) {
+  throw new Error("CORS_ALLOWED_ORIGINS is required when NODE_ENV=production");
+}

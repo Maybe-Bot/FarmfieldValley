@@ -220,16 +220,6 @@
     margin: 0;
   }
 
-  .mobile-shell .drawer-workflow-section {
-    display: grid;
-    order: 1;
-    gap: 0.45rem;
-    padding: 0.75rem;
-    border: 1px solid var(--card-border);
-    border-radius: 12px;
-    background: var(--surface-soft);
-  }
-
   .mobile-shell .topbar > div,
   .mobile-shell .section-header > div,
   .mobile-shell .title-block,
@@ -306,7 +296,7 @@
   }
 
   .mobile-shell .header-actions button,
-  .mobile-shell .map-tools-actions > button,
+  .mobile-shell .map-overlay-tools button,
   .mobile-shell .map-workflow-toggle button,
   .mobile-shell .map-mode-grid button,
   .mobile-shell .button-row button {
@@ -321,28 +311,12 @@
     gap: 0.5rem;
   }
 
-  .mobile-shell .toolbar-map-tools {
-    display: grid;
-    order: 2;
-    grid-template-columns: 1fr;
-    gap: 0.5rem;
-    width: 100%;
+  .mobile-shell .map-mode-overlay {
+    width: min(11.5rem, calc(100% - 1.5rem));
   }
 
-  .mobile-shell .toolbar-workflow-toggle {
-    gap: 0;
-    width: 100%;
-    justify-content: center;
-  }
-
-  .mobile-shell .drawer-map-workflow-toggle {
-    display: flex;
-  }
-
-  .mobile-shell .toolbar-workflow-toggle button {
-    flex: 1 1 0;
-    min-width: 0;
-    white-space: nowrap;
+  .mobile-shell .map-overlay-tools button {
+    white-space: normal;
   }
 
   .mobile-shell .map-card,

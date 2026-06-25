@@ -236,6 +236,13 @@ export function LoginScreen({
                     return;
                   }
                 }
+                if (mode === "invite" && !invitation?.existingAccount) {
+                  const validationError = validateAccountInputs({ username, password });
+                  if (validationError) {
+                    setStatus(validationError);
+                    return;
+                  }
+                }
                 if ((mode === "register" || mode === "reset" || (mode === "invite" && !invitation?.existingAccount)) && password !== confirmPassword) {
                   setStatus("Passwords do not match.");
                   return;

@@ -101,7 +101,6 @@ export function SpreadsheetImportCard({ tutorialActive = false, onImported }: { 
         fileName: selectedFile.name,
         contentBase64
       });
-      await onImported();
       const incompleteMessage = result.incompleteRows > 0
         ? ` ${result.incompleteRows} row${result.incompleteRows === 1 ? "" : "s"} need manual completion.`
         : "";
@@ -110,7 +109,14 @@ export function SpreadsheetImportCard({ tutorialActive = false, onImported }: { 
       const backupMessage = importedMapItems > 0 || duplicateMapItems > 0 || (result.importedRecords ?? 0) > 0 || (result.importedVehicles ?? 0) > 0
         ? ` Imported ${importedMapItems} map item${importedMapItems === 1 ? "" : "s"}, ${result.importedVehicles ?? 0} vehicle${(result.importedVehicles ?? 0) === 1 ? "" : "s"}, and ${result.importedRecords ?? 0} related record${(result.importedRecords ?? 0) === 1 ? "" : "s"}. Skipped ${duplicateMapItems} duplicate map item${duplicateMapItems === 1 ? "" : "s"}.`
         : "";
-      setStatus(`Added ${result.importedPlantings} planting${result.importedPlantings === 1 ? "" : "s"} from ${result.parsedRows} parsed row${result.parsedRows === 1 ? "" : "s"}.${backupMessage}${incompleteMessage}`);
+      const skippedMessage = result.skippedRows > 0
+        ? ` Skipped ${result.skippedRows} row${result.skippedRows === 1 ? "" : "s"} that could not be safely restored.`
+        : "";
+      const warningMessage = result.warnings && result.warnings.length > 0
+        ? ` ${result.warnings.slice(0, 3).join(" ")}${result.warnings.length > 3 ? " More skipped-row details are in the server response." : ""}`
+        : "";
+      setStatus(`Added ${result.importedPlantings} planting${result.importedPlantings === 1 ? "" : "s"} from ${result.parsedRows} parsed row${result.parsedRows === 1 ? "" : "s"}.${backupMessage}${incompleteMessage}${skippedMessage}${warningMessage}`);
+      await onImported();
     } catch (error) {
       setStatus(error instanceof Error ? error.message : "Spreadsheet import failed.");
     } finally {
@@ -170,7 +176,7 @@ export function SpreadsheetImportCard({ tutorialActive = false, onImported }: { 
           {importing ? "Importing..." : "Import spreadsheet"}
         </button>
         <div className="instruction-box full-span">
-          Export Farm, download all your farm's data, as a backup, or for whatever you want to do with it. If you Import a backup on new account, you will clone all you data. Beta Warning: a few things might be missing.
+          Export Farm downloads a backup of farm map data, bed presets, seed records, vehicles, crop plans, task flows, tasks, harvests, and event history. Importing that backup into a new account restores those records when their referenced map items and plantings can be matched. Team accounts, passwords, sessions, invitations, feedback, inbox messages, and admin-only data are not restored.
         </div>
         <button type="button" className="primary-button full-span" onClick={() => void exportSpreadsheet()} disabled={exporting || importing}>
           {exporting ? "Exporting..." : "Export Farm Spreadsheet"}

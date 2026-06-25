@@ -1,5 +1,6 @@
 import { PoolClient } from "pg";
 import { SpreadsheetRow } from "./spreadsheet-file-parser";
+import { taskFlowScheduleProblem, validateTaskFlowGraph } from "./task-flow-validation";
 import { isCurrentTaskType, isLegacyTaskType } from "./types";
 
 type DbClient = PoolClient;
@@ -79,6 +80,40 @@ function hasExportedColumn(row: SheetRow, column: string) {
   return Object.prototype.hasOwnProperty.call(row, column);
 }
 
+function hasAnyPlantingDetailData(detail: SheetRow) {
+  return [
+    "seedItemId",
+    "taskFlowTemplateId",
+    "intendedFieldId",
+    "intendedBlockId",
+    "intendedBedId"
+  ].some((column) => idFromExport(detail[column]) != null) || [
+    "title",
+    "status",
+    "spacing",
+    "trayLocation",
+    "bedCover",
+    "notes"
+  ].some((column) => textOrNull(detail[column]) != null) || [
+    "plannedSowDate",
+    "plannedTransplantDate",
+    "expectedHarvestStart",
+    "expectedHarvestEnd",
+    "actualTraySeedingDate",
+    "actualDirectSeedingDate",
+    "actualTransplantDate",
+    "actualHarvestDate",
+    "actualFinishDate"
+  ].some((column) => dateOrNull(detail[column]) != null) || [
+    "trayCount",
+    "cellsPerTray",
+    "daysToHarvest",
+    "fieldSpacingInRow",
+    "rowSpacing",
+    "rowsPerBed"
+  ].some((column) => numberOrNull(detail[column]) != null);
+}
+
 function rowsBySheet(rows: SpreadsheetRow[]): SheetMap {
   const grouped = new Map<string, SpreadsheetRow[]>();
   for (const row of rows) {
@@ -97,6 +132,56 @@ function rowsBySheet(rows: SpreadsheetRow[]): SheetMap {
     sheets.set(sheetName, records);
   }
   return sheets;
+}
+
+function validateTaskFlowSheets(sheets: SheetMap) {
+  const nodesByOldFlowId = new Map<number, Array<{ nodeKey: string; taskType: string; label: string }>>();
+  for (const row of sheets.get("Task Flow Nodes") ?? []) {
+    const oldId = idFromExport(row.id);
+    const oldFlowId = idFromExport(row.flowTemplateId);
+    if (!oldId || !oldFlowId) continue;
+    const node = {
+      nodeKey: textOrNull(row.nodeKey) ?? `node-${oldId}`,
+      taskType: requireCurrentTaskType(row.taskType, `Task Flow Nodes row ${oldId}`),
+      label: textOrNull(row.label) ?? "Imported task"
+    };
+    requireCurrentTaskAnchor(row.anchor, `Task Flow Nodes row ${oldId}`);
+    nodesByOldFlowId.set(oldFlowId, [...(nodesByOldFlowId.get(oldFlowId) ?? []), node]);
+  }
+
+  const edgesByOldFlowId = new Map<number, Array<{ fromNodeKey: string; toNodeKey: string; delayDays: number }>>();
+  for (const row of sheets.get("Task Flow Edges") ?? []) {
+    const oldId = idFromExport(row.id);
+    const oldFlowId = idFromExport(row.flowTemplateId);
+    if (!oldFlowId) continue;
+    edgesByOldFlowId.set(oldFlowId, [
+      ...(edgesByOldFlowId.get(oldFlowId) ?? []),
+      {
+        fromNodeKey: textOrNull(row.fromNodeKey) ?? "",
+        toNodeKey: textOrNull(row.toNodeKey) ?? "",
+        delayDays: Math.max(0, Math.min(9999, numberOrNull(row.delayDays) ?? 0))
+      }
+    ]);
+    if (oldId == null && (textOrNull(row.fromNodeKey) == null || textOrNull(row.toNodeKey) == null)) {
+      throw new Error("Task Flow Edges row is missing a task-flow edge id or node key.");
+    }
+  }
+
+  const oldFlowIds = new Set([...nodesByOldFlowId.keys(), ...edgesByOldFlowId.keys()]);
+  for (const oldFlowId of oldFlowIds) {
+    const nodes = nodesByOldFlowId.get(oldFlowId) ?? [];
+    const edges = edgesByOldFlowId.get(oldFlowId) ?? [];
+    try {
+      validateTaskFlowGraph(nodes, edges);
+      const scheduleProblem = taskFlowScheduleProblem(nodes, edges);
+      if (scheduleProblem) {
+        throw new Error(scheduleProblem);
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Invalid task-flow graph.";
+      throw new Error(`Task Flows row ${oldFlowId}: ${message}`);
+    }
+  }
 }
 
 export function hasFullBackupSheets(rows: SpreadsheetRow[]) {
@@ -254,6 +339,7 @@ export async function importFullBackupSpreadsheetRowsForFarm(
 ) {
   const { upsertCropAndVariety, learnSeedItemSpacing } = deps;
   const sheets = rowsBySheet(rows);
+  validateTaskFlowSheets(sheets);
   const idMaps = {
     fields: new Map<number, number>(),
     blocks: new Map<number, number>(),
@@ -282,7 +368,11 @@ export async function importFullBackupSpreadsheetRowsForFarm(
     importedBeds: 0,
     skippedDuplicateBeds: 0,
     importedRecords: 0,
-    importedVehicles: 0
+    importedVehicles: 0,
+    warnings: [] as string[]
+  };
+  const addWarning = (message: string) => {
+    counts.warnings.push(message);
   };
 
   const farmRow = sheets.get("Farm")?.[0];
@@ -355,6 +445,7 @@ export async function importFullBackupSpreadsheetRowsForFarm(
     const boundary = geoJsonText(row.boundary);
     if (!oldId || !boundary) {
       counts.skippedRows += 1;
+      addWarning(`Skipped Fields row ${row.id || "unknown"} because it was missing an id or valid polygon boundary.`);
       continue;
     }
     const name = textOrNull(row.name) ?? `Imported field ${oldId}`;
@@ -394,6 +485,7 @@ export async function importFullBackupSpreadsheetRowsForFarm(
     const boundary = geoJsonText(row.boundary);
     if (!oldId || !fieldId || !boundary) {
       counts.skippedRows += 1;
+      addWarning(`Skipped Blocks row ${row.id || "unknown"} because it was missing a valid field reference or polygon boundary.`);
       continue;
     }
     const name = textOrNull(row.name) ?? `Imported block ${oldId}`;
@@ -433,6 +525,7 @@ export async function importFullBackupSpreadsheetRowsForFarm(
     const boundary = geoJsonText(row.boundary);
     if (!oldId || !blockId || !boundary) {
       counts.skippedRows += 1;
+      addWarning(`Skipped Block Areas row ${row.id || "unknown"} because it was missing a valid block reference or polygon boundary.`);
       continue;
     }
     const oldCoverCropId = idFromExport(row.coverCropNameId);
@@ -481,8 +574,10 @@ export async function importFullBackupSpreadsheetRowsForFarm(
     const oldBlockId = idFromExport(row.blockId);
     const blockId = oldBlockId == null ? null : idMaps.blocks.get(oldBlockId);
     const boundary = geoJsonText(row.boundary);
-    if (!oldId || !blockId || !boundary) {
+    const bedLengthM = numberOrNull(row.bedLengthM);
+    if (!oldId || !blockId || !boundary || bedLengthM == null || bedLengthM <= 0) {
       counts.skippedRows += 1;
+      addWarning(`Skipped Beds row ${row.id || "unknown"} because it was missing a valid block, polygon boundary, or positive bed length.`);
       continue;
     }
     const name = textOrNull(row.name) ?? `Imported bed ${oldId}`;
@@ -520,7 +615,7 @@ export async function importFullBackupSpreadsheetRowsForFarm(
         textOrNull(row.source) ?? "manual",
         integerOrNull(row.sequenceNo),
         oldPresetId == null ? null : idMaps.bedPresets.get(oldPresetId) ?? null,
-        numberOrNull(row.bedLengthM) ?? 0.01,
+        bedLengthM,
         boundary,
         textOrNull(row.notes)
       ]
@@ -721,6 +816,7 @@ export async function importFullBackupSpreadsheetRowsForFarm(
     const oldId = idFromExport(detail.id);
     if (!oldId) {
       counts.skippedRows += 1;
+      addWarning("Skipped a Planting Details row because it had no exported id.");
       continue;
     }
     let cropId: number;
@@ -763,8 +859,10 @@ export async function importFullBackupSpreadsheetRowsForFarm(
     const plantCount = integerOrNull(detail.plantCount);
     const bedLengthUsedM = numberOrNull(detail.bedLengthUsedM);
     if (plantCount == null && bedLengthUsedM == null) {
-      counts.skippedRows += 1;
-      continue;
+      if (!hasAnyPlantingDetailData(detail)) {
+        throw new Error(`Planting Details row ${oldId} has no planting data to restore.`);
+      }
+      counts.incompleteRows += 1;
     }
     const result = await client.query<{ id: number }>(
       `
@@ -843,7 +941,11 @@ export async function importFullBackupSpreadsheetRowsForFarm(
     const oldBedId = idFromExport(row.bedId);
     const plantingId = oldPlantingId == null ? null : idMaps.plantings.get(oldPlantingId);
     const bedId = oldBedId == null ? null : idMaps.beds.get(oldBedId);
-    if (!oldId || !plantingId || !bedId) continue;
+    if (!oldId || !plantingId || !bedId) {
+      counts.skippedRows += 1;
+      addWarning(`Skipped Placements row ${row.id || "unknown"} because the referenced planting or bed was not restored.`);
+      continue;
+    }
     const result = await client.query<{ id: number }>(
       `
         insert into planting_placements (
@@ -875,7 +977,11 @@ export async function importFullBackupSpreadsheetRowsForFarm(
     const oldBedId = idFromExport(row.bedId);
     const blockId = oldBlockId == null ? null : idMaps.blocks.get(oldBlockId);
     const bedId = oldBedId == null ? null : idMaps.beds.get(oldBedId);
-    if (!blockId || !bedId) continue;
+    if (!blockId || !bedId) {
+      counts.skippedRows += 1;
+      addWarning(`Skipped Placement Gaps row ${row.id || "unknown"} because the referenced block or bed was not restored.`);
+      continue;
+    }
     await client.query(
       `
         insert into block_placement_gaps (farm_id, block_id, bed_id, start_length_m, bed_length_used_m, placement_order, notes)
@@ -898,7 +1004,11 @@ export async function importFullBackupSpreadsheetRowsForFarm(
     const oldBlockId = idFromExport(row.blockId);
     const oldPlantingId = idFromExport(row.plantingId);
     const blockId = oldBlockId == null ? null : idMaps.blocks.get(oldBlockId);
-    if (!blockId) continue;
+    if (!blockId) {
+      counts.skippedRows += 1;
+      addWarning(`Skipped Placement Overflows row ${row.id || "unknown"} because the referenced block was not restored.`);
+      continue;
+    }
     await client.query(
       `
         insert into block_placement_overflows (farm_id, block_id, planting_id, entry_type, bed_length_used_m, plant_count, tray_count, placement_order, notes)
@@ -978,7 +1088,11 @@ export async function importFullBackupSpreadsheetRowsForFarm(
     const oldBedId = idFromExport(row.bedId);
     const plantingId = oldPlantingId == null ? null : idMaps.plantings.get(oldPlantingId);
     const bedId = oldBedId == null ? null : idMaps.beds.get(oldBedId);
-    if (!plantingId || !bedId || !dateOrNull(row.harvestDate)) continue;
+    if (!plantingId || !bedId || !dateOrNull(row.harvestDate)) {
+      counts.skippedRows += 1;
+      addWarning(`Skipped Harvests row ${row.id || "unknown"} because the referenced planting, bed, or harvest date was missing.`);
+      continue;
+    }
     await client.query(
       `
         insert into harvest_records (farm_id, planting_id, bed_id, harvest_date, quantity, unit, notes)

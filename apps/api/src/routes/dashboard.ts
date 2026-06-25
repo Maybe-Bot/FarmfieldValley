@@ -5,6 +5,16 @@ import { pool } from "../db";
 import { DashboardResourceName, dashboardResponse, loadDashboardResource, parseDashboardResources } from "../dashboard-resources";
 import { asyncHandler, currentAuth, requireRole } from "../route-helpers";
 
+const DASHBOARD_QUERY_BATCH_SIZE = 4;
+
+async function runDashboardQueryBatch<T>(loaders: Array<() => Promise<T>>) {
+  const results: T[] = [];
+  for (let index = 0; index < loaders.length; index += DASHBOARD_QUERY_BATCH_SIZE) {
+    results.push(...await Promise.all(loaders.slice(index, index + DASHBOARD_QUERY_BATCH_SIZE).map((load) => load())));
+  }
+  return results;
+}
+
 export function registerDashboardRoutes(app: express.Express) {
   app.get("/api/dashboard", requireRole("worker"), asyncHandler(async (req, res) => {
     const auth = currentAuth(req) as AuthContext;
@@ -27,8 +37,8 @@ export function registerDashboardRoutes(app: express.Express) {
       );
       return result ?? { rows: [] };
     };
-    const [farm, fields, blocks, blockZones, beds, bedPresets, coverCropNames, seedItems, crops, varieties, taskFlowTemplates, taskFlowNodes, taskFlowEdges, tractorProfiles, plantings, placements, placementGaps, placementOverflows, events, tasks, harvests] = await Promise.all([
-      dashboardQuery("farm", `
+    const [farm, fields, blocks, blockZones, beds, bedPresets, coverCropNames, seedItems, crops, varieties, taskFlowTemplates, taskFlowNodes, taskFlowEdges, tractorProfiles, plantings, placements, placementGaps, placementOverflows, events, tasks, harvests] = await runDashboardQueryBatch([
+      () => dashboardQuery("farm", `
         select
           id,
           name,
@@ -38,7 +48,7 @@ export function registerDashboardRoutes(app: express.Express) {
         where id = $1
         limit 1
       `, [auth.farmId]),
-      dashboardQuery("fields", `
+      () => dashboardQuery("fields", `
         select
           field.id,
           field.farm_id as "farmId",
@@ -53,7 +63,7 @@ export function registerDashboardRoutes(app: express.Express) {
         where field.farm_id = $1
         order by farm.name, field.id
       `, [auth.farmId]),
-      dashboardQuery("blocks", `
+      () => dashboardQuery("blocks", `
         select
           b.id,
           f.farm_id as "farmId",
@@ -72,7 +82,7 @@ export function registerDashboardRoutes(app: express.Express) {
         where f.farm_id = $1
         order by farm.name, f.id, b.id
       `, [auth.farmId]),
-      dashboardQuery("blockZones", `
+      () => dashboardQuery("blockZones", `
         select
           zone.id,
           field.farm_id as "farmId",
@@ -102,7 +112,7 @@ export function registerDashboardRoutes(app: express.Express) {
         where field.farm_id = $1
         order by farm.name, field.id, block.id, zone.id
       `, [auth.farmId]),
-      dashboardQuery("beds", `
+      () => dashboardQuery("beds", `
         select
           b.id,
           field.farm_id as "farmId",
@@ -141,7 +151,7 @@ export function registerDashboardRoutes(app: express.Express) {
         group by b.id, field.id, field.farm_id, farm.name, bl.id, bl.name, zone.id, zone.name, bp.id, bp.name
         order by farm.name, field.id, bl.id, b.id
       `, [auth.farmId]),
-      dashboardQuery("bedPresets", `
+      () => dashboardQuery("bedPresets", `
         select
           id,
           farm_id as "farmId",
@@ -154,7 +164,7 @@ export function registerDashboardRoutes(app: express.Express) {
         where farm_id = $1
         order by name
       `, [auth.farmId]),
-      dashboardQuery("coverCropNames", `
+      () => dashboardQuery("coverCropNames", `
         select
           id,
           farm_id as "farmId",
@@ -164,7 +174,7 @@ export function registerDashboardRoutes(app: express.Express) {
         where farm_id = $1
         order by name
       `, [auth.farmId]),
-      dashboardQuery("seedItems", `
+      () => dashboardQuery("seedItems", `
         select
           id,
           farm_id as "farmId",
@@ -203,13 +213,13 @@ export function registerDashboardRoutes(app: express.Express) {
         where farm_id = $1
         order by archived_at nulls first, crop_type, variety_name nulls last, breed_name nulls last, supplier nulls last
       `, [auth.farmId]),
-      dashboardQuery("crops", `select id, name from crops order by name`),
-      dashboardQuery("varieties", `
+      () => dashboardQuery("crops", `select id, name from crops order by name`),
+      () => dashboardQuery("varieties", `
         select id, crop_id as "cropId", name
         from varieties
         order by name
       `),
-      dashboardQuery("taskFlowTemplates", `
+      () => dashboardQuery("taskFlowTemplates", `
         select
           tft.id,
           tft.farm_id as "farmId",
@@ -224,7 +234,7 @@ export function registerDashboardRoutes(app: express.Express) {
         where tft.farm_id = $1
         order by coalesce(c.name, 'General'), tft.name
       `, [auth.farmId]),
-      dashboardQuery("taskFlowNodes", `
+      () => dashboardQuery("taskFlowNodes", `
         select
           id,
           flow_template_id as "flowTemplateId",
@@ -244,7 +254,7 @@ export function registerDashboardRoutes(app: express.Express) {
         where flow_template_id in (select id from task_flow_templates where farm_id = $1)
         order by flow_template_id, y_pos, x_pos, id
       `, [auth.farmId]),
-      dashboardQuery("taskFlowEdges", `
+      () => dashboardQuery("taskFlowEdges", `
         select
           e.id,
           e.flow_template_id as "flowTemplateId",
@@ -257,7 +267,7 @@ export function registerDashboardRoutes(app: express.Express) {
         where e.flow_template_id in (select id from task_flow_templates where farm_id = $1)
         order by e.flow_template_id, e.id
       `, [auth.farmId]),
-      dashboardQuery("tractorProfiles", `
+      () => dashboardQuery("tractorProfiles", `
         select
           id,
           farm_id as "farmId",
@@ -269,7 +279,7 @@ export function registerDashboardRoutes(app: express.Express) {
         where farm_id = $1
         order by name, id
       `, [auth.farmId]),
-      dashboardQuery("plantings", `
+      () => dashboardQuery("plantings", `
         select
           p.id,
           p.farm_id as "farmId",
@@ -323,7 +333,7 @@ export function registerDashboardRoutes(app: express.Express) {
         where p.farm_id = $1
         order by coalesce(p.planned_transplant_date, p.planned_sow_date), p.id
       `, [auth.farmId]),
-      dashboardQuery("placements", `
+      () => dashboardQuery("placements", `
         select
           pp.id,
           pp.planting_id as "plantingId",
@@ -344,7 +354,7 @@ export function registerDashboardRoutes(app: express.Express) {
         where p.farm_id = $1
         order by pp.id
       `, [auth.farmId]),
-      dashboardQuery("placementGaps", `
+      () => dashboardQuery("placementGaps", `
         select
           gap.id,
           gap.farm_id as "farmId",
@@ -362,7 +372,7 @@ export function registerDashboardRoutes(app: express.Express) {
         where gap.farm_id = $1
         order by gap.block_id, gap.placement_order, gap.id
       `, [auth.farmId]),
-      dashboardQuery("placementOverflows", `
+      () => dashboardQuery("placementOverflows", `
         select
           overflow.id,
           overflow.farm_id as "farmId",
@@ -382,7 +392,7 @@ export function registerDashboardRoutes(app: express.Express) {
         where overflow.farm_id = $1
         order by overflow.block_id, overflow.placement_order, overflow.id
       `, [auth.farmId]),
-      dashboardQuery("events", `
+      () => dashboardQuery("events", `
         select
           event.id,
           event.farm_id as "farmId",
@@ -407,7 +417,7 @@ export function registerDashboardRoutes(app: express.Express) {
         where event.farm_id = $1
         order by event.event_date desc, event.id desc
       `, [auth.farmId]),
-      dashboardQuery("tasks", `
+      () => dashboardQuery("tasks", `
         select
           t.id,
           t.farm_id as "farmId",
@@ -437,7 +447,7 @@ export function registerDashboardRoutes(app: express.Express) {
         where t.farm_id = $1
         order by t.scheduled_date nulls last, t.id
       `, [auth.farmId]),
-      dashboardQuery("harvests", `
+      () => dashboardQuery("harvests", `
         select
           h.id,
           h.farm_id as "farmId",

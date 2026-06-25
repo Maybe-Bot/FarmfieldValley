@@ -38,10 +38,10 @@ export function registerAccountManagementRoutes(app: express.Express) {
   });
 
   app.post("/api/account/password", requireRole("worker"), asyncHandler(async (req, res) => {
-    if (!(await enforceRateLimit(req, res, `change-password:${requestIp(req)}`, accountActionRateLimit))) {
+    const auth = currentAuth(req) as AuthContext;
+    if (!(await enforceRateLimit(req, res, `change-password:user:${auth.userId}`, accountActionRateLimit))) {
       return;
     }
-    const auth = currentAuth(req) as AuthContext;
     const body = passwordChangeSchema.parse(req.body);
     const result = await pool.query<{ password_hash: string }>(
       `select password_hash from app_users where id = $1 and is_active = true`,

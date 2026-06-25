@@ -16,7 +16,7 @@ import cors from "cors";
 import fs from "node:fs/promises";
 import { PoolClient } from "pg";
 import { z } from "zod";
-import { AuthContext, AuthenticatedRequest, csrfTokenForRequest, resolveAuthContext } from "./auth";
+import { AuthContext, AuthenticatedRequest, resolveAuthContext } from "./auth";
 import {
   BedLineMode,
   extendStraightLine,
@@ -54,7 +54,7 @@ import {
   readOfflineImageryManifest
 } from "./offline-imagery";
 import { publicErrorResponse } from "./public-error-response";
-import { asyncHandler, requireRole } from "./route-helpers";
+import { asyncHandler, requireRole, requireValidCsrfForAuthenticatedWrites } from "./route-helpers";
 import { registerAdminRoutes } from "./routes/admin";
 import { registerAuthRoutes } from "./routes/auth";
 import { registerFarmRoutes } from "./routes/farm-routes";
@@ -69,12 +69,13 @@ import {
   ZoneActualStateInput
 } from "./schemas";
 import { ActualEventType, FarmRole, isCurrentTaskType, isLegacyTaskType, PlantingStatus, TaskType } from "./types";
-import { taskFlowScheduleProblem } from "./task-flow-validation";
+import { taskFlowScheduleProblem, validateTaskFlowGraph } from "./task-flow-validation";
 import {
   registerUndoRoutes
 } from "./undo";
 
 const app = express();
+const MAX_SYNC_TASK_FLOW_RECALCULATIONS = 100;
 app.set("trust proxy", config.trustProxy);
 app.use(cors({
   credentials: true,
@@ -151,28 +152,7 @@ app.use("/api", asyncHandler(async (req, _res, next) => {
   next();
 }));
 
-app.use("/api", (req, res, next) => {
-  if (["GET", "HEAD", "OPTIONS"].includes(req.method)) {
-    next();
-    return;
-  }
-
-  // Login/register do not have a session yet. Once a cookie-authenticated
-  // session exists, unsafe methods must include the matching CSRF header.
-  if (!(req as AuthenticatedRequest).auth) {
-    next();
-    return;
-  }
-
-  const expectedToken = csrfTokenForRequest(req);
-  const providedToken = req.header("x-csrf-token");
-  if (!expectedToken || providedToken !== expectedToken) {
-    res.status(403).json({ error: "Invalid CSRF token" });
-    return;
-  }
-
-  next();
-});
+app.use("/api", requireValidCsrfForAuthenticatedWrites);
 
 export function rectangleWkt(x: number, y: number, width: number, height: number) {
   const x2 = x + width;
@@ -1816,7 +1796,7 @@ async function validateBlockZoneBoundary(
   const result = await client.query<{ outside_sqm: number; is_valid: boolean }>(
     `
       select
-        coalesce(ST_Area(ST_Difference(ST_GeomFromText($2, 4326), boundary)::geography), 0) as outside_sqm,
+        coalesce(ST_Area(ST_Difference(ST_GeomFromText($2, 4326), block.boundary)::geography), 0) as outside_sqm,
         ST_IsValid(ST_GeomFromText($2, 4326)) as is_valid
       from blocks block
       join fields field on field.id = block.field_id
@@ -2102,66 +2082,6 @@ export async function splitBlockBoundaryIntoZoneCoordinates(
   };
 }
 
-function validateTaskFlowGraph(
-  nodes: Array<{ nodeKey: string; label: string }>,
-  edges: Array<{ fromNodeKey: string; toNodeKey: string }>
-) {
-  const nodeKeys = new Set(nodes.map((node) => node.nodeKey));
-  if (nodeKeys.size !== nodes.length) {
-    throw new Error("Task flow node keys must be unique");
-  }
-
-  const edgeKeys = new Set<string>();
-  for (const edge of edges) {
-    if (!nodeKeys.has(edge.fromNodeKey) || !nodeKeys.has(edge.toNodeKey)) {
-      throw new Error("Task flow edge references a missing node");
-    }
-    if (edge.fromNodeKey === edge.toNodeKey) {
-      throw new Error("Task flow edge cannot point to the same node");
-    }
-    const edgeKey = `${edge.fromNodeKey}->${edge.toNodeKey}`;
-    if (edgeKeys.has(edgeKey)) {
-      throw new Error("Task flow edges must be unique");
-    }
-    edgeKeys.add(edgeKey);
-  }
-
-  const downstreamByNode = new Map<string, string[]>();
-  for (const nodeKey of nodeKeys) {
-    downstreamByNode.set(nodeKey, []);
-  }
-  for (const edge of edges) {
-    downstreamByNode.get(edge.fromNodeKey)?.push(edge.toNodeKey);
-  }
-
-  const visiting = new Set<string>();
-  const visited = new Set<string>();
-  const visit = (nodeKey: string): boolean => {
-    if (visiting.has(nodeKey)) {
-      return true;
-    }
-    if (visited.has(nodeKey)) {
-      return false;
-    }
-
-    visiting.add(nodeKey);
-    for (const downstreamNodeKey of downstreamByNode.get(nodeKey) ?? []) {
-      if (visit(downstreamNodeKey)) {
-        return true;
-      }
-    }
-    visiting.delete(nodeKey);
-    visited.add(nodeKey);
-    return false;
-  };
-
-  for (const nodeKey of nodeKeys) {
-    if (visit(nodeKey)) {
-      throw new Error("Task flow dependencies cannot contain a loop");
-    }
-  }
-}
-
 async function recalculatePlantingsForTaskFlow(
   client: PoolClient,
   taskFlowTemplateId: number
@@ -2184,6 +2104,7 @@ async function recalculatePlantingsForTaskFlow(
             and crop_id = coalesce($3, crop_id)
             and (task_flow_template_id = $1 or task_flow_template_id is null)
           order by id
+          limit $4
         `
       : `
           select id
@@ -2191,16 +2112,20 @@ async function recalculatePlantingsForTaskFlow(
           where farm_id = $2
             and task_flow_template_id = $1
           order by id
+          limit $4
         `,
-    [taskFlowTemplateId, template.farm_id, template.crop_id]
+    [taskFlowTemplateId, template.farm_id, template.crop_id, MAX_SYNC_TASK_FLOW_RECALCULATIONS + 1]
   );
+  if (plantings.rows.length > MAX_SYNC_TASK_FLOW_RECALCULATIONS) {
+    throw new Error(`This task flow affects more than ${MAX_SYNC_TASK_FLOW_RECALCULATIONS} plantings. To protect the server, narrow the flow to a crop or update plantings in smaller groups before saving.`);
+  }
 
   for (const planting of plantings.rows) {
     await recalculatePlantingTasks(client, planting.id);
   }
 }
 
-// Saving a task flow replaces its graph in one transaction, then refreshes
+// Saving a task flow updates its graph in one transaction, then refreshes
 // affected plantings so their generated tasks match the edited flow.
 export async function saveTaskFlowTemplate(
   client: PoolClient,
@@ -2279,8 +2204,6 @@ export async function saveTaskFlowTemplate(
     if (updateResult.rowCount !== 1) {
       throw new Error("Task flow template not found in this farm");
     }
-    await client.query(`delete from task_flow_edges where flow_template_id = $1`, [flowTemplateId]);
-    await client.query(`delete from task_flow_nodes where flow_template_id = $1`, [flowTemplateId]);
   }
 
   if (options.isDefault) {
@@ -2314,6 +2237,16 @@ export async function saveTaskFlowTemplate(
     }
   }
 
+  const nextNodeKeys = options.nodes.map((node) => node.nodeKey);
+  await client.query(
+    `
+      delete from task_flow_nodes
+      where flow_template_id = $1
+        and not (node_key = any($2::text[]))
+    `,
+    [flowTemplateId, nextNodeKeys]
+  );
+
   const nodeIdsByKey = new Map<string, number>();
   const incomingNodeKeysByKey = new Map(options.nodes.map((node) => [node.nodeKey, [] as string[]]));
   for (const edge of options.edges) {
@@ -2340,15 +2273,29 @@ export async function saveTaskFlowTemplate(
           notes
         )
         values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+        on conflict (flow_template_id, node_key) do update
+        set
+          task_type = excluded.task_type,
+          label = excluded.label,
+          anchor = excluded.anchor,
+          offset_days = excluded.offset_days,
+          icon_color = excluded.icon_color,
+          icon_secondary_color = excluded.icon_secondary_color,
+          tractor_model = excluded.tractor_model,
+          tractor_profile_id = excluded.tractor_profile_id,
+          x_pos = excluded.x_pos,
+          y_pos = excluded.y_pos,
+          notes = excluded.notes,
+          updated_at = now()
         returning id
       `,
-	    [
-	      flowTemplateId,
-	      node.nodeKey,
-	      node.taskType,
-	      node.label,
-	      anchor,
-	      0,
+      [
+        flowTemplateId,
+        node.nodeKey,
+        node.taskType,
+        node.label,
+        anchor,
+        0,
         node.iconColor,
         node.iconSecondaryColor,
         node.tractorModel ?? null,
@@ -2361,6 +2308,7 @@ export async function saveTaskFlowTemplate(
     nodeIdsByKey.set(node.nodeKey, result.rows[0].id);
   }
 
+  await client.query(`delete from task_flow_edges where flow_template_id = $1`, [flowTemplateId]);
   for (const edge of options.edges) {
     await client.query(
       `
@@ -2500,7 +2448,7 @@ registerFarmRoutes(app, {
 app.use((error: unknown, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
   console.error(error);
   if (error instanceof z.ZodError) {
-    res.status(400).json({ error: error.errors });
+    res.status(400).json({ error: error.errors.map((e) => ({ path: e.path, message: e.message })) });
     return;
   }
   if (error instanceof Error && error.message === "Parent field not found") {
@@ -2589,6 +2537,7 @@ app.use((error: unknown, _req: express.Request, res: express.Response, _next: ex
       error.message === "This block has harvest records tied to its beds. Move or remove those harvest records before replacing the beds." ||
       error.message === "Select or add a cover crop name for cover crop areas" ||
       error.message === "Task flow node keys must be unique" ||
+      error.message.startsWith("Task flow node ") ||
       error.message === "Task flow edge references a missing node" ||
       error.message === "Task flow edge cannot point to the same node" ||
       error.message === "Task flow edges must be unique" ||

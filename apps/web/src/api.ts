@@ -174,6 +174,7 @@ export const api = {
     skippedDuplicateBeds?: number;
     importedRecords?: number;
     importedVehicles?: number;
+    warnings?: string[];
   }>("/api/import/spreadsheet", { method: "POST", body: JSON.stringify(body) }),
   createCoverCropName: (body: unknown) => request("/api/cover-crops", { method: "POST", body: JSON.stringify(body) }),
   createField: (body: unknown) => request("/api/fields", { method: "POST", body: JSON.stringify(body) }),

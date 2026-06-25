@@ -38,6 +38,13 @@ import { SpreadsheetImportCard } from "./components/SpreadsheetImportCard";
 import { TaskFlowEditorCard } from "./components/TaskFlowEditorCard";
 import { TaskIconMark } from "./components/TaskIconMark";
 import { AccountPasswordCard, TeamAccountsCard } from "./components/TeamAccountsCard";
+import {
+  ActiveTutorialOverlay,
+  getTutorialExtraHighlightTarget,
+  publishTutorialHighlightState,
+  subscribeTutorialHighlightRequests,
+  TutorialsCard
+} from "./components/TutorialsCard";
 import { WorkBedPicker } from "./components/WorkBedPicker";
 import { formatDate } from "./display-utils";
 import { handleForm } from "./form-utils";
@@ -265,7 +272,7 @@ const dashboardRefreshResources = {
   tasks: ["tasks", "events", "plantings", "placements", "harvests", "beds"],
   taskFlows: ["taskFlowTemplates", "taskFlowNodes", "taskFlowEdges", "tasks"],
   seeds: ["seedItems", "crops", "varieties"],
-  garage: ["tractorProfiles", "taskFlowNodes", "tasks"]
+  garage: ["tractorProfiles", "taskFlowTemplates", "taskFlowNodes", "taskFlowEdges", "tasks"]
 } satisfies Record<string, DashboardResourceName[]>;
 
 // Local storage keeps lightweight UI preferences on this browser only.
@@ -527,9 +534,10 @@ function App() {
     page: view
   });
 
-  const updateTractorProfiles = useCallback((tractorProfiles: TractorProfile[]) => {
+  const updateTractorProfiles = useCallback(async (tractorProfiles: TractorProfile[]) => {
     setData((current) => ({ ...current, tractorProfiles }));
-  }, []);
+    await loadDashboardResources(dashboardRefreshResources.garage);
+  }, [canPlan, isAdmin]);
 
   function recordActivity(action: string, details?: Record<string, unknown>) {
     recentActivityRef.current = [
@@ -653,8 +661,29 @@ function App() {
     setPrototypeWarningOpen(
       window.localStorage.getItem(prototypeWarningStorageKey(session.user.id)) !== PROTOTYPE_WARNING_VERSION
     );
-    setTutorialOpen(window.localStorage.getItem(tutorialDismissedStorageKey(session.user.id)) !== "true");
+    setTutorialOpen(false);
   }, [session]);
+
+  useEffect(() => subscribeTutorialHighlightRequests((state) => {
+    if (!state.active) {
+      setTutorialOpen(false);
+      setTutorialStatus(null);
+      return;
+    }
+    setTutorialKind(state.workflowId);
+    setTutorialStepIndex(state.legacyStepIndex);
+    setTutorialStatus(null);
+    setTutorialOpen(true);
+  }), []);
+
+  useEffect(() => {
+    publishTutorialHighlightState({
+      active: tutorialOpen,
+      workflowId: tutorialKind,
+      legacyStepIndex: tutorialStepIndex,
+      extraHighlightTarget: tutorialOpen ? getTutorialExtraHighlightTarget(tutorialKind, tutorialStepIndex) : null
+    });
+  }, [tutorialKind, tutorialOpen, tutorialStepIndex]);
 
   async function load(
     _includeAccounts = canPlan,
@@ -1273,6 +1302,9 @@ function App() {
       if (task.status === "done") {
         return false;
       }
+      if (task.taskType === "bed_making") {
+        return false;
+      }
       if (task.scheduledDate == null) {
         return true;
       }
@@ -1336,24 +1368,22 @@ function App() {
           ? bedSectionBoundary(bed, Number(placement.startLengthM || 0), Number(placement.bedLengthUsedM || 0), reverseFromEnd)
           : null);
         const travelPath = bedTravelPath(bed);
-        const entrancePose = firstBedEntrancePose(bed, reverseFromEnd ? "end" : "start");
-        const center = entrancePose?.center ?? polygonCenter(geoJsonPolygonToLatLngs(sectionBoundary ?? bed.boundary));
+        const center = polygonCenter(geoJsonPolygonToLatLngs(sectionBoundary ?? bed.boundary));
         if (!center) {
           return null;
         }
 
-        const bearing = entrancePose?.bearing ?? (reverseFromEnd ? travelPath.bearing + 180 : travelPath.bearing);
         return {
           key: `task-marker-${task.id}`,
           task,
           bed,
           center,
-          bearing,
+          bearing: reverseFromEnd ? travelPath.bearing + 180 : travelPath.bearing,
           runDistancePx: 38,
           runDurationSec: 9.5,
           animationDelaySec: 0,
-          oneWayRun: true,
-          animated: true
+          oneWayRun: false,
+          animated: false
         };
       })
       .filter((item): item is MapTaskMarker => item != null);
@@ -2008,13 +2038,17 @@ function App() {
     && selectedBedPlacements.length === 0
     && selectedBedGaps.length === 0
   );
+  const bedGeneratorCardVisible = Boolean(
+    mapWorkflowMode === "planning"
+    && selectedBlockContext
+    && canEditSelectedBlockContext
+    && (mapMode === "bed_tools" || mapMode === "pick_bed_edge" || mapMode === "draw_bed_line")
+  );
   const placementPlanEntranceMarkerActive = Boolean(
-    selectedBlockContext
+    bedGeneratorCardVisible
+    && selectedBlockContext
     && selectedBlockPlantableBeds.length > 0
     && mapPlantingBeds.length === 0
-    && canPlan
-    && mapWorkflowMode === "planning"
-    && selectedBlockContext.farmId === data.farm?.id
   );
   const placementPlanEntranceMarker = useMemo(() => {
     if (!placementPlanEntranceMarkerActive || !selectedBlockContext) {
@@ -2341,7 +2375,7 @@ function App() {
       const remaining = data.plantings.filter((item) => item.id !== plantingId);
       setSelectedPlantingId(remaining[0]?.id ?? null);
       await loadDashboardResources(dashboardRefreshResources.plantings);
-      setView(remaining.length > 0 ? "plan" : "plan");
+      setView("plan");
       setMapNotice("Planting deleted.");
     } catch (err) {
       setMapNotice(err instanceof Error ? err.message : "Delete failed.");
@@ -2372,15 +2406,27 @@ function App() {
 
     try {
       setMapNotice("Deleting selected plantings...");
-      for (const plantingId of selectedPlantings.map((planting) => planting.id)) {
-        await api.deletePlanting(plantingId);
+      const deletedIds: number[] = [];
+      const failedDeletes: string[] = [];
+      for (const planting of selectedPlantings) {
+        try {
+          await api.deletePlanting(planting.id);
+          deletedIds.push(planting.id);
+        } catch (error) {
+          failedDeletes.push(`${planting.title}: ${error instanceof Error ? error.message : "Delete failed"}`);
+        }
       }
-      setSelectedPlanPlantingIds([]);
-      const remaining = data.plantings.filter((item) => !selectedIds.includes(item.id));
+      const deletedIdSet = new Set(deletedIds);
+      setSelectedPlanPlantingIds((current) => current.filter((id) => !deletedIdSet.has(id)));
+      const remaining = data.plantings.filter((item) => !deletedIdSet.has(item.id));
       setSelectedPlantingId(remaining[0]?.id ?? null);
       await loadDashboardResources(dashboardRefreshResources.plantings);
       setView("plan");
-      setMapNotice("Selected plantings deleted.");
+      if (failedDeletes.length > 0) {
+        setMapNotice(`${deletedIds.length} planting${deletedIds.length === 1 ? "" : "s"} deleted. ${failedDeletes.length} failed: ${failedDeletes.slice(0, 3).join("; ")}${failedDeletes.length > 3 ? "..." : ""}`);
+      } else {
+        setMapNotice("Selected plantings deleted.");
+      }
     } catch (err) {
       setMapNotice(err instanceof Error ? err.message : "Bulk delete failed.");
     }
@@ -2404,6 +2450,7 @@ function App() {
       recordActivity("undo used", { label: latest.label });
       setSelection(null);
       await load(canPlan);
+      setFlowEditorKey((current) => current + 1);
       setMapNotice(`Undid: ${latest.label}`);
     } catch (err) {
       setMapNotice(err instanceof Error ? err.message : "Undo failed.");
@@ -2428,6 +2475,7 @@ function App() {
       recordActivity("redo used", { label: latest.label });
       setSelection(null);
       await load(canPlan);
+      setFlowEditorKey((current) => current + 1);
       setMapNotice(`Redid: ${latest.label}`);
     } catch (err) {
       setMapNotice(err instanceof Error ? err.message : "Redo failed.");
@@ -3738,6 +3786,10 @@ function App() {
       || (activeTutorialStep === tutorialMakeBedsStep && mapMode === "pick_bed_edge" && bedLineCoordinates.length < 2)
       || (activeTutorialStep === tutorialMakeBedsStep && mapMode === "draw_bed_line" && bedLineCoordinates.length < 2)
     );
+  const tutorialExtraHighlightTarget = tutorialOpen ? getTutorialExtraHighlightTarget(tutorialKind, tutorialStepIndex) : null;
+  const tutorialHighlightEntrancePreview = tutorialExtraHighlightTarget === "entrance_preview" && view === "map";
+  const tutorialHighlightTaskLayerToggle = tutorialExtraHighlightTarget === "task_layer_toggle" && view === "map";
+  const tutorialHighlightDoneThisWeek = tutorialExtraHighlightTarget === "done_this_week" && view === "map" && mapWorkflowMode === "field_work";
   const tutorialTargetClass = (isTarget: boolean) => isTarget ? " tutorial-target" : "";
   const tutorialFlowNeedsSelection = activeTutorialStep === tutorialReviewFlowStep
     && view === "flows"
@@ -3904,6 +3956,7 @@ function App() {
     setTutorialStepIndex((current) => Math.min(tutorialSteps.length - 1, current + 1));
   }
   const mapIsPointSelectionMode = isPointSelectionMapMode(mapMode);
+  const legacyTutorialPanelEnabled = false;
   const tutorialScrollTriggerKey = [
     activeTutorialStep,
     bedLineCoordinates.length,
@@ -3923,6 +3976,7 @@ function App() {
   return (
     <div className={`app-shell theme-${themeMode}${isMobileViewport ? " mobile-shell" : ""}`}>
       <TutorialAutoScroll active={tutorialOpen} triggerKey={tutorialScrollTriggerKey} />
+      {canPlan && <ActiveTutorialOverlay />}
       <main className="main-panel">
         <header className={`topbar${mobileToolbarOpen ? " mobile-toolbar-open" : ""}`}>
           <div className="mobile-toolbar-summary">
@@ -3982,28 +4036,6 @@ function App() {
                 Close
               </button>
             </div>
-            {view === "map" && (
-              <div className="drawer-workflow-section">
-                <strong>Map mode</strong>
-                <div className="drawer-map-workflow-toggle map-workflow-toggle toolbar-workflow-toggle" aria-label="Map workflow">
-                  <button
-                    type="button"
-                    className={`${mapWorkflowMode === "planning" ? "primary-button" : "secondary-button"} compact-button${tutorialTargetClass(tutorialHighlightPlanningMode)}`}
-                    onClick={() => changeMapWorkflowMode("planning")}
-                    disabled={!canPlan}
-                  >
-                    Plan
-                  </button>
-                  <button
-                    type="button"
-                    className={`${mapWorkflowMode === "field_work" ? "primary-button" : "secondary-button"} compact-button${tutorialTargetClass(tutorialHighlightWorkMode)}`}
-                    onClick={() => changeMapWorkflowMode("field_work")}
-                  >
-                    Work
-                  </button>
-                </div>
-              </div>
-            )}
             <div className="header-actions">
               <div className="toolbar-left">
                 {mainToolbarNavItems.length > 0 && (
@@ -4064,28 +4096,6 @@ function App() {
                 </span>
               </div>
             </div>
-            {view === "map" && (
-              <div className="map-tools-actions toolbar-map-tools" aria-label="Map tools">
-                {mapWorkflowMode === "planning" && (
-                  <>
-                    <button className={`${mapMode === "select" ? "primary-button" : "secondary-button"} compact-button${tutorialTargetClass(tutorialHighlightMapSelect)}`} onClick={() => { resetMapDrafts("select"); setMobileToolbarOpen(false); }}>Select</button>
-                    <button className={`${mapMode === "draw_field" ? "primary-button" : "secondary-button"} compact-button${tutorialTargetClass(tutorialHighlightDrawField)}`} onClick={() => { startDrawField(); setMobileToolbarOpen(false); }} disabled={!canPlan}>Draw field</button>
-                    <button className={`${mapMode === "draw_block" ? "primary-button" : "secondary-button"} compact-button${tutorialTargetClass(tutorialHighlightDrawBlock)}`} onClick={() => { startDrawBlock(); setMobileToolbarOpen(false); }} disabled={!canPlan || !selectedField || !selectedFieldIsOwnFarm}>Draw block</button>
-                    <button className={`${mapMode === "edit" ? "primary-button" : "secondary-button"} compact-button`} onClick={() => { startEditSelection(); setMobileToolbarOpen(false); }} disabled={!canEditSelectedMapItem}>Edit field/block</button>
-                    <button
-                      className={`${mapMode === "bed_tools" || mapMode === "pick_bed_edge" || mapMode === "draw_bed_line" ? "primary-button" : "secondary-button"} compact-button${tutorialTargetClass(tutorialHighlightGenerateBeds)}`}
-                      onClick={() => {
-                        openSelectedBlockBedMaker();
-                        setMobileToolbarOpen(false);
-                      }}
-                      disabled={!selectedBlockContext || !canEditSelectedBlockContext}
-                    >
-                      Make beds
-                    </button>
-                  </>
-                )}
-              </div>
-            )}
           </div>
         </header>
 
@@ -4144,7 +4154,7 @@ function App() {
           </div>
         )}
 
-        {canPlan && tutorialOpen && (
+        {legacyTutorialPanelEnabled && canPlan && tutorialOpen && (
           <section className="card tutorial-card" aria-labelledby="tutorial-title">
             <div className="section-header">
               <div className="title-block">
@@ -4190,7 +4200,7 @@ function App() {
         {view === "map" && (
           <section className="content-grid map-grid">
             <div className="map-main-stack">
-              <div className={`card map-card${tutorialTargetClass(tutorialHighlightMapSurface)}`}>
+              <div className={`card map-card${tutorialTargetClass(tutorialHighlightMapSurface || tutorialHighlightEntrancePreview)}`}>
                 <MapContainer
                   className={mapIsPointSelectionMode ? "point-select-map" : undefined}
                   center={initialView.center}
@@ -4932,6 +4942,43 @@ function App() {
                   </>
                 )}
               </MapContainer>
+                <div className={`map-mode-overlay${mapIsPointSelectionMode ? " point-selection-active" : ""}`} aria-label="Map mode and tools">
+                  <div className="map-workflow-toggle" aria-label="Map workflow">
+                    <button
+                      type="button"
+                      className={`${mapWorkflowMode === "planning" ? "primary-button" : "secondary-button"} compact-button${tutorialTargetClass(tutorialHighlightPlanningMode)}`}
+                      onClick={() => changeMapWorkflowMode("planning")}
+                      disabled={!canPlan}
+                    >
+                      Plan
+                    </button>
+                    <button
+                      type="button"
+                      className={`${mapWorkflowMode === "field_work" ? "primary-button" : "secondary-button"} compact-button${tutorialTargetClass(tutorialHighlightWorkMode)}`}
+                      onClick={() => changeMapWorkflowMode("field_work")}
+                    >
+                      Work
+                    </button>
+                  </div>
+                  {mapWorkflowMode === "planning" ? (
+                    <div className="map-overlay-tools" aria-label="Planning map tools">
+                      <button type="button" className={`${mapMode === "select" ? "primary-button" : "secondary-button"} compact-button${tutorialTargetClass(tutorialHighlightMapSelect)}`} onClick={() => resetMapDrafts("select")}>Select</button>
+                      <button type="button" className={`${mapMode === "draw_field" ? "primary-button" : "secondary-button"} compact-button${tutorialTargetClass(tutorialHighlightDrawField)}`} onClick={startDrawField} disabled={!canPlan}>Draw field</button>
+                      <button type="button" className={`${mapMode === "draw_block" ? "primary-button" : "secondary-button"} compact-button${tutorialTargetClass(tutorialHighlightDrawBlock)}`} onClick={startDrawBlock} disabled={!canPlan || !selectedField || !selectedFieldIsOwnFarm}>Draw block</button>
+                      <button type="button" className={`${mapMode === "edit" ? "primary-button" : "secondary-button"} compact-button`} onClick={startEditSelection} disabled={!canEditSelectedMapItem}>Edit field/block</button>
+                      <button
+                        type="button"
+                        className={`${mapMode === "bed_tools" || mapMode === "pick_bed_edge" || mapMode === "draw_bed_line" ? "primary-button" : "secondary-button"} compact-button${tutorialTargetClass(tutorialHighlightGenerateBeds)}`}
+                        onClick={openSelectedBlockBedMaker}
+                        disabled={!selectedBlockContext || !canEditSelectedBlockContext}
+                      >
+                        Make beds
+                      </button>
+                    </div>
+                  ) : (
+                    <div className="map-work-mode-hint">Select beds or crop areas to record work.</div>
+                  )}
+                </div>
               </div>
               <div className="card map-controls-card">
                 {isMobileViewport && (
@@ -5001,7 +5048,7 @@ function App() {
                     />
                     <span>Actual crops in ground</span>
                   </label>
-                  <label className="layer-toggle">
+                  <label className={`layer-toggle${tutorialTargetClass(tutorialHighlightTaskLayerToggle)}`}>
                     <input
                       type="checkbox"
                       checked={showTaskLayer}
@@ -5099,6 +5146,7 @@ function App() {
                     contextLabel={mapWorkTaskContextLabel}
                     tasks={mapSelectedTaskList}
                     undoTaskId={recentlyCompletedTaskId}
+                    highlightDoneThisWeek={tutorialHighlightDoneThisWeek}
                     showPastUndoneOption={selectedMapWeekStart === currentTaskWeekStart}
                     pastUndoneChecked={showPastUndoneTasks}
                     onPastUndoneChange={setShowPastUndoneTasks}
@@ -5338,7 +5386,7 @@ function App() {
                 </div>
               )}
 
-              {mapWorkflowMode === "planning" && selectedBlockContext && canEditSelectedBlockContext && (mapMode === "bed_tools" || mapMode === "pick_bed_edge" || mapMode === "draw_bed_line") && (
+              {bedGeneratorCardVisible && selectedBlockContext && (
                 <BedGeneratorCard
                   block={selectedBlockContext}
                   zone={null}
@@ -6179,26 +6227,7 @@ function App() {
                   It does not store your identity, farm, browser ID, raw web address, farm records, clicks, or error text.
                 </p>
               </div>
-              {canPlan && (
-                <div className="card">
-                  <h2>Tutorials</h2>
-                  <p className="muted">Start or restart guided workflows. The full workflow tutorial is a bug-check tool for now and can become an advanced tutorial later.</p>
-                  <button
-                    type="button"
-                    className="secondary-button full-span"
-                    onClick={startTutorialFromBeginning}
-                  >
-                    Start first account tutorial
-                  </button>
-                  <button
-                    type="button"
-                    className="primary-button full-span"
-                    onClick={startFullWorkflowTutorial}
-                  >
-                    Start full workflow tutorial
-                  </button>
-                </div>
-              )}
+              {canPlan && <TutorialsCard />}
               <div className="card">
                 <h2>Account</h2>
                 <dl className="detail-list">
@@ -7094,6 +7123,7 @@ function TaskWeekCard({
   contextLabel,
   tasks,
   undoTaskId,
+  highlightDoneThisWeek = false,
   showPastUndoneOption,
   pastUndoneChecked,
   onPastUndoneChange,
@@ -7106,6 +7136,7 @@ function TaskWeekCard({
   contextLabel: string;
   tasks: Task[];
   undoTaskId: number | null;
+  highlightDoneThisWeek?: boolean;
   showPastUndoneOption: boolean;
   pastUndoneChecked: boolean;
   onPastUndoneChange: (checked: boolean) => void;
@@ -7165,7 +7196,7 @@ function TaskWeekCard({
             </div>
           )}
           {doneTasks.length > 0 && (
-            <div>
+            <div className={highlightDoneThisWeek ? "tutorial-target" : ""}>
               <strong>Done this week</strong>
               <div className="task-week-list">
                 {doneTasks.map((task) => (

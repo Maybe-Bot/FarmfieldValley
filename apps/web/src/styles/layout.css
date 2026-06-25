@@ -402,6 +402,7 @@ textarea {
   padding: 0;
   border-radius: 0;
   overflow: hidden;
+  position: relative;
 }
 
 .map-card .leaflet-container {
@@ -436,18 +437,23 @@ textarea {
   gap: 0.85rem;
 }
 
-.map-tools-card {
-  display: grid;
-  gap: 0.45rem;
-  padding: 0.55rem 0.7rem;
-  position: sticky;
+.map-mode-overlay {
+  position: absolute;
   top: 0.75rem;
-  z-index: 20;
+  left: 0.75rem;
+  z-index: 1000;
+  display: flex;
+  flex-direction: column;
+  gap: 0.45rem;
+  width: min(12.5rem, calc(100% - 1.5rem));
+  max-width: calc(100% - 1.5rem);
+  pointer-events: none;
 }
 
-.map-tools-card .map-workflow-toggle {
-  display: inline-flex;
+.map-mode-overlay .map-workflow-toggle {
+  display: flex;
   align-items: center;
+  width: 100%;
   margin: 0;
   min-width: 0;
   gap: 0;
@@ -456,60 +462,53 @@ textarea {
   border-radius: 999px;
   background: var(--surface-soft);
   box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.35);
+  pointer-events: auto;
 }
 
-.map-tools-card .map-workflow-toggle button {
-  min-width: 4.2rem;
+.map-mode-overlay .map-workflow-toggle button {
+  flex: 1 1 0;
+  min-width: 0;
   border: 0;
   border-radius: 999px;
   box-shadow: none;
 }
 
-.map-tools-card .map-workflow-toggle .secondary-button {
+.map-mode-overlay .map-workflow-toggle .secondary-button {
   background: transparent;
 }
 
-.map-tools-body {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 0.65rem;
-  align-items: center;
+.map-overlay-tools {
+  display: grid;
+  gap: 0.45rem;
+  padding: 0.45rem;
+  border: 1px solid var(--card-border);
+  border-radius: 10px;
+  background: rgba(19, 25, 20, 0.92);
+  box-shadow: 0 12px 28px rgba(0, 0, 0, 0.26);
+  pointer-events: auto;
 }
 
-.map-tools-actions {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 0.4rem;
-  align-items: center;
+.map-mode-overlay.point-selection-active .map-overlay-tools {
+  display: none;
 }
 
-.map-tools-actions button {
+.map-overlay-tools button {
+  width: 100%;
+  min-width: 0;
+  padding: 0.45rem 0.65rem;
+  line-height: 1.05;
   white-space: nowrap;
 }
 
-.map-tools-card button {
-  padding: 0.45rem 0.65rem;
-  line-height: 1.05;
-}
-
-.map-tools-status {
-  display: flex;
-  margin-left: auto;
-  gap: 0.35rem;
-  align-items: center;
-}
-
-.map-tools-status .instruction-box,
-.map-tools-status .muted,
-.map-tools-status .tutorial-helper-bubble {
-  margin: 0;
-}
-
-.map-tools-status .instruction-box,
-.map-tools-status .tutorial-helper-bubble {
-  padding: 0.45rem 0.6rem;
-  font-size: 0.9rem;
+.map-work-mode-hint {
+  border-radius: 8px;
+  padding: 0.52rem 0.6rem;
+  border: 1px solid var(--card-border);
+  background: rgba(19, 25, 20, 0.92);
+  color: var(--button-secondary-text);
+  font-size: 0.88rem;
   line-height: 1.25;
+  box-shadow: 0 12px 28px rgba(0, 0, 0, 0.26);
 }
 
 .map-location-panel {
@@ -812,4 +811,3 @@ textarea {
   grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 0.75rem;
 }
-

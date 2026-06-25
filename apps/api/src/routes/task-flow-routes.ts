@@ -8,6 +8,8 @@ import { recalculatePlantingTasks } from "../scheduler";
 import { TaskType } from "../types";
 import { createUndoSnapshot, pruneUndoSnapshots } from "../undo";
 
+const MAX_SYNC_TASK_FLOW_DELETE_RECALCULATIONS = 100;
+
 type SaveTaskFlowTemplate = (client: PoolClient, options: {
   id?: number;
   farmId?: number;
@@ -224,14 +226,21 @@ export function registerTaskFlowRoutes(app: express.Express, saveTaskFlowTemplat
               where farm_id = $2
                 and crop_id = coalesce($3, crop_id)
                 and (task_flow_template_id = $1 or task_flow_template_id is null)
+              order by id
+              limit $4
             `
           : `
               select id
               from plantings
               where farm_id = $2 and task_flow_template_id = $1
+              order by id
+              limit $4
             `,
-        [id, auth.farmId, template.crop_id]
+        [id, auth.farmId, template.crop_id, MAX_SYNC_TASK_FLOW_DELETE_RECALCULATIONS + 1]
       );
+      if (plantings.rows.length > MAX_SYNC_TASK_FLOW_DELETE_RECALCULATIONS) {
+        throw new Error(`This task flow affects more than ${MAX_SYNC_TASK_FLOW_DELETE_RECALCULATIONS} plantings. To protect the server, move plantings to another flow in smaller groups before deleting it.`);
+      }
       await client.query(`delete from task_flow_templates where id = $1 and farm_id = $2`, [id, auth.farmId]);
       for (const planting of plantings.rows) {
         await recalculatePlantingTasks(client, planting.id);

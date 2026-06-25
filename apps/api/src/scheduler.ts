@@ -229,6 +229,10 @@ export async function recalculatePlantingTasks(client: PoolClient, plantingId: n
 
   const taskIdsByNodeKey = new Map<string, number>();
   const taskTimingByNodeKey = new Map<string, GeneratedTaskTiming>();
+  const incomingEdgesByNodeKey = new Map(nodesResult.rows.map((node) => [node.node_key, [] as FlowEdgeRow[]]));
+  for (const edge of edgesResult.rows) {
+    incomingEdgesByNodeKey.get(edge.to_node_key)?.push(edge);
+  }
   const existingTasksByFlowNodeId = new Map(
     existingTasksResult.rows
       .filter((task) => task.task_flow_node_id != null)
@@ -244,7 +248,7 @@ export async function recalculatePlantingTasks(client: PoolClient, plantingId: n
   }
 
   for (const node of orderedNodes) {
-    const incomingEdges = edgesResult.rows.filter((edge) => edge.to_node_key === node.node_key);
+    const incomingEdges = incomingEdgesByNodeKey.get(node.node_key) ?? [];
     const sourceCandidates = incomingEdges
       .map((edge) => {
         const sourceDate = taskTimingByNodeKey.get(edge.from_node_key)?.sourceDate;
@@ -363,53 +367,69 @@ export async function recalculatePlantingTasks(client: PoolClient, plantingId: n
     }
   }
 
-  for (const node of nodesResult.rows) {
-    const taskId = taskIdsByNodeKey.get(node.node_key);
-    if (!taskId) {
-      continue;
-    }
+  const dependencyUpdates = nodesResult.rows
+    .map((node) => {
+      const taskId = taskIdsByNodeKey.get(node.node_key);
+      if (!taskId) {
+        return null;
+      }
+      const dependencyTaskIds = (incomingEdgesByNodeKey.get(node.node_key) ?? [])
+        .map((edge) => taskIdsByNodeKey.get(edge.from_node_key))
+        .filter((value: number | undefined): value is number => value != null);
+      return { taskId, dependencyTaskIds };
+    })
+    .filter((value): value is { taskId: number; dependencyTaskIds: number[] } => value != null);
 
-    const dependencyTaskIds = edgesResult.rows
-      .filter((edge: FlowEdgeRow) => edge.to_node_key === node.node_key)
-      .map((edge: FlowEdgeRow) => taskIdsByNodeKey.get(edge.from_node_key))
-      .filter((value: number | undefined): value is number => value != null);
-
+  if (dependencyUpdates.length > 0) {
     await client.query(
       `
-        update tasks
-        set depends_on_task_ids = $2::int[], updated_at = now()
-        where id = $1
+        update tasks task
+        set
+          depends_on_task_ids = payload.depends_on_task_ids,
+          updated_at = now()
+        from jsonb_to_recordset($1::jsonb) as payload(id int, depends_on_task_ids int[])
+        where task.id = payload.id
       `,
-      [taskId, dependencyTaskIds]
+      [JSON.stringify(dependencyUpdates.map((update) => ({
+        id: update.taskId,
+        depends_on_task_ids: update.dependencyTaskIds
+      })))]
     );
   }
 
+  const historicalTaskIds: number[] = [];
+  const deleteTaskIds: number[] = [];
   for (const task of existingTasksResult.rows) {
-    if (activeTaskIds.has(task.id)) {
-      continue;
-    }
-
+    if (activeTaskIds.has(task.id)) continue;
     const hasHistory = task.status === "done" || task.completed_date != null || Number(task.event_count) > 0;
     if (hasHistory) {
-      // If the flow changed after work was recorded, keep the task as a historical
-      // manual row instead of deleting the ID that farm_events may reference.
-      await client.query(
-        `
-          update tasks
-          set
-            is_auto_generated = false,
-            task_flow_node_id = null,
-            notes = case
-              when coalesce(notes, '') like '%Task kept as history after its flow node was removed.%' then notes
-              else concat_ws(E'\n', notes, 'Task kept as history after its flow node was removed.')
-            end,
-            updated_at = now()
-          where id = $1
-        `,
-        [task.id]
-      );
+      historicalTaskIds.push(task.id);
     } else {
-      await client.query(`delete from tasks where id = $1`, [task.id]);
+      deleteTaskIds.push(task.id);
     }
+  }
+
+  if (historicalTaskIds.length > 0) {
+    // If the flow changed after work was recorded, keep those IDs because
+    // farm_events may reference them.
+    await client.query(
+      `
+        update tasks
+        set
+          is_auto_generated = false,
+          task_flow_node_id = null,
+          notes = case
+            when coalesce(notes, '') like '%Task kept as history after its flow node was removed.%' then notes
+            else concat_ws(E'\n', notes, 'Task kept as history after its flow node was removed.')
+          end,
+          updated_at = now()
+        where id = any($1::int[])
+      `,
+      [historicalTaskIds]
+    );
+  }
+
+  if (deleteTaskIds.length > 0) {
+    await client.query(`delete from tasks where id = any($1::int[])`, [deleteTaskIds]);
   }
 }

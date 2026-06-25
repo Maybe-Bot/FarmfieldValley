@@ -26,7 +26,6 @@ export const actualEventTypeSchema = z.enum([
 ]);
 
 export const taskTypeSchema = z.enum(taskTypes as [TaskType, ...TaskType[]]);
-export const taskAnchorSchema = z.enum(taskAnchors as [TaskAnchor, ...TaskAnchor[]]);
 export const futureUseSchema = z.enum(["beds", "cover_crop"]);
 export const zoneActualStateSchema = z.enum([
   "needs_cleanup",
@@ -261,7 +260,7 @@ export const blockPolygonSchema = polygonSchema.extend({
   fieldId: z.number(),
   name: z.string().min(1),
   notes: z.string().nullable().optional(),
-  currentState: zoneActualStateSchema
+  currentState: zoneActualStateSchema.default("needs_cleanup")
 });
 
 export const blockPolygonUpdateSchema = polygonSchema.extend({

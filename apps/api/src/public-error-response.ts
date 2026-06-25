@@ -1,3 +1,5 @@
+import { ZodError } from "zod";
+
 type ErrorLike = {
   code?: unknown;
   status?: unknown;
@@ -20,6 +22,10 @@ function isErrorLike(error: unknown): error is ErrorLike {
  * traces, query text, or rejected values into the response.
  */
 export function publicErrorResponse(error: unknown): PublicErrorResponse {
+  if (error instanceof ZodError) {
+    return { status: 400, error: "One or more fields are invalid." };
+  }
+
   if (!isErrorLike(error)) {
     return { status: 500, error: "Internal server error" };
   }

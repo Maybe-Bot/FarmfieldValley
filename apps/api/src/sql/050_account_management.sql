@@ -53,5 +53,5 @@ where duplicate_emails.id = app_users.id
 drop index if exists app_users_email_lower_unique_idx;
 drop index if exists app_users_email_lower_idx;
 
-create unique index app_users_email_lower_unique_idx
+create unique index if not exists app_users_email_lower_unique_idx
   on app_users (lower(email));

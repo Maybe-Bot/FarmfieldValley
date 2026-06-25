@@ -26,7 +26,7 @@ test("bad password is rejected as a failed login", () => {
   });
 });
 
-test("valid password with unverified email is recorded as a failed login", () => {
+test("valid password with unverified email returns the same generic 401 as a bad password", () => {
   const result = assessLoginCredentials(
     {
       password_hash: hashPassword("correct-password1"),
@@ -39,8 +39,8 @@ test("valid password with unverified email is recorded as a failed login", () =>
 
   assert.deepEqual(result, {
     allowed: false,
-    status: 403,
-    error: UNVERIFIED_EMAIL_LOGIN_ERROR,
+    status: 401,
+    error: INVALID_LOGIN_ERROR,
     recordFailure: true
   });
 });

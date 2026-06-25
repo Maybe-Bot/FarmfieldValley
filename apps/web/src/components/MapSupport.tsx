@@ -1,4 +1,4 @@
-import { LatLngTuple } from "leaflet";
+import { LatLngTuple, latLngBounds, point as leafletPoint } from "leaflet";
 import { useEffect, useRef, useState } from "react";
 import { TileLayer, useMap, useMapEvents } from "react-leaflet";
 import { basemaps } from "../map-config";
@@ -13,6 +13,10 @@ type UserLocation = { lat: number; lng: number; accuracyM: number | null };
 const VIEW_STORAGE_KEY = "loam-ledger-map-view";
 const DEFAULT_CENTER: LatLngTuple = [40.0448, -76.2662];
 const DEFAULT_ZOOM = 18;
+const SELECTION_FOCUS_PADDING_PX = 96;
+const SELECTION_FOCUS_ZOOM_OUT_STEPS = 1;
+const SELECTION_FOCUS_ZOOM_TOLERANCE = 3;
+const SELECTION_VISIBLE_PADDING = 0.35;
 
 function isPointSelectionMapMode(mode: MapMode) {
   return ["draw_field", "draw_block", "draw_zone", "draw_zone_split", "draw_bed_line", "pick_bed_edge"].includes(mode);
@@ -203,8 +207,20 @@ export function FocusSelection({
 
     if (points.length >= 3) {
       lastHandledSelectionKey.current = selectionKey;
-      map.fitBounds(points.map((point) => [point.lat, point.lng] as LatLngTuple), {
-        padding: [24, 24]
+      const bounds = latLngBounds(points.map((point) => [point.lat, point.lng] as LatLngTuple));
+      const padding = leafletPoint(SELECTION_FOCUS_PADDING_PX, SELECTION_FOCUS_PADDING_PX);
+      const fitZoom = map.getBoundsZoom(bounds, false, padding);
+      const targetZoom = Math.max(map.getMinZoom(), fitZoom - SELECTION_FOCUS_ZOOM_OUT_STEPS);
+      const currentZoom = map.getZoom();
+      const currentBounds = map.getBounds().pad(SELECTION_VISIBLE_PADDING);
+
+      if (currentBounds.contains(bounds) && currentZoom >= targetZoom - SELECTION_FOCUS_ZOOM_TOLERANCE) {
+        return;
+      }
+
+      map.fitBounds(bounds, {
+        padding: [SELECTION_FOCUS_PADDING_PX, SELECTION_FOCUS_PADDING_PX],
+        maxZoom: targetZoom
       });
     }
   }, [selection, selectionKey, fields, blocks, zones, beds, disabled, map]);
@@ -339,4 +355,3 @@ export function readStoredMapView(): { center: LatLngTuple; zoom: number } {
 
   return { center: DEFAULT_CENTER, zoom: DEFAULT_ZOOM };
 }
-

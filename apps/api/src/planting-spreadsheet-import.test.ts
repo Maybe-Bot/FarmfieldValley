@@ -938,8 +938,8 @@ test("importPlantingSpreadsheetRowsForFarm imports full backup sheets by exporte
         title: "Carrot Backup",
         status: "planned",
         plannedSowDate: "2026-04-01",
-        plantCount: "1000",
-        bedLengthUsedM: "20",
+        plantCount: "",
+        bedLengthUsedM: "",
         notes: "Carrot detail row"
       },
       {
@@ -984,6 +984,7 @@ test("importPlantingSpreadsheetRowsForFarm imports full backup sheets by exporte
   assert.equal(result.importedBlocks, 1);
   assert.equal(result.importedBeds, 1);
   assert.equal(result.importedPlantings, 2);
+  assert.equal(result.incompleteRows, 1);
   assert.equal(result.importedVehicles, 1);
   assert.equal(client.insertedSeedLots.length, 1);
   assert.equal(client.insertedTaskFlows.length, 1);
@@ -1000,11 +1001,45 @@ test("importPlantingSpreadsheetRowsForFarm imports full backup sheets by exporte
   const kalePlanting = client.insertedPlantings.find((planting) => planting.params[5] === "Kale Backup");
   assert.ok(carrotPlanting);
   assert.ok(kalePlanting);
+  assert.equal(carrotPlanting.params[11], null);
+  assert.equal(carrotPlanting.params[12], null);
 
   assert.equal(client.insertedPlacements[0].params[0], kalePlanting.id);
   assert.equal(client.insertedTasks[0].params[1], kalePlanting.id);
   assert.equal(client.insertedHarvests[0][1], kalePlanting.id);
   assert.equal(client.insertedEvents[0][10], kalePlanting.id);
+});
+
+test("full backup import rejects invalid task-flow graphs before restoring rows", async () => {
+  const client = new FakeBackupImportClient();
+  const rows = [
+    ...sheetRows("Fields", ["id", "name", "notes", "areaSqM", "boundary"], [
+      { id: "101", name: "North Field", notes: "Field notes", areaSqM: "100", boundary: squareBoundary }
+    ]),
+    ...sheetRows("Blocks", ["id", "fieldId", "fieldName", "name", "notes", "bedStartEntranceSide", "areaSqM", "boundary"], [
+      { id: "201", fieldId: "101", fieldName: "North Field", name: "B1", notes: "Block notes", bedStartEntranceSide: "start", areaSqM: "90", boundary: squareBoundary }
+    ]),
+    ...sheetRows("Beds", ["id", "blockId", "blockName", "zoneId", "name", "source", "sequenceNo", "bedPresetId", "bedLengthM", "areaSqM", "notes", "boundary"], [
+      { id: "301", blockId: "201", blockName: "Bed 1", source: "generated", sequenceNo: "1", bedLengthM: "30", areaSqM: "20", boundary: squareBoundary }
+    ]),
+    ...sheetRows("Task Flow Nodes", ["id", "flowTemplateId", "nodeKey", "taskType", "label", "anchor", "offsetDays", "x", "y"], [
+      { id: "811", flowTemplateId: "801", nodeKey: "seed", taskType: "seed_in_tray", label: "Seed trays", anchor: "planned_sow", offsetDays: "0", x: "0.2", y: "0.3" },
+      { id: "812", flowTemplateId: "801", nodeKey: "transplant", taskType: "transplant", label: "Transplant", anchor: "after:seed", offsetDays: "0", x: "0.6", y: "0.5" }
+    ]),
+    ...sheetRows("Task Flow Edges", ["id", "flowTemplateId", "fromNodeKey", "toNodeKey", "delayDays"], [
+      { id: "821", flowTemplateId: "801", fromNodeKey: "seed", toNodeKey: "transplant", delayDays: "28" },
+      { id: "822", flowTemplateId: "801", fromNodeKey: "transplant", toNodeKey: "seed", delayDays: "1" }
+    ]),
+    ...sheetRows("Planting Details", ["id", "title"], [
+      { id: "901", title: "Kale Backup" }
+    ])
+  ];
+
+  await assert.rejects(
+    () => importPlantingSpreadsheetRowsForFarm(client as never, rows, 42),
+    /Task Flows row 801: Task flow dependencies cannot contain a loop/
+  );
+  assert.equal(client.insertedPlantings.length, 0);
 });
 
 test("full backup import maps same-name map items instead of duplicating them", async () => {
