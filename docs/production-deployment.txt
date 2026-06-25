@@ -1,0 +1,91 @@
+Loam Ledger production deployment
+
+Where startup config is checked
+
+- apps/api/src/config.ts validates production environment variables when the API starts.
+- apps/api/src/email-delivery.ts sends account emails. The supported modes are:
+  - development: local-only. Returns account action links in API responses.
+  - console: self-hosted no-email mode. Logs account action links in API/server logs and does not return them to the browser.
+  - resend: production email mode. Sends account action links through Resend.
+
+Production safety rules
+
+- NODE_ENV=production requires REQUIRE_EMAIL_VERIFICATION=true.
+- EMAIL_DELIVERY_MODE=development is not allowed in production.
+- EMAIL_DELIVERY_MODE=console is allowed in production only with SELF_HOSTED_NO_EMAIL=true.
+- EMAIL_DELIVERY_MODE=resend requires RESEND_API_KEY and EMAIL_FROM.
+- PUBLIC_WEB_URL and PUBLIC_API_URL must be real https URLs in production.
+
+Self-hosted no-email setup
+
+Use this when you control the server and do not want real outbound email yet.
+Verification, reset, and invitation links will appear only in the service logs.
+Anyone who can read those logs can use those links, so keep server and journal
+access limited.
+
+Required environment:
+
+NODE_ENV=production
+REQUIRE_EMAIL_VERIFICATION=true
+EMAIL_DELIVERY_MODE=console
+SELF_HOSTED_NO_EMAIL=true
+PUBLIC_WEB_URL=https://loamledger.org
+PUBLIC_API_URL=https://api.loamledger.org
+CORS_ALLOWED_ORIGINS=https://loamledger.org
+DATABASE_URL=postgres://...
+CSRF_SECRET=replace-with-a-long-random-secret
+SESSION_COOKIE_SECURE=true
+SESSION_COOKIE_SAMESITE=Lax
+TRUST_PROXY=1
+
+Fully configured Resend setup
+
+Use this for a normal public production deployment.
+
+Required environment:
+
+NODE_ENV=production
+REQUIRE_EMAIL_VERIFICATION=true
+EMAIL_DELIVERY_MODE=resend
+RESEND_API_KEY=re_...
+EMAIL_FROM=Loam Ledger <accounts@loamledger.org>
+PUBLIC_WEB_URL=https://loamledger.org
+PUBLIC_API_URL=https://api.loamledger.org
+CORS_ALLOWED_ORIGINS=https://loamledger.org
+DATABASE_URL=postgres://...
+CSRF_SECRET=replace-with-a-long-random-secret
+SESSION_COOKIE_SECURE=true
+SESSION_COOKIE_SAMESITE=Lax
+TRUST_PROXY=1
+
+Server steps
+
+1. Pull and build:
+
+cd /home/name/FarmfieldValley
+git pull --ff-only origin main
+npm install
+npm run build
+npm run db:migrate
+
+2. Edit the service override:
+
+sudo systemctl edit loam-ledger-api.service
+
+3. Add one of the environment blocks above under:
+
+[Service]
+
+4. Reload and restart:
+
+sudo systemctl daemon-reload
+sudo systemctl restart loam-ledger-api.service
+sudo systemctl status loam-ledger-api.service --no-pager
+
+5. For self-hosted console email links, read recent service logs:
+
+sudo journalctl -u loam-ledger-api.service -n 100 --no-pager
+
+6. To follow new account links as they are generated:
+
+sudo journalctl -u loam-ledger-api.service -f

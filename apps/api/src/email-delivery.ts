@@ -71,6 +71,11 @@ export async function deliverAccountEmail(
     return { developmentActionUrl: actionUrl };
   }
 
+  if (config.emailDeliveryMode === "console") {
+    console.warn(`[email delivery] ${kind} link for ${options.email}: ${actionUrl}`);
+    return { developmentActionUrl: null };
+  }
+
   const message = messageFor(kind, options.email, options.username ?? null, actionUrl, options.farmName);
   const response = await fetch("https://api.resend.com/emails", {
     method: "POST",

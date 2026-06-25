@@ -81,8 +81,8 @@ function requiredProductionUrl(name: string, value: string | undefined, fallback
 
 const isProduction = process.env.NODE_ENV === "production";
 const emailDeliveryMode = process.env.EMAIL_DELIVERY_MODE ?? (isProduction ? "resend" : "development");
-if (!["development", "resend"].includes(emailDeliveryMode)) {
-  throw new Error("EMAIL_DELIVERY_MODE must be development or resend");
+if (!["development", "resend", "console"].includes(emailDeliveryMode)) {
+  throw new Error("EMAIL_DELIVERY_MODE must be development, resend, or console");
 }
 
 export const config = {
@@ -98,7 +98,8 @@ export const config = {
     process.env.CSRF_SECRET ??
     (process.env.NODE_ENV === "production" ? "" : "loam-ledger-local-dev-csrf-secret"),
   requireEmailVerification: parseBoolean(process.env.REQUIRE_EMAIL_VERIFICATION, isProduction),
-  emailDeliveryMode: emailDeliveryMode as "development" | "resend",
+  emailDeliveryMode: emailDeliveryMode as "development" | "resend" | "console",
+  selfHostedNoEmail: parseBoolean(process.env.SELF_HOSTED_NO_EMAIL, false),
   resendApiKey: process.env.RESEND_API_KEY ?? "",
   emailFrom: process.env.EMAIL_FROM ?? "",
   usageRetentionDays: parseBoundedInteger(process.env.USAGE_RETENTION_DAYS, 90, 1, 365),
@@ -166,8 +167,16 @@ if (config.isProduction && !config.requireEmailVerification) {
   throw new Error("REQUIRE_EMAIL_VERIFICATION must be true for production deployments");
 }
 
-if (config.isProduction && config.emailDeliveryMode !== "resend") {
-  throw new Error("EMAIL_DELIVERY_MODE=resend is required when NODE_ENV=production");
+if (config.isProduction && config.emailDeliveryMode === "development") {
+  throw new Error("EMAIL_DELIVERY_MODE=development cannot be used when NODE_ENV=production");
+}
+
+if (config.isProduction && config.emailDeliveryMode === "console" && !config.selfHostedNoEmail) {
+  throw new Error("SELF_HOSTED_NO_EMAIL=true is required when EMAIL_DELIVERY_MODE=console in production");
+}
+
+if (config.isProduction && !["resend", "console"].includes(config.emailDeliveryMode)) {
+  throw new Error("EMAIL_DELIVERY_MODE must be resend or console when NODE_ENV=production");
 }
 
 if (config.emailDeliveryMode === "resend" && (!config.resendApiKey || !config.emailFrom)) {
