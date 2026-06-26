@@ -1,6 +1,7 @@
 import { FormEvent, useEffect, useState } from "react";
 import { api } from "../api";
 import { roleLabel } from "../account-utils";
+import { normalizeAdminUsers, normalizeFeedbackReports, normalizeUsageEventsResponse } from "../admin-panel-data";
 import { formatDate } from "../display-utils";
 import { AdminUser, FeedbackReport, UsageEvent } from "../types";
 import { MobileListLimiter } from "./MobileListLimiter";
@@ -20,12 +21,13 @@ export function AdminPanel({ reports, onRefresh, onOpenFeedback }: AdminPanelPro
   const [status, setStatus] = useState<string | null>(null);
   const [loadingUsers, setLoadingUsers] = useState(false);
   const [loadingUsage, setLoadingUsage] = useState(false);
+  const safeReports = normalizeFeedbackReports(reports);
 
   async function loadUsers() {
     try {
       setLoadingUsers(true);
       setStatus(null);
-      setUsers(await api.getAdminUsers());
+      setUsers(normalizeAdminUsers(await api.getAdminUsers()));
     } catch (error) {
       setStatus(error instanceof Error ? error.message : "Could not load admin users.");
     } finally {
@@ -36,7 +38,7 @@ export function AdminPanel({ reports, onRefresh, onOpenFeedback }: AdminPanelPro
   async function loadUsageEvents() {
     try {
       setLoadingUsage(true);
-      const result = await api.getUsageEvents(200);
+      const result = normalizeUsageEventsResponse(await api.getUsageEvents(200));
       setUsageEvents(result.events);
       setUsageRetentionDays(result.retentionDays);
     } catch (error) {
@@ -167,7 +169,7 @@ export function AdminPanel({ reports, onRefresh, onOpenFeedback }: AdminPanelPro
           retentionDays={usageRetentionDays}
           onDelete={deleteUsageEvents}
         />
-        <FeedbackReportsCard reports={reports} onRefresh={onRefresh} />
+        <FeedbackReportsCard reports={safeReports} onRefresh={onRefresh} />
       </div>
     </section>
   );
