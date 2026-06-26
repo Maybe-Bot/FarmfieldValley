@@ -58,7 +58,7 @@ function parseStockQuantity(value: string) {
 
   const normalized = trimmed.replace(/,/g, "");
   if (!/^\d+(?:\s*\+\s*\d+)*$/.test(normalized)) {
-    return { value: null, error: "Stock must be a whole number or addition like 2000+2000+1000." };
+    return { value: null, error: "Stock must be a whole number or an addition like 2000+2000+1000." };
   }
 
   const total = normalized
@@ -66,7 +66,7 @@ function parseStockQuantity(value: string) {
     .map((part) => Number(part.trim()))
     .reduce((sum, part) => sum + part, 0);
   if (!Number.isSafeInteger(total) || total > 2147483647) {
-    return { value: null, error: "Stock is too large." };
+    return { value: null, error: "Stock number is too large." };
   }
   return { value: total };
 }
@@ -168,12 +168,12 @@ export function SeedBankCard({
 
   function validateSeedDraft(currentDraft: SeedDraft) {
     if (!currentDraft.cropType.trim()) {
-      return "Crop is required.";
+      return "Enter a crop.";
     }
     if (currentDraft.daysToMaturity.trim()) {
       const daysToMaturity = Number(currentDraft.daysToMaturity);
       if (!Number.isInteger(daysToMaturity) || daysToMaturity <= 0) {
-        return "Days to maturity must be a whole number above zero.";
+        return "Days to maturity must be a whole number greater than zero.";
       }
     }
     const seenLots = new Set<string>();
@@ -184,7 +184,7 @@ export function SeedBankCard({
         return stockQuantity.error;
       }
       if (!lotNumber && stockQuantity.value != null) {
-        return "Lot number is required when stock is entered.";
+        return "Enter a lot number when stock is entered.";
       }
       if (lotNumber) {
         const key = lotNumber.toLowerCase();
@@ -215,7 +215,7 @@ export function SeedBankCard({
       await onSave();
       setStatus(null);
     } catch (error) {
-      setStatus(error instanceof Error ? error.message : "Seed record could not be saved.");
+      setStatus(error instanceof Error ? error.message : "Could not save seed record.");
     } finally {
       setSaving(false);
     }
@@ -251,7 +251,7 @@ export function SeedBankCard({
       await onSave();
       setStatus(null);
     } catch (error) {
-      setStatus(error instanceof Error ? error.message : "Seed record could not be saved.");
+      setStatus(error instanceof Error ? error.message : "Could not save seed record.");
     } finally {
       setSaving(false);
     }
@@ -317,17 +317,17 @@ export function SeedBankCard({
       <div className="card">
         <div className="section-header">
           <div className="title-block">
-            <h2>Seed Bank</h2>
-            <p className="muted">{seedItems.filter((seed) => seed.archivedAt == null).length} active records</p>
+            <h2>Seed bank</h2>
+            <p className="muted">{seedItems.filter((seed) => seed.archivedAt == null).length} active seed records</p>
           </div>
           <div className="seed-bank-filter-row">
             <label className="inline-checkbox seed-bank-archive-toggle">
               <input type="checkbox" checked={showInStockOnly} onChange={(event) => setShowInStockOnly(event.target.checked)} />
-              <span>In stock</span>
+              <span>In stock only</span>
             </label>
             <label className="inline-checkbox seed-bank-archive-toggle">
               <input type="checkbox" checked={showArchived} onChange={(event) => setShowArchived(event.target.checked)} />
-              <span>Show archived</span>
+              <span>Show archived records</span>
             </label>
           </div>
         </div>
@@ -342,7 +342,7 @@ export function SeedBankCard({
                 <th>Seed</th>
                 <th>Supplier</th>
                 <th>Stock</th>
-                <th>Maturity</th>
+                <th>Days to maturity</th>
                 <th>Plan links</th>
                 <th>Status</th>
                 {canPlan && <th>Actions</th>}
@@ -368,7 +368,7 @@ export function SeedBankCard({
                             <input value={editDraft.family} onChange={(event) => updateEditDraft("family", event.target.value)} />
                           </label>
                           <label>
-                            <span>Breed/type</span>
+                            <span>Type</span>
                             <input value={editDraft.breedName} onChange={(event) => updateEditDraft("breedName", event.target.value)} />
                           </label>
                           <label>
@@ -435,7 +435,7 @@ export function SeedBankCard({
       </div>
       <div className="card">
         <div className="section-header">
-          <h2>Add seed</h2>
+          <h2>Add seed record</h2>
         </div>
         {canPlan ? (
           <form className="form-grid" onSubmit={(event) => void saveNewSeed(event)}>
@@ -452,7 +452,7 @@ export function SeedBankCard({
               <input value={addDraft.family} onChange={(event) => updateAddDraft("family", event.target.value)} />
             </label>
             <label>
-              <span>Breed/type</span>
+              <span>Type</span>
               <input value={addDraft.breedName} onChange={(event) => updateAddDraft("breedName", event.target.value)} />
             </label>
             <label>
@@ -475,11 +475,11 @@ export function SeedBankCard({
             </label>
             {renderLotEditor("add", addDraft.lots)}
             <button type="submit" className="primary-button full-span" disabled={saving}>
-              {saving ? "Saving..." : "Add seed"}
+              {saving ? "Saving..." : "Add seed record"}
             </button>
           </form>
         ) : (
-          <p className="muted">Worker accounts can view seed records but cannot change them.</p>
+          <p className="muted">Workers can view seed records but cannot change them.</p>
         )}
       </div>
     </section>

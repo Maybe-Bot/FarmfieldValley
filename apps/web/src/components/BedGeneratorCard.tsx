@@ -105,7 +105,7 @@ export function BedGeneratorCard({
       ? isPickingEdge || isPickingLine
         ? "Click two points on the map along the block edge that beds should follow."
         : "Click Select reference edge, then choose the block side where the first bed should be made."
-      : "The bed edge is ready. Click Fill remaining block to fill the block with beds."
+      : "The bed edge is ready. Click Fill rest of block to fill the block with beds."
     : null;
 
   useEffect(() => {
@@ -199,7 +199,7 @@ export function BedGeneratorCard({
     }
 
     if (bedLineCoordinates.length < minPoints || bedLineCoordinates.length > maxPoints) {
-      const message = bedLineMode === "straight" ? "Select the reference edge first." : "Pick between 3 and 12 line points first.";
+      const message = bedLineMode === "straight" ? "Select the reference edge first." : "Pick 3 to 12 line points first.";
       setLocalNotice(message);
       onStatusChange(message);
       return;
@@ -208,7 +208,7 @@ export function BedGeneratorCard({
     const roadEvery = selectedPreset?.isRoad ? null : harvestRoadsEnabled ? Number(harvestRoadEveryBeds) : null;
     const roadWidth = harvestRoadsEnabled ? Number(harvestRoadWidthBeds) : 0;
     if (!selectedPreset?.isRoad && harvestRoadsEnabled && (!roadEvery || !Number.isInteger(roadEvery) || roadEvery < 1 || !Number.isInteger(roadWidth) || roadWidth < 1)) {
-      const message = "Harvest roads need a positive bed interval and road width.";
+      const message = "Harvest roads need a bed interval and a road width above zero.";
       setLocalNotice(message);
       onStatusChange(message);
       return;
@@ -217,7 +217,7 @@ export function BedGeneratorCard({
     const parsedCount = Number(options.count);
     const parsedStartNumber = Number(startNumber);
     if (!selectedPreset || !Number.isInteger(parsedCount) || parsedCount < 1 || !Number.isInteger(parsedStartNumber) || parsedStartNumber < 1) {
-      const message = "Choose a preset, count, and start number first.";
+      const message = "Choose a preset, number of beds, and start number first.";
       setLocalNotice(message);
       onStatusChange(message);
       return;
@@ -255,14 +255,14 @@ export function BedGeneratorCard({
         onBlockFilled?.();
       }
 
-      const message = result.inserted != null ? `Generated ${result.inserted} beds.` : "Beds generated.";
+      const message = result.inserted != null ? `Generated ${result.inserted} bed(s).` : "Beds generated.";
       setLocalNotice(message);
       onStatusChange(message);
       if (!result.isRoad && result.insertedIds?.length) {
         onTutorialBedsGenerated?.(result.insertedIds);
       }
     } catch (error) {
-      const message = error instanceof Error ? error.message : "Bed generation failed.";
+      const message = error instanceof Error ? error.message : "Could not generate beds.";
       console.error("Bed generation failed", error);
       setLocalNotice(message);
       onStatusChange(message);
@@ -289,8 +289,8 @@ export function BedGeneratorCard({
 
     try {
       setIsCreatingStarterPreset(true);
-      setLocalNotice("Creating starter bed presets...");
-      onStatusChange("Creating starter bed presets...");
+      setLocalNotice("Creating bed preset…");
+      onStatusChange("Creating bed preset…");
       for (const preset of DEFAULT_BED_PRESETS) {
         await api.createBedPreset({
           farmId,
@@ -302,8 +302,8 @@ export function BedGeneratorCard({
         });
       }
       await onSave();
-      setLocalNotice("Starter bed presets created. Select a reference edge next.");
-      onStatusChange("Starter bed presets created. Select a reference edge next.");
+      setLocalNotice("Bed presets created. Next, select a reference edge.");
+      onStatusChange("Bed presets created. Next, select a reference edge.");
     } catch (error) {
       const message = error instanceof Error ? error.message : "Could not create starter bed presets.";
       setLocalNotice(message);
@@ -321,7 +321,7 @@ export function BedGeneratorCard({
 
   return (
     <div className="card">
-      <h2>Generate beds in block</h2>
+      <h2>Generate beds</h2>
       <p className="muted">
         {zone ? `${zone.name} in ` : ""}{block.name} / {block.fieldName}
         {!zone ? " (whole block)" : ""}
@@ -334,7 +334,7 @@ export function BedGeneratorCard({
       {bedPresets.length === 0 ? (
         <>
           <div className="instruction-box">
-            <strong>No bed preset yet:</strong> Before beds can be generated, save the bed width and path spacing to use. You can create starter presets now, then adjust them later if your farm uses different measurements.
+            <strong>No bed preset yet</strong> Save a bed width and path spacing before generating beds. You can create starter presets now and adjust them later.
           </div>
           {localNotice && <p className="muted"><strong>{localNotice}</strong></p>}
           <div className="button-row">
@@ -344,7 +344,7 @@ export function BedGeneratorCard({
               disabled={isCreatingStarterPreset}
               onClick={() => void createStarterPresets()}
             >
-              {isCreatingStarterPreset ? "Creating..." : "Create default bed presets"}
+              {isCreatingStarterPreset ? "Creating..." : "Create new bed presets"}
             </button>
           </div>
           <BedPresetCard farmId={farmId} bedPresets={bedPresets} distanceUnit={distanceUnit} onSave={onSave} />
@@ -365,9 +365,9 @@ export function BedGeneratorCard({
                     className={`primary-button${tutorialActive && bedLineCoordinates.length < minPoints ? " tutorial-target" : ""}`}
                     onClick={onPickEdge}
                   >
-                    {isPickingEdge ? "Stop choosing" : "Select reference edge"}
+                    {isPickingEdge ? "Stop selecting" : "Select reference edge"}
                   </button>
-                  <p className="muted full-span">The side of the block the first bed is made on.</p>
+                  <p className="muted full-span">First bed in block is made on this side</p>
                   {isPickingLine && (
                     <button type="button" className="secondary-button" onClick={onCancelLine}>
                       Cancel line
@@ -418,12 +418,12 @@ export function BedGeneratorCard({
                 disabled={bedLineCoordinates.length < minPoints || bedLineCoordinates.length > maxPoints || isGenerating}
                 onClick={() => void generateBeds({ count: 1, fillWholeBlock: false })}
               >
-                {isGenerating ? "Generating..." : selectedPreset?.isRoad ? "Make one road/path" : "Make one bed"}
+                {isGenerating ? "Generating..." : selectedPreset?.isRoad ? "Make one road" : "Make one bed"}
               </button>
             </div>
             {bedLineSource !== "selected_bed" && !selectedPreset?.isRoad && (
               <label>
-                <span>How many beds</span>
+                <span>Number of beds</span>
                 <input value={bedCount} onChange={(event) => setBedCount(event.target.value)} type="number" min="1" max="100" />
               </label>
             )}
@@ -453,15 +453,15 @@ export function BedGeneratorCard({
                 <summary>Harvest roads</summary>
                 <label className="inline-checkbox">
                   <input type="checkbox" checked={harvestRoadsEnabled} onChange={(event) => setHarvestRoadsEnabled(event.target.checked)} />
-                  <span>Leave gaps while generating beds</span>
+                  <span>Leave gaps for roads while generating beds</span>
                 </label>
                 <div className="form-grid">
                   <label>
-                    <span>Road after every</span>
+                    <span>Road after every __ beds</span>
                     <input value={harvestRoadEveryBeds} onChange={(event) => setHarvestRoadEveryBeds(event.target.value)} type="number" min="1" disabled={!harvestRoadsEnabled} />
                   </label>
                   <label>
-                    <span>Road width in bed slots</span>
+                    <span>Road width in bed spaces</span>
                     <input value={harvestRoadWidthBeds} onChange={(event) => setHarvestRoadWidthBeds(event.target.value)} type="number" min="1" max="20" disabled={!harvestRoadsEnabled} />
                   </label>
                 </div>
@@ -474,7 +474,7 @@ export function BedGeneratorCard({
                     setHarvestRoadWidthBeds("2");
                   }}
                 >
-                  Demo road preset: skip 2 beds every 12
+                  Example: skip 2 bed spaces every 12 beds
                 </button>
                 <p className="muted">Example: road width 2 leaves the space of two beds before continuing.</p>
               </details>
@@ -497,7 +497,7 @@ export function BedGeneratorCard({
                   className="primary-button"
                   disabled={bedLineCoordinates.length < minPoints || bedLineCoordinates.length > maxPoints || isGenerating}
                 >
-                  {isGenerating ? "Generating..." : "Generate count"}
+                  {isGenerating ? "Generating..." : "Generate beds"}
                 </button>
                 <button
                   type="button"
@@ -505,7 +505,7 @@ export function BedGeneratorCard({
                   disabled={bedLineCoordinates.length < minPoints || bedLineCoordinates.length > maxPoints || isGenerating}
                   onClick={() => void generateBeds({ count: 1, fillWholeBlock: true })}
                 >
-                  Fill remaining block
+                  Fill rest of block
                 </button>
               </div>
             )}

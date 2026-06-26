@@ -651,7 +651,7 @@ export function PlantingForm({
       setPlantCountSource("bed_length");
       setDirectBedLength(formatLengthInputValue(totalLength, distanceUnit));
       setTitle((current) => current.trim() ? current : `New planting for ${initialBed.blockName} selected beds`);
-      setStatus(`${initialBeds.length} beds are selected on the map.`);
+      setStatus(initialBeds.length === 1 ? "1 bed selected." : `${initialBeds.length} beds selected on the map.`);
       return;
     }
 
@@ -810,7 +810,7 @@ export function PlantingForm({
   return (
     <div className={embedded ? "inline-planting-editor" : "card"}>
       <div className="section-header">
-        <h2>{heading ?? (isEditing ? "Edit planting" : "New Planting")}</h2>
+        <h2>{heading ?? (isEditing ? "Edit planting" : "New planting")}</h2>
         {onCancel && <button type="button" className="secondary-button compact-button" onClick={onCancel}>Close</button>}
       </div>
       {tutorialPlantingHint && (
@@ -841,11 +841,11 @@ export function PlantingForm({
             const plantCount = savePlantCount != null && savePlantCount > 0 ? Math.round(savePlantCount) : null;
             const bedLengthUsedM = saveBedLengthM != null && saveBedLengthM > 0 ? saveBedLengthM : null;
             if (countSourceNeedsBlock) {
-              setStatus("Choose a block before using Full block.");
+              setStatus("Choose a block before using full block.");
               return;
             }
             if (!plantCount) {
-              setStatus("Enter plant count, tray count, bed length, or use Full block.");
+              setStatus("Enter plant count, tray count, bed length, or use full block.");
               return;
             }
             const rowsPerBedForSave = rowsPerBedValue != null ? Math.round(rowsPerBedValue) : null;
@@ -855,7 +855,7 @@ export function PlantingForm({
             }
             const daysToHarvestValue = daysToHarvest.trim() ? Number(daysToHarvest) : null;
             if (daysToHarvestValue != null && (!Number.isInteger(daysToHarvestValue) || daysToHarvestValue <= 0)) {
-              setStatus("Days to harvest must be a whole number above zero.");
+              setStatus("Days to harvest must be a whole number greater than zero.");
               return;
             }
 
@@ -929,7 +929,7 @@ export function PlantingForm({
               await api.recordActual(createResult.id, {
                 eventType: plantingMethod === "direct_seed" ? "direct_seeding" : "tray_seeding",
                 actualDate: plannedSowDate,
-                notes: "Recorded from New Planting form"
+                notes: "Recorded from New planting form"
               });
             }
             setStatus(null);
@@ -1018,7 +1018,7 @@ export function PlantingForm({
           />
         </label>
         <label>
-          <span>Planned transplant</span>
+          <span>Planned transplant date</span>
           <input
             name="plannedTransplantDate"
             type="date"
@@ -1030,7 +1030,7 @@ export function PlantingForm({
           />
         </label>
         <label>
-          <span>Harvest start</span>
+          <span>Harvest start date</span>
           <input
             name="expectedHarvestStart"
             type="date"
@@ -1055,7 +1055,7 @@ export function PlantingForm({
           />
         </label>
         <label>
-          <span>Harvest end</span>
+          <span>Harvest end date</span>
           <input
             name="expectedHarvestEnd"
             type="date"
@@ -1140,7 +1140,7 @@ export function PlantingForm({
         </label>
         <div className="button-row">
           <button type="button" className="secondary-button compact-button fill-block-button" onClick={() => setPlantCountSource("full_block")}>
-            Fill block
+            Use full block
           </button>
         </div>
         {plantingMethod === "transplant" && (
@@ -1173,13 +1173,13 @@ export function PlantingForm({
                 }}
               />
             </label>
-            <label className="full-span"><span>Tray location (optional)</span><input value={trayLocation} onChange={(event) => setTrayLocation(event.target.value)} placeholder="Greenhouse bench, tray rack, or leave blank" /></label>
+            <label className="full-span"><span>Tray location (optional)</span><input value={trayLocation} onChange={(event) => setTrayLocation(event.target.value)} placeholder="Greenhouse bench, tray rack, or blank" /></label>
           </>
         )}
         <label>
           <span>Task flow</span>
           <select name="taskFlowTemplateId" value={taskFlowTemplateId} onChange={(event) => setTaskFlowTemplateId(event.target.value)}>
-            <option value="">Automatic default</option>
+            <option value="">Default task flow</option>
             {taskFlowTemplates.map((flow) => <option key={flow.id} value={flow.id}>{flow.name}{flow.cropName ? ` (${flow.cropName})` : ""}</option>)}
           </select>
         </label>

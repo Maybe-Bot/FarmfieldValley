@@ -48,7 +48,7 @@ export function InboxPanel({ messages, onMessageRead, onRefresh }: InboxPanelPro
         <div className="section-header">
           <div>
             <h2>Inbox</h2>
-            <p className="muted">Replies from admins and future direct messages.</p>
+            <p className="muted">Replies from admins and future direct messages appear here.</p>
           </div>
           <button type="button" className="secondary-button" onClick={() => void refresh()}>
             Refresh

@@ -2685,7 +2685,7 @@ function App() {
     setZoneDraftActive(true);
     setDraftPlannedUse(plannedUse);
     setDraftActualState(selectedZone?.actualState ?? "needs_cleanup");
-    setMapNotice(`Choose how to create the area inside ${selectedBlockContext.name}. Future use is optional.`);
+    setMapNotice(`Choose how to create the area inside ${selectedBlockContext.name}. Planned use is optional.`);
   }
 
   function startBlockSectionDraft(method: Exclude<ZoneDraftMethod, null>) {
@@ -3463,7 +3463,7 @@ function App() {
       setTaskListWeekStart(tutorialWeekStart);
       setSelectedMapWeekStart(tutorialWeekStart);
       setTutorialStepIndex(tutorialKind === "full_workflow" ? 5 : 3);
-      setTutorialStatus("Cabbage sample loaded in the map-side New Planting form. Enter plant count and create the planting.");
+      setTutorialStatus("Cabbage sample loaded in the map-side New planting form. Enter plant count and create the planting.");
     } catch (error) {
       setTutorialStatus(error instanceof Error ? error.message : "Could not prepare tutorial sample.");
     } finally {
@@ -3560,7 +3560,7 @@ function App() {
   }
 
   if (sessionLoading) {
-    return <div className={`auth-shell theme-${themeMode}`}><div className="card auth-card"><h2>Loading</h2><p className="muted">Checking your Loam Ledger session.</p></div></div>;
+    return <div className={`auth-shell theme-${themeMode}`}><div className="card auth-card"><h2>Loading...</h2><p className="muted">Checking your Loam Ledger session.</p></div></div>;
   }
 
   if (!session?.authenticated) {
@@ -3574,7 +3574,7 @@ function App() {
     ["planting", "Planting Detail"],
     ["tasks", "Task List"],
     ["flows", "Task Flows"],
-    ["seed-bank", "Seed Bank"],
+    ["seed-bank", "Seed bank"],
     ["record", "Record Work"],
     ["harvests", "Harvest Log"],
     ["inbox", "Inbox"],
@@ -3587,7 +3587,7 @@ function App() {
     ...(canPlan ? [
       ["plan", "Annual Crop Plan"],
       ["flows", "Task Flows"],
-      ["seed-bank", "Seed Bank"]
+      ["seed-bank", "Seed bank"]
     ] as Array<[View, string]> : [])
   ];
   const utilityToolbarNavItems: Array<[View, string]> = [
@@ -3607,7 +3607,7 @@ function App() {
           : view === "flows"
             ? "Task Flows"
             : view === "seed-bank"
-              ? "Seed Bank"
+              ? "Seed bank"
               : view === "record"
                 ? "Record Work"
                 : view === "harvests"
@@ -3632,12 +3632,12 @@ function App() {
     {
       title: "Fill the block with beds",
       body: "Select the Block, choose or save a bed preset, choose the begining of first bed, then fill the block with beds.",
-      clickTarget: "Click your Block on the map. Then click the highlighted Generate beds button. Inside bed tools, use the highlighted Begining of first bed and Fill block controls."
+      clickTarget: "Click your Block on the map. Then click the highlighted Generate beds button. Inside bed tools, use the highlighted Begining of first bed and Use full block controls."
     },
     {
       title: "Plan cabbage",
-      body: "Create the sample cabbage planting from the map. The dates are filled so the second cultivation is due this week. In the map-side New Planting form, enter the plant count, then create the planting.",
-      clickTarget: "Use the New Planting form beside the map. Type the plant count, then click the highlighted Create planting button."
+      body: "Create the sample cabbage planting from the map. The dates are filled so the second cultivation is due this week. In the map-side New planting form, enter the plant count, then create the planting.",
+      clickTarget: "Use the New planting form beside the map. Type the plant count, then click the highlighted Create planting button."
     },
     {
       title: "Edit the task flow",
@@ -3684,7 +3684,7 @@ function App() {
     {
       title: "Create planting",
       body: "The tutorial sample creates or reuses a cabbage seed record and task flow, then loads a planting draft. Create the planting so planned work exists.",
-      clickTarget: "In the New Planting form, enter a plant count, confirm the seed and spacing look reasonable, then click Create planting."
+      clickTarget: "In the New planting form, enter a plant count, confirm the seed and spacing look reasonable, then click Create planting."
     },
     {
       title: "Review task flow",
@@ -3694,7 +3694,7 @@ function App() {
     {
       title: "Find planned work on the map",
       body: "Planned work should belong to the planting. The bed gives the vehicle its map path. Turn on the task layer and confirm the marker appears.",
-      clickTarget: "Use Work mode on the map, turn on Tasks due this week, and look for the tutorial task marker. Then click Next to open a task record."
+      clickTarget: "Use Work mode on the map, turn on Tasks due, and look for the tutorial task marker. Then click Next to open a task record."
     },
     {
       title: "Record work done",
@@ -3863,7 +3863,7 @@ function App() {
           ? "Click the highlighted map on the block edge beds should build from."
           : "Click the highlighted Begining of first bed button.";
       }
-      return "Click the highlighted Fill remaining block button.";
+      return "Click the highlighted Fill rest of block button.";
     }
 
     if (tutorialKind === "full_workflow" && activeTutorialStep === 4) {
@@ -3874,7 +3874,7 @@ function App() {
       if (mapPlantingBeds.length === 0) {
         return "Use the highlighted Generate beds step first; the tutorial selects the first generated bed for cabbage.";
       }
-      return "In the map-side New Planting form, type the plant count, then click the highlighted Create planting button.";
+      return "In the map-side New planting form, type the plant count, then click the highlighted Create planting button.";
     }
 
     if (activeTutorialStep === tutorialReviewFlowStep) {
@@ -3887,7 +3887,7 @@ function App() {
     }
 
     if (tutorialKind === "full_workflow" && activeTutorialStep === 7) {
-      return "Turn on Tasks due this week and confirm the tutorial task vehicle appears. Then click Next to open the record panel.";
+      return "Turn on Tasks due and confirm the tutorial task vehicle appears. Then click Next to open the record panel.";
     }
 
     if (activeTutorialStep === tutorialRecordWorkStep) {
@@ -3934,7 +3934,7 @@ function App() {
         setSelectedMapWeekStart(startOfWeekDate(todayDateInputValue()));
         setShowTaskLayer(true);
         setTutorialStepIndex(7);
-        setTutorialStatus("Tasks due this week is on. Confirm the tutorial marker appears, then click Next to record one scheduled task.");
+        setTutorialStatus("Tasks due is on. Confirm the tutorial marker appears, then click Next to record one scheduled task.");
         return;
       }
 
@@ -4104,7 +4104,7 @@ function App() {
         {feedbackOpen && (
           <div className="modal-backdrop" role="dialog" aria-modal="true" aria-labelledby="feedback-title">
             <div className="card feedback-dialog">
-              <h2 id="feedback-title">Suggestion/problem</h2>
+              <h2 id="feedback-title">Suggestion or problem</h2>
               <p className="muted">Comment is optional. Submitting also saves this page, selected item, map date, and a short recent activity trail.</p>
               <form className="mini-form" onSubmit={submitFeedback}>
                 <label>
@@ -4119,7 +4119,7 @@ function App() {
                 {feedbackStatus && <p className="muted"><strong>{feedbackStatus}</strong></p>}
                 <div className="button-row">
                   <button className="primary-button" type="submit" disabled={isSavingFeedback}>
-                    {isSavingFeedback ? "Saving..." : "Submit suggestion/problem"}
+                    {isSavingFeedback ? "Saving..." : "Submit"}
                   </button>
                   <button
                     className="secondary-button"
@@ -5000,7 +5000,7 @@ function App() {
                 )}
                 {(!isMobileViewport || mobileMapPanel === "gps") && <div className="map-location-panel mobile-map-control-panel">
                   <button type="button" className="primary-button" onClick={locateUserOnMap}>
-                    Use phone GPS
+                    Use phone location
                   </button>
                   {userLocation && (
                     <p className="muted">
@@ -5040,7 +5040,7 @@ function App() {
                       checked={showPlannedPlantingsLayer}
                       onChange={(event) => updateMapLayerSettings({ planned: event.target.checked })}
                     />
-                    <span>Planned crops in ground</span>
+                    <span>Planned crops</span>
                   </label>
                   <label className="layer-toggle">
                     <input
@@ -5048,7 +5048,7 @@ function App() {
                       checked={showActualPlacementsLayer}
                       onChange={(event) => updateMapLayerSettings({ actual: event.target.checked })}
                     />
-                    <span>Actual crops in ground</span>
+                    <span>Actual crops</span>
                   </label>
                   <label className={`layer-toggle${tutorialTargetClass(tutorialHighlightTaskLayerToggle)}`}>
                     <input
@@ -5056,7 +5056,7 @@ function App() {
                       checked={showTaskLayer}
                       onChange={(event) => updateMapLayerSettings({ tasks: event.target.checked })}
                     />
-                    <span>Tasks due this week</span>
+                    <span>Tasks due</span>
                   </label>
                   {canViewOtherFarmMaps && (
                     <label className="layer-toggle">
@@ -5065,7 +5065,7 @@ function App() {
                         checked={showOtherFarmMaps}
                         onChange={(event) => updateMapLayerSettings({ otherFarms: event.target.checked })}
                       />
-                      <span>Show other farms</span>
+                      <span>Other farms</span>
                     </label>
                   )}
                 </div>}
@@ -5213,7 +5213,7 @@ function App() {
                     </label>
                     {mapMode === "draw_block" && (
                       <label>
-                        <span>Current state</span>
+                        <span>Current use</span>
                         <select value={draftActualState} onChange={(event) => setDraftActualState(event.target.value as ZoneActualState)}>
                           {zoneActualStateOptions.map((option) => <option key={option} value={option}>{formatZoneActualStateLabel(option)}</option>)}
                         </select>
@@ -5239,7 +5239,7 @@ function App() {
                           <input value={formatPlannedUseLabel(draftPlannedUse)} readOnly />
                         </label>
                         <label>
-                          <span>Current state</span>
+                          <span>Current use</span>
                           <select value={draftActualState} onChange={(event) => setDraftActualState(event.target.value as ZoneActualState)}>
                             {zoneActualStateOptions.map((option) => <option key={option} value={option}>{formatZoneActualStateLabel(option)}</option>)}
                           </select>
@@ -5320,14 +5320,14 @@ function App() {
                     {selection?.type === "zone" && (
                       <>
                         <label>
-                          <span>Future use (optional)</span>
+                          <span>Planned use (optional)</span>
                           <select value={editPlannedUse ?? ""} onChange={(event) => setEditPlannedUse(event.target.value ? event.target.value as Exclude<PlannedUse, null> : null)}>
                             <option value="">No future use assigned</option>
                             {futureUseOptions.map((option) => <option key={option} value={option}>{formatPlannedUseLabel(option)}</option>)}
                           </select>
                         </label>
                         <label>
-                          <span>Current state</span>
+                          <span>Current use</span>
                           <select value={editActualState} onChange={(event) => setEditActualState(event.target.value as ZoneActualState)}>
                             {zoneActualStateOptions.map((option) => <option key={option} value={option}>{formatZoneActualStateLabel(option)}</option>)}
                           </select>
@@ -5639,7 +5639,7 @@ function App() {
                 <table className="data-table">
                   <thead>
                     <tr>
-                      {canPlan && <th>Pick</th>}
+                      {canPlan && <th>Select</th>}
                       <th>Planting</th>
                       <th>Status</th>
                       <th>Planned sow</th>
@@ -5766,7 +5766,7 @@ function App() {
                 <SpreadsheetImportCard tutorialActive={activeTutorialStep === tutorialSpreadsheetStep && view === "plan"} onImported={load} />
               </div>
             ) : (
-              <div className="card"><h2>Planning access</h2><p className="muted">Worker accounts can review the crop plan but cannot create or change plantings.</p></div>
+              <div className="card"><h2>Planning access</h2><p className="muted">Workers can view plantings but cannot create or edit them.</p></div>
             )}
           </section>
         )}
@@ -5817,7 +5817,7 @@ function App() {
                     </dl>
                   </div>
                   <div>
-                    <h3>Planning detail</h3>
+                    <h3>Plan details</h3>
                     <dl className="detail-list">
                       <div><dt>Status</dt><dd>{selectedPlanting.status.replaceAll("_", " ")}</dd></div>
                       <div><dt>Seed genetics</dt><dd>{selectedPlanting.seedName ?? "—"}</dd></div>
@@ -5828,14 +5828,14 @@ function App() {
                       <div><DetailTerm review={plantingReviewInfo(selectedPlanting)} fieldName="daysToHarvest">Days to harvest</DetailTerm><dd>{selectedPlanting.daysToHarvest ?? "—"}</dd></div>
                       <div><DetailTerm review={plantingReviewInfo(selectedPlanting)} fieldName="bedCover">Bed cover</DetailTerm><dd>{selectedPlanting.bedCover === "plastic" ? "Plastic mulch" : selectedPlanting.bedCover ?? "—"}</dd></div>
                       <div><DetailTerm review={plantingReviewInfo(selectedPlanting)} fieldName="plantCount">Plant count</DetailTerm><dd>{selectedPlanting.plantCount ?? "—"}</dd></div>
-                      <div><DetailTerm review={plantingReviewInfo(selectedPlanting)} fieldName="bedLengthUsed">Bed length used</DetailTerm><dd>{formatLength(selectedPlanting.bedLengthUsedM, distanceUnit)}</dd></div>
+                      <div><DetailTerm review={plantingReviewInfo(selectedPlanting)} fieldName="bedLengthUsed">Bed length</DetailTerm><dd>{formatLength(selectedPlanting.bedLengthUsedM, distanceUnit)}</dd></div>
                       <div><dt>Tray location</dt><dd>{selectedPlanting.trayLocation ?? "—"}</dd></div>
                       <div><dt>Tray count</dt><dd>{selectedPlanting.trayCount ?? "—"}</dd></div>
                       <div><dt>Cells per tray</dt><dd>{selectedPlanting.cellsPerTray ?? "—"}</dd></div>
                       <div><DetailTerm review={plantingReviewInfo(selectedPlanting)} fieldName="field">Intended field</DetailTerm><dd>{selectedPlanting.intendedFieldName ?? "—"}</dd></div>
                       <div><DetailTerm review={plantingReviewInfo(selectedPlanting)} fieldName="block">Intended block</DetailTerm><dd>{selectedPlanting.intendedBlockName ?? "—"}</dd></div>
                       <div><DetailTerm review={plantingReviewInfo(selectedPlanting)} fieldName="bed">Intended bed</DetailTerm><dd>{selectedPlanting.intendedBedName ?? "—"}</dd></div>
-                      <div><dt>Task flow</dt><dd>{selectedPlanting.taskFlowTemplateName ?? "Automatic default"}</dd></div>
+                      <div><dt>Task flow</dt><dd>{selectedPlanting.taskFlowTemplateName ?? "Default task flow"}</dd></div>
                       <div><dt>Intended location</dt><dd>{[selectedPlanting.intendedFieldName, selectedPlanting.intendedBlockName, selectedPlanting.intendedBedName].filter(Boolean).join(" / ") || "—"}</dd></div>
                       <div><DetailTerm review={plantingReviewInfo(selectedPlanting)} fieldName="notes">Notes</DetailTerm><dd>{selectedPlanting.notes ?? "—"}</dd></div>
                     </dl>
@@ -5852,7 +5852,7 @@ function App() {
                       <th>Date</th>
                       <th>Bed</th>
                       <th>Plant count</th>
-                      <th>Bed length used</th>
+                      <th>Bed length</th>
                       <th>Exact location</th>
                       <th>Notes</th>
                     </tr>
@@ -5929,7 +5929,7 @@ function App() {
                   )}
                 </>
               ) : (
-                <div className="card"><h2>Planning access</h2><p className="muted">Workers can view planting details here, but planting adjustments stay with planner accounts.</p></div>
+                <div className="card"><h2>Planning access</h2><p className="muted">Only planner accounts can change planting plans.</p></div>
               )}
             </div>
           </section>
@@ -5957,7 +5957,7 @@ function App() {
                       checked={showPastUndoneTasks}
                       onChange={(event) => setShowPastUndoneTasks(event.target.checked)}
                     />
-                    <span>Past undone</span>
+                    <span>Overdue</span>
                   </label>
                 </div>
               )}
@@ -5971,7 +5971,7 @@ function App() {
                       <th>Bed</th>
                       <th>Status</th>
                       <th>Depends on</th>
-                      <th>Rule</th>
+                      <th>Scheduling rule</th>
                       <th>Done</th>
                     </tr>
                   </thead>
@@ -6016,9 +6016,9 @@ function App() {
             <div className="stack">
               {renderTaskRecordCard(selectedTask)}
               <div className="card">
-                <h2>How shifting works</h2>
-                  <p>Future tasks are generated from planned planting dates and task-flow arrows. When connected work is recorded, later connected task dates recalculate from that actual date instead of staying fixed to the original plan.</p>
-                <p className="muted">Task recording now starts from the task list itself, with today filled in automatically and optional planting adjustments available before saving.</p>
+                <h2>How task dates shift</h2>
+                  <p>Future tasks are generated from planned planting dates and task-flow arrows. Connected task dates recalculate from recorded actual work.</p>
+                <p className="muted">Task records can also update planting details.</p>
               </div>
             </div>
           </section>
@@ -6036,12 +6036,12 @@ function App() {
               <div className="card">
                 <div className="section-header">
                   <div className="title-block">
-                    <h2>Reusable task flows</h2>
+                    <h2>Task flows</h2>
                     <p className="muted">Build crop-specific flows, visualize dependencies, and copy an existing flow before adjusting it.</p>
                   </div>
                   <div className="button-row">
-                    <button type="button" className="secondary-button" onClick={startNewTaskFlow}>New flow</button>
-                    <button type="button" className="secondary-button" onClick={() => void copySelectedTaskFlow()} disabled={selectedFlowTemplate == null}>Copy selected</button>
+                    <button type="button" className="secondary-button" onClick={startNewTaskFlow}>New task flow</button>
+                    <button type="button" className="secondary-button" onClick={() => void copySelectedTaskFlow()} disabled={selectedFlowTemplate == null}>Copy selected flow</button>
                     <button type="button" className="danger-button" onClick={() => void deleteSelectedTaskFlow()} disabled={selectedFlowTemplate == null}>Delete</button>
                   </div>
                 </div>
@@ -6190,7 +6190,7 @@ function App() {
                     </select>
                   </label>
                   <label>
-                    <span>Color theme</span>
+                    <span>dark/light mode</span>
                     <select value={themeMode} onChange={(event) => setThemeMode(event.target.value as ThemeMode)}>
                       <option value="light">Light</option>
                       <option value="dark">Dark</option>
@@ -6252,7 +6252,7 @@ function App() {
               )}
               <div className="card">
                 <h2>Map imagery</h2>
-                <p className="muted">The prototype is currently using the live web basemap only. Offline caching is disabled for now so the map stays predictable while you work on planning.</p>
+                <p className="muted">This prototype uses the live web basemap. Offline map caching is off.</p>
               </div>
             </div>
           </section>
@@ -6267,7 +6267,7 @@ function App() {
               setFeedbackOpen(true);
             }}
           >
-            Suggestion/problem
+            Suggestion or problem
           </button>
         </footer>
       </main>
@@ -6640,7 +6640,7 @@ function PlantingEditCard({
       return;
     }
     if (daysToHarvestValue != null && (!Number.isInteger(daysToHarvestValue) || daysToHarvestValue <= 0)) {
-      setMessage("Days to harvest must be a whole number above zero.");
+      setMessage("Days to harvest must be a whole number greater than zero.");
       return;
     }
     if (rowsPerBedValue != null && (!Number.isInteger(rowsPerBedValue) || rowsPerBedValue <= 0)) {
@@ -6744,7 +6744,7 @@ function PlantingEditCard({
         <label>
           <span>Task flow</span>
           <select value={taskFlowTemplateId} onChange={(event) => setTaskFlowTemplateId(event.target.value)}>
-            <option value="">Automatic default</option>
+            <option value="">Default task flow</option>
             {data.taskFlowTemplates.map((flow) => <option key={flow.id} value={flow.id}>{flow.name}{flow.cropName ? ` (${flow.cropName})` : ""}</option>)}
           </select>
         </label>
@@ -6811,7 +6811,7 @@ function PlantingEditCard({
           />
         </label>
         <label>
-          <FieldLabel review={review} fieldName="plannedTransplantDate">Planned transplant</FieldLabel>
+          <FieldLabel review={review} fieldName="plannedTransplantDate">Planned transplant date</FieldLabel>
           <input
             type="date"
             value={plannedTransplantDate}
@@ -6822,7 +6822,7 @@ function PlantingEditCard({
           />
         </label>
         <label>
-          <FieldLabel review={review} fieldName="expectedHarvestStart">Harvest start</FieldLabel>
+          <FieldLabel review={review} fieldName="expectedHarvestStart">Harvest start date</FieldLabel>
           <input
             type="date"
             value={expectedHarvestStart}
@@ -6833,7 +6833,7 @@ function PlantingEditCard({
           />
         </label>
         <label>
-          <FieldLabel review={review} fieldName="expectedHarvestEnd">Harvest end</FieldLabel>
+          <FieldLabel review={review} fieldName="expectedHarvestEnd">Harvest end date</FieldLabel>
           <input
             type="date"
             value={expectedHarvestEnd}
@@ -7166,7 +7166,7 @@ function TaskWeekCard({
               checked={pastUndoneChecked}
               onChange={(event) => onPastUndoneChange(event.target.checked)}
             />
-            <span>Past undone</span>
+            <span>Overdue</span>
           </label>
         </div>
       )}
@@ -7544,8 +7544,8 @@ function BlockPlacementPlanCard({
           <tr>
             <th>Variety</th>
             <th>Bed length</th>
-            <th>Tray count</th>
-            <th>Plant count</th>
+            <th>Trays</th>
+            <th>Plants</th>
             <th>Order</th>
           </tr>
         </thead>
@@ -8366,7 +8366,7 @@ function TaskRecordCard({
                 aria-pressed={bedMakingBlockFull}
                 onClick={() => setBedMakingBlockFull(true)}
               >
-                Fill block
+                Use full block
               </button>
             </div>
             <div className="instruction-box full-span">
@@ -8522,7 +8522,7 @@ function PlantingActualsCard({ planting, onSave }: { planting: Planting | null; 
         </label>
         <label><span>Date</span><input name="actualDate" type="date" defaultValue={todayDateInputValue()} required /></label>
         <label className="full-span"><span>Notes</span><textarea name="notes" rows={3} defaultValue="Recorded from field work" /></label>
-        <button className="primary-button full-span">Record actual and recalculate tasks</button>
+        <button className="primary-button full-span">Record actual work and recalculate tasks</button>
       </form>
     </div>
   );
@@ -9143,7 +9143,7 @@ function UnplannedWorkCard({
       || !Number.isInteger(bedMakingHarvestRoadWidthValue)
       || bedMakingHarvestRoadWidthValue < 1
     )) {
-      setStatus("Harvest roads need a positive bed interval and road width.");
+      setStatus("Harvest roads need a bed interval and a road width above zero.");
       return;
     }
     if (showApplicationFields && selectedAreaAcres != null && selectedAreaAcres > 0) {
@@ -9326,7 +9326,7 @@ function UnplannedWorkCard({
           </label>
         )}
         <label>
-          <span>Work category</span>
+          <span>Work type</span>
           <select value={workType} onChange={(event) => setWorkType(event.target.value)}>
             {orderedWorkOptions.map((option) => <option key={option} value={option}>{option}</option>)}
           </select>
@@ -9468,7 +9468,7 @@ function UnplannedWorkCard({
                 </label>
                 <div className="full-span button-row">
                   <button type="button" className="primary-button" onClick={onPickBedEdge}>
-                    {isPickingEdge ? "Stop choosing" : "Begining of first bed"}
+                    {isPickingEdge ? "Stop selecting" : "Begining of first bed"}
                   </button>
                   <p className="muted full-span">where planting starts</p>
                   <button type="button" className="secondary-button" onClick={() => onStartBedLine("straight")}>
@@ -9520,7 +9520,7 @@ function UnplannedWorkCard({
                     aria-pressed={bedMakingBlockFull}
                     onClick={() => setBedMakingBlockFull(true)}
                   >
-                    Fill block
+                    Use full block
                   </button>
                 </div>
                 <label>
@@ -9570,15 +9570,15 @@ function UnplannedWorkCard({
                   <summary>Harvest roads</summary>
                   <label className="inline-checkbox">
                     <input type="checkbox" checked={bedMakingHarvestRoadsEnabled} onChange={(event) => setBedMakingHarvestRoadsEnabled(event.target.checked)} />
-                    <span>Leave gaps while generating beds</span>
+                    <span>Leave gaps for roads while generating beds</span>
                   </label>
                   <div className="form-grid">
                     <label>
-                      <span>Road after every</span>
+                      <span>Road after every __ beds</span>
                       <input value={bedMakingHarvestRoadEveryBeds} onChange={(event) => setBedMakingHarvestRoadEveryBeds(event.target.value)} type="number" min="1" disabled={!bedMakingHarvestRoadsEnabled} />
                     </label>
                     <label>
-                      <span>Road width in bed slots</span>
+                      <span>Road width in bed spaces</span>
                       <input value={bedMakingHarvestRoadWidthBeds} onChange={(event) => setBedMakingHarvestRoadWidthBeds(event.target.value)} type="number" min="1" max="20" disabled={!bedMakingHarvestRoadsEnabled} />
                     </label>
                   </div>

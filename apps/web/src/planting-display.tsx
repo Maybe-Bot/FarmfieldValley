@@ -150,7 +150,7 @@ export function formatTaskTypeLabel(taskType: string) {
     transplant: "transplanting",
     cultivation: "cultivation",
     cleanup: "cleanup",
-    cover_crop: "covercrop"
+    cover_crop: "cover crop"
   };
   return labels[taskType] ?? `stale: ${sentenceCase(taskType)}`;
 }
@@ -180,7 +180,7 @@ export function formatZoneActualStateLabel(value: ZoneActualState) {
 export function mapSaveErrorMessage(error: unknown, itemLabel: string) {
   const message = error instanceof Error ? error.message : "Save failed.";
   if (message.toLowerCase().includes("polygon is not valid")) {
-    return `Could not save ${itemLabel}: the outline crossed itself or has a bad shape. Click Cancel, then draw the outline again without crossing lines.`;
+    return `Could not save ${itemLabel}. The outline crosses itself or has an invalid shape. Click Cancel and draw it again without crossed lines.`;
   }
   return `Could not save ${itemLabel}: ${message}`;
 }
@@ -410,7 +410,7 @@ export function FieldLabel({
       {severity && (
         <PlantingReviewBadge
           severity={severity}
-          title={severity === "major" ? "Important spreadsheet value needs correction" : "Optional spreadsheet value is missing"}
+          title={severity === "major" ? "Spreadsheet values need correction" : "Optional value missing"}
         />
       )}
     </span>
@@ -425,7 +425,7 @@ export function DetailTerm({ review, fieldName, children }: { review: PlantingRe
       {severity && (
         <PlantingReviewBadge
           severity={severity}
-          title={severity === "major" ? "Important spreadsheet value needs correction" : "Optional spreadsheet value is missing"}
+          title={severity === "major" ? "Spreadsheet values need correction" : "Optional value missing"}
         />
       )}
     </dt>

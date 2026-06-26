@@ -104,11 +104,11 @@ export function AdminPanel({ currentUserId, reports, onRefresh, onOpenFeedback }
         <div className="card">
           <div className="section-header">
             <div>
-              <h2>Admin control panel</h2>
-              <p className="muted">Bare-bones global controls for the local prototype.</p>
+              <h2>Admin panel</h2>
+              <p className="muted">Basic global controls for this local prototype.</p>
             </div>
             <button type="button" className="primary-button" onClick={onOpenFeedback}>
-              Suggestion/problem
+              Suggestion or problem
             </button>
             <button type="button" className="secondary-button" onClick={() => void refreshAdminData()}>
               Refresh
@@ -201,10 +201,10 @@ function UsageEventsCard({
       <div className="section-header">
         <div>
           <h2>Anonymous usage</h2>
-          <p className="muted">No user, farm, browser, raw URL, click text, or error identifiers. Deleted automatically after {retentionDays} days.</p>
+          <p className="muted">Does not store user, farm, browser, full URL, click text, or error identifiers. Deleted automatically after {retentionDays} days.</p>
         </div>
         <button type="button" className="danger-button compact-button" disabled={events.length === 0} onClick={() => void onDelete()}>
-          Delete all
+          Delete all usage
         </button>
       </div>
       {events.length === 0 ? (
@@ -239,7 +239,7 @@ function UsageEventsCard({
   );
 }
 
-// Shows saved Suggestion/problem reports with enough context to reproduce issues.
+// Shows saved suggestion/problem reports with enough context to reproduce issues.
 function FeedbackReportsCard({ reports, onRefresh }: { reports: FeedbackReport[]; onRefresh: () => Promise<void> }) {
   const [replyDrafts, setReplyDrafts] = useState<Record<number, string>>({});
   const [savingReportId, setSavingReportId] = useState<number | null>(null);
@@ -270,7 +270,7 @@ function FeedbackReportsCard({ reports, onRefresh }: { reports: FeedbackReport[]
   return (
     <div className="card">
       <h2>Recent reports</h2>
-      <p className="muted">Problem reports and suggestions submitted from the top-right button.</p>
+      <p className="muted">Problem reports and suggestions from the top-right button.</p>
       {status && <p className="muted"><strong>{status}</strong></p>}
       {reports.length === 0 ? (
         <p className="muted">No reports yet.</p>
@@ -296,7 +296,7 @@ function FeedbackReportsCard({ reports, onRefresh }: { reports: FeedbackReport[]
                 </pre>
               </details>
               {report.userId == null ? (
-                <p className="muted">Anonymous report: no inbox reply available.</p>
+                <p className="muted">Anonymous report: no inbox reply is available.</p>
               ) : (
                 <form className="mini-form feedback-reply-form" onSubmit={(event) => void sendReply(event, report)}>
                   <label>
@@ -305,7 +305,7 @@ function FeedbackReportsCard({ reports, onRefresh }: { reports: FeedbackReport[]
                       rows={3}
                       value={replyDrafts[report.id] ?? ""}
                       onChange={(event) => setReplyDrafts((current) => ({ ...current, [report.id]: event.target.value }))}
-                      placeholder="Write a reply that will appear in their inbox"
+                      placeholder="Write a reply for their inbox"
                     />
                   </label>
                   <button

@@ -46,7 +46,7 @@ const tutorialWorkflows: TutorialWorkflow[] = [
       {
         title: "Create one planting",
         goal: "Connect a crop plan to the beds you made.",
-        action: "Use New Planting from the map or Annual Crop Plan, pick the crop and bed, fill the needed fields, and create it.",
+        action: "Use New planting from the map or Annual Crop Plan, pick the crop and bed, fill the needed fields, and create it.",
         check: "The planting appears in the crop plan and can be opened from Planting Detail.",
         legacyStepIndex: 3
       },

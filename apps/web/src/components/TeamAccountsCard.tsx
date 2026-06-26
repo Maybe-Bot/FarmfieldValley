@@ -56,7 +56,7 @@ export function TeamAccountsCard({ farmName, currentUserId }: TeamAccountsCardPr
       setDevelopmentActionUrl(invitation.developmentActionUrl ?? null);
       setStatus(invitation.developmentActionUrl
         ? "Development invitation created. Open the link below to test it."
-        : "Invitation sent. The invitee will choose their own username and password.");
+        : "Invitation sent. The invited person will choose their own username and password.");
       await loadTeam();
     } catch (error) {
       setStatus(error instanceof Error ? error.message : "Could not send invitation.");
@@ -69,7 +69,7 @@ export function TeamAccountsCard({ farmName, currentUserId }: TeamAccountsCardPr
     <div className="card">
       <h2>Team access</h2>
       <p className="muted">
-        Invite people to {farmName}. They choose their own password. Planners can edit plans; workers can record completed work.
+        Invite people to {farmName}. They choose their own password. Planners can edit plans. Workers can record completed work.
       </p>
       {status && <p className="muted"><strong>{status}</strong></p>}
       {developmentActionUrl && (
@@ -131,7 +131,7 @@ export function TeamAccountsCard({ farmName, currentUserId }: TeamAccountsCardPr
                       className="secondary-button compact-button"
                       disabled={saving}
                       onClick={() => {
-                        if (!window.confirm(`Remove ${account.displayName ?? account.username} from ${farmName}? Their account will remain active for any other farms.`)) {
+                        if (!window.confirm(`Remove ${account.displayName ?? account.username} from ${farmName}? Their account will stay active for any other farms.`)) {
                           return;
                         }
                         void (async () => {
@@ -140,7 +140,7 @@ export function TeamAccountsCard({ farmName, currentUserId }: TeamAccountsCardPr
                             setStatus("Removing farm access...");
                             await api.removeAccountFromFarm(account.id);
                             await loadTeam();
-                            setStatus("Farm access removed. The person’s account was not disabled globally.");
+                            setStatus("Farm access removed. This did not disable the person's account.");
                           } catch (error) {
                             setStatus(error instanceof Error ? error.message : "Could not remove farm access.");
                           } finally {
@@ -226,7 +226,7 @@ export function TeamAccountsCard({ farmName, currentUserId }: TeamAccountsCardPr
             <option value="planner">Planner</option>
           </select>
         </label>
-        <p className="muted full-span">The invitation expires after seven days. The invitee creates their own login credentials.</p>
+        <p className="muted full-span">The invitation expires after seven days. The invited person creates their own login.</p>
         <button className="primary-button full-span" disabled={saving}>
           {saving ? "Saving..." : "Send invitation"}
         </button>
@@ -283,7 +283,7 @@ export function AccountPasswordCard() {
           <span>Confirm new password</span>
           <input type="password" autoComplete="new-password" value={confirmPassword} onChange={(event) => setConfirmPassword(event.target.value)} minLength={8} required />
         </label>
-        <p className="muted full-span">Use at least 8 characters with one letter and one number.</p>
+        <p className="muted full-span">Use at least 8 characters, including one letter and one number.</p>
         <button className="primary-button full-span" disabled={saving}>
           {saving ? "Changing..." : "Change password"}
         </button>

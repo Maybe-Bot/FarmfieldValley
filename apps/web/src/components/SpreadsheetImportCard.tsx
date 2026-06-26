@@ -88,7 +88,7 @@ export function SpreadsheetImportCard({ tutorialActive = false, onImported }: { 
   async function importSpreadsheet(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (!selectedFile) {
-      setStatus("Choose an .xlsx, .ods, or .csv spreadsheet first.");
+      setStatus("Choose an .xlsx, .ods, or .csv file first.");
       return;
     }
 
@@ -113,9 +113,9 @@ export function SpreadsheetImportCard({ tutorialActive = false, onImported }: { 
         ? ` Skipped ${result.skippedRows} row${result.skippedRows === 1 ? "" : "s"} that could not be safely restored.`
         : "";
       const warningMessage = result.warnings && result.warnings.length > 0
-        ? ` ${result.warnings.slice(0, 3).join(" ")}${result.warnings.length > 3 ? " More skipped-row details are in the server response." : ""}`
+        ? ` ${result.warnings.slice(0, 3).join(" ")}${result.warnings.length > 3 ? " Skipped-row details are in the server response." : ""}`
         : "";
-      setStatus(`Added ${result.importedPlantings} planting${result.importedPlantings === 1 ? "" : "s"} from ${result.parsedRows} parsed row${result.parsedRows === 1 ? "" : "s"}.${backupMessage}${incompleteMessage}${skippedMessage}${warningMessage}`);
+      setStatus(`Added ${result.importedPlantings} planting(s) from ${result.parsedRows} row(s).${backupMessage}${incompleteMessage}${skippedMessage}${warningMessage}`);
       await onImported();
     } catch (error) {
       setStatus(error instanceof Error ? error.message : "Spreadsheet import failed.");
@@ -144,20 +144,20 @@ export function SpreadsheetImportCard({ tutorialActive = false, onImported }: { 
   }
 
   return (
-    <div className={`card${tutorialActive ? " tutorial-target" : ""}`} data-tutorial-label={tutorialActive ? "Spreadsheet Import/Export" : undefined}>
-      <h2>Spreadsheet Import/Export</h2>
+    <div className={`card${tutorialActive ? " tutorial-target" : ""}`} data-tutorial-label={tutorialActive ? "Spreadsheet import/export" : undefined}>
+      <h2>Spreadsheet import/export</h2>
       {tutorialActive && (
         <div className="tutorial-helper-bubble">
           <strong>Tutorial next:</strong> This is the spreadsheet import and export area. You do not need to use it now; it is here for importing a prepared crop plan or downloading a farm backup later.
         </div>
       )}
       <p className="muted">
-        Upload your crop plan spread sheet, you'll need to format it into the template. Leave the header line alone, it won't import the sample line unless you change it.
+        Upload your crop plan spreadsheet in the template format. Do not change the header row. The sample row will not import unless you edit it. Uploader will also accept farm backups
       </p>
       <form className="form-grid" onSubmit={(event) => void importSpreadsheet(event)}>
         <div className="button-row full-span">
           <button type="button" className="secondary-button" onClick={downloadTemplate}>
-            Download Template
+            Download template
           </button>
         </div>
         <label className="full-span">
@@ -176,10 +176,10 @@ export function SpreadsheetImportCard({ tutorialActive = false, onImported }: { 
           {importing ? "Importing..." : "Import spreadsheet"}
         </button>
         <div className="instruction-box full-span">
-          Export Farm downloads a backup of farm map data, bed presets, seed records, vehicles, crop plans, task flows, tasks, harvests, and event history. Importing that backup into a new account restores those records when their referenced map items and plantings can be matched. Team accounts, passwords, sessions, invitations, feedback, inbox messages, and admin-only data are not restored.
+          Export Farm downloads a backup of farm map data, bed presets, seed records, vehicles, crop plans, task flows, tasks, harvests, and event history. Importing that backup into a new account restores records that match existing map items and plantings.
         </div>
         <button type="button" className="primary-button full-span" onClick={() => void exportSpreadsheet()} disabled={exporting || importing}>
-          {exporting ? "Exporting..." : "Export Farm Spreadsheet"}
+          {exporting ? "Exporting..." : "Export farm backup"}
         </button>
       </form>
     </div>

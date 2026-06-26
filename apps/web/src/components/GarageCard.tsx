@@ -186,7 +186,7 @@ export function GarageCard({
 
   async function saveProfile() {
     if (!draft.name.trim()) {
-      setStatus("Name is required.");
+      setStatus("Enter a name.");
       return;
     }
     try {
@@ -212,7 +212,7 @@ export function GarageCard({
       resetGarageForm();
       setStatus("Saved.");
     } catch (error) {
-      setStatus(error instanceof Error ? error.message : "Vehicle save failed.");
+      setStatus(error instanceof Error ? error.message : "Could not save vehicle.");
     } finally {
       setSaving(false);
     }
@@ -239,7 +239,7 @@ export function GarageCard({
 
   return (
     <div className="card">
-      <h2>Garage</h2>
+      <h2>Vehicles</h2>
       {status && <p className="muted"><strong>{status}</strong></p>}
       <div className="garage-editor">
         <div className="garage-preview">
@@ -299,7 +299,7 @@ export function GarageCard({
       <MobileListLimiter itemCount={savedProfiles.length} itemLabel="saved vehicles" forceExpanded={editingId != null}>
         <div className="garage-grid">
           {savedProfiles.length === 0 && (
-            <p className="muted">No saved vehicles were returned for this farm.</p>
+            <p className="muted">No saved vehicles yet.</p>
           )}
           {savedProfiles.map((profile) => (
             <div key={profile.id} className="garage-tile">

@@ -7,7 +7,7 @@ export function HarvestForm({ data, onSave }: { data: DashboardData; onSave: () 
 
   return (
     <div className="card">
-      <h2>Log harvest by bed</h2>
+      <h2>Log harvest</h2>
       <form
         className="form-grid"
         onSubmit={(event) =>

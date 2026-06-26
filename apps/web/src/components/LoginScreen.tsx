@@ -37,10 +37,10 @@ export function LoginScreen({
     }
     const verified = new URLSearchParams(window.location.search).get("verified");
     if (verified === "invalid") {
-      return "That verification link is invalid or expired.";
+      return "This verification link is invalid or expired.";
     }
     if (verified === "missing") {
-      return "That verification link is missing its token.";
+      return "This verification link is missing a token.";
     }
     return null;
   });
@@ -49,7 +49,7 @@ export function LoginScreen({
   const [feedbackComment, setFeedbackComment] = useState("");
   const [feedbackStatus, setFeedbackStatus] = useState<string | null>(null);
   const [isSavingFeedback, setIsSavingFeedback] = useState(false);
-  const passwordHelp = "Password requirements: at least 8 characters, including one letter and one number.";
+  const passwordHelp = "Use at least 8 characters, including one letter and one number.";
   const repoUrl = "https://github.com/Maybe-Bot/FarmfieldValley";
 
   useEffect(() => {
@@ -96,13 +96,13 @@ export function LoginScreen({
         ]
       });
       setFeedbackComment("");
-      setFeedbackStatus("Suggestion/problem saved.");
+      setFeedbackStatus("Suggestion or problem saved.");
       window.setTimeout(() => {
         setFeedbackOpen(false);
         setFeedbackStatus(null);
       }, 800);
     } catch (feedbackError) {
-      setFeedbackStatus(feedbackError instanceof Error ? feedbackError.message : "Could not save suggestion/problem.");
+      setFeedbackStatus(feedbackError instanceof Error ? feedbackError.message : "Could not save suggestion or problem.");
     } finally {
       setIsSavingFeedback(false);
     }
@@ -113,8 +113,8 @@ export function LoginScreen({
       {feedbackOpen && (
         <div className="modal-backdrop" role="dialog" aria-modal="true" aria-labelledby="login-feedback-title">
           <div className="card feedback-dialog">
-            <h2 id="login-feedback-title">Suggestion/problem</h2>
-            <p className="muted">Comment is optional. This saves the login page state and current error message, if any.</p>
+            <h2 id="login-feedback-title">Suggestion or problem</h2>
+            <p className="muted">Comment is optional. This saves the login page state and any current error message.</p>
             <form className="mini-form" onSubmit={submitLoginFeedback}>
               <label>
                 <span>Comment</span>
@@ -122,13 +122,13 @@ export function LoginScreen({
                   rows={5}
                   value={feedbackComment}
                   onChange={(event) => setFeedbackComment(event.target.value)}
-                  placeholder="What happened, or what would make this easier?"
+                  placeholder="What would you like to be different?"
                 />
               </label>
               {feedbackStatus && <p className="muted"><strong>{feedbackStatus}</strong></p>}
               <div className="button-row">
                 <button className="primary-button" type="submit" disabled={isSavingFeedback}>
-                  {isSavingFeedback ? "Saving..." : "Submit suggestion/problem"}
+                  {isSavingFeedback ? "Saving..." : "Submit"}
                 </button>
                 <button
                   className="secondary-button"
@@ -173,18 +173,18 @@ export function LoginScreen({
       </header>
       <main className="auth-landing-main">
         <section className="auth-about-panel" aria-labelledby="about-title">
-          <p className="eyebrow">Open source crop planning</p>
+          <p className="eyebrow">Open-source crop planning</p>
           <h1 id="about-title">Loam Ledger</h1>
           <div className="auth-about-copy">
             <p>
-              The project is open source: the code is public, user data is exportable, and anyone can self-host it:{" "}
+              This project is open source. The code is public, user data can be exported, and anyone can self-host it:{" "}
               <a href={repoUrl} target="_blank" rel="noreferrer">GitHub repository</a>.
             </p>
             <p>
-              Loam Ledger is for making and executing crop plans: knowing what needs doing, where, and when. A tool, steel or code, should increase a farm's independence, not limit it.
+              Loam Ledger helps farms plan and track crop work: what needs doing, where, and when. Digital tools should increase farm independence, not limit it.
             </p>
             <p className="auth-privacy-note">
-              Please do not share the app publicly yet. The server has limited capacity and is running from my bedroom closet.
+              Please do not share this site publicly yet. The server has limited capacity and is running from a bedroom closet.
             </p>
           </div>
           <div className="auth-app-preview" aria-hidden="true">
@@ -194,7 +194,7 @@ export function LoginScreen({
         <div className="card auth-card">
           <p className="eyebrow">Account access</p>
           <h2>
-            {mode === "login" ? "Farm login"
+            {mode === "login" ? "Farm account login"
               : mode === "register" ? "Create farm account"
                 : mode === "forgot" ? "Reset your password"
                   : mode === "resend" ? "Resend verification"
@@ -203,22 +203,22 @@ export function LoginScreen({
           </h2>
           <p className="muted">
             {mode === "login"
-              ? "Sign in to your farm account. Planner accounts can manage plans. Worker accounts can record completed work."
+              ? "Sign in to your farm account. "
               : mode === "register"
                 ? capabilities?.emailVerificationEnabled
-                  ? "Create a new farm and its first planner account. We will email you a verification link before you can log in."
-                  : "Create a new farm and its first planner account. Email verification is disabled on this development server."
+                  ? "Create a new farm. We will email a verification link before you can log in."
+                  : "Create a new farm and the first planner account. Email verification is off on this development server."
                 : mode === "forgot"
-                  ? "Enter your account email. If it matches an active account, we will send a one-hour reset link."
+                  ? "Enter your account email. If it matches an active account, we will send a reset link that works for one hour."
                   : mode === "resend"
-                    ? "Enter your account email. If it still needs verification, we will send a new 24-hour link."
+                    ? "Enter your account email. If it still needs verification, we will send a new link that works for 24 hours."
                   : mode === "reset"
-                    ? "This will replace your password and sign out other devices."
+                    ? "This will change your password and sign out other devices."
                     : invitation
                       ? invitation.existingAccount
                         ? `Join ${invitation.farmName} using the password for your existing ${invitation.email} account.`
-                        : `Join ${invitation.farmName}. Choose your own username and password.`
-                      : "Checking this invitation..."}
+                        : `Join ${invitation.farmName}. Choose a username and password.`
+                      : "Checking invitation..."}
           </p>
           {(error || status) && <p className="muted"><strong>{status ?? error}</strong></p>}
           {developmentActionUrl && (
@@ -301,7 +301,7 @@ export function LoginScreen({
                     }
                   }
                 } catch (loginError) {
-                  setStatus(loginError instanceof Error ? loginError.message : "Account request failed.");
+                  setStatus(loginError instanceof Error ? loginError.message : "Could not create account.");
                 } finally {
                   setSaving(false);
                 }
@@ -379,7 +379,7 @@ export function LoginScreen({
           {mode === "login" && (
             <>
               <button type="button" className="secondary-button full-span" onClick={() => { setMode("forgot"); setStatus(null); }}>
-                Forgot password
+                Forgot password?
               </button>
               <button type="button" className="secondary-button full-span" onClick={() => { setMode("resend"); setStatus(null); }}>
                 Resend verification email
@@ -388,14 +388,14 @@ export function LoginScreen({
           )}
           {(mode === "forgot" || mode === "resend" || mode === "reset") && (
             <button type="button" className="secondary-button full-span" onClick={() => { setMode("login"); setStatus(null); }}>
-              Back to login
+              Back to log in
             </button>
           )}
         </div>
       </main>
       <footer className="page-feedback-bar auth-feedback-bar">
         <button className="secondary-button" type="button" onClick={() => setFeedbackOpen(true)}>
-          Suggestion/problem
+          Suggestion or problem
         </button>
       </footer>
     </div>

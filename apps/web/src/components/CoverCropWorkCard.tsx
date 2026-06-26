@@ -52,7 +52,7 @@ export function CoverCropWorkCard({
 
     try {
       setSaving(true);
-      setStatus("Saving cover crop work...");
+      setStatus("Saving cover crop record...");
       await api.updateCoverCropWork(zone.id, {
         actualState,
         actualCoverCropSeedDate: actualSeedDate || null,
@@ -60,9 +60,9 @@ export function CoverCropWorkCard({
         notes: notes.trim() || null
       });
       await onSave();
-      setStatus("Cover crop work saved.");
+      setStatus("Cover crop record saved.");
     } catch (error) {
-      setStatus(error instanceof Error ? error.message : "Cover crop work save failed.");
+      setStatus(error instanceof Error ? error.message : "Could not save cover crop record.");
     } finally {
       setSaving(false);
     }
@@ -70,11 +70,11 @@ export function CoverCropWorkCard({
 
   return (
     <div className="card">
-      <h2>Cover crop work</h2>
+      <h2>Cover crop record</h2>
       <p className="muted">{zone.coverCropName ?? zone.name} in {zone.blockName}</p>
       <dl className="detail-list">
-        <div><dt>Planned seed</dt><dd>{formatDate(zone.plannedCoverCropSeedDate)}</dd></div>
-        <div><dt>Planned terminate</dt><dd>{formatDate(zone.plannedCoverCropTerminateDate)}</dd></div>
+        <div><dt>Planned seeding date</dt><dd>{formatDate(zone.plannedCoverCropSeedDate)}</dd></div>
+        <div><dt>Planned termination date</dt><dd>{formatDate(zone.plannedCoverCropTerminateDate)}</dd></div>
       </dl>
       {status && <p className="muted"><strong>{status}</strong></p>}
       <form className="form-grid" onSubmit={(event) => void saveCoverCropWork(event)}>
@@ -87,7 +87,7 @@ export function CoverCropWorkCard({
           <input type="date" value={actualTerminateDate} onChange={(event) => setActualTerminateDate(event.target.value)} />
         </label>
         <label>
-          <span>Current state</span>
+          <span>Current use</span>
           <select value={actualState} onChange={(event) => setActualState(event.target.value as ZoneActualState)}>
             {zoneActualStateOptions.map((option) => <option key={option} value={option}>{formatZoneActualStateLabel(option)}</option>)}
           </select>
@@ -119,7 +119,7 @@ export function CoverCropWorkCard({
           <textarea rows={3} value={notes} onChange={(event) => setNotes(event.target.value)} />
         </label>
         <button type="submit" className="primary-button full-span" disabled={saving}>
-          {saving ? "Saving..." : "Save cover crop work"}
+          {saving ? "Saving..." : "Save cover crop record"}
         </button>
       </form>
     </div>

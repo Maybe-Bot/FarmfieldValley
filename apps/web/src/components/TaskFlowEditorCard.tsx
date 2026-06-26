@@ -224,7 +224,7 @@ export function TaskFlowEditorCard({
           : tutorialHighlightMowEdit
             ? "Open the new node's Edit controls to set the task type."
           : tutorialHighlightHarvestDownstream
-            ? "Choose Add downstream dependent. That means the new cleanup task will happen after the earlier cleanup task."
+              ? "Choose Add next task. That means the new cleanup task will happen after the earlier cleanup task."
             : tutorialHighlightMowNodeClick
               ? "Click the new Cleanup node to finish the link."
               : tutorialHighlightHarvestLink
@@ -431,7 +431,7 @@ export function TaskFlowEditorCard({
       delete next[nodeKey];
       return next;
     });
-    setStatus("Node removed. Save the flow to keep this change.");
+    setStatus("Task removed. Save the flow to keep this change.");
   }
 
   function removeSelectedNode() {
@@ -496,7 +496,7 @@ export function TaskFlowEditorCard({
 
     const nextEdges = [...localEdges, { fromNodeKey, toNodeKey, delayDays: 0 }];
     if (taskFlowHasCycle(localNodes, nextEdges)) {
-      setStatus("That link would create a dependency loop. Task flows must move one direction.");
+      setStatus("That link would create a loop. Task flows must move in one direction.");
       return;
     }
 
@@ -585,22 +585,22 @@ export function TaskFlowEditorCard({
 
   async function saveFlow() {
     if (!farmId) {
-      setStatus("Farm not loaded.");
+      setStatus("Farm data is not loaded.");
       return;
     }
 
     if (!name.trim()) {
-      setStatus("Name is required.");
+      setStatus("Enter a name.");
       return;
     }
 
     if (localNodes.length === 0) {
-      setStatus("Add at least one node.");
+      setStatus("Add at least one task.");
       return;
     }
     const blankLabelNode = localNodes.find((node) => !node.label.trim());
     if (blankLabelNode) {
-      setStatus("Every task in the flow needs a label before saving.");
+      setStatus("Every task needs a label before saving.");
       setSelectedNodeKey(blankLabelNode.nodeKey);
       setOpenNodeEditorKey(blankLabelNode.nodeKey);
       return;
@@ -622,7 +622,7 @@ export function TaskFlowEditorCard({
       if (connectedNodeKeys.size !== localNodes.length) {
         const disconnectedNode = localNodes.find((node) => !connectedNodeKeys.has(node.nodeKey));
         if (!disconnectedNode) {
-          setStatus("Task flow has disconnected tasks. Connect every task into one flow before saving.");
+          setStatus("This task flow has disconnected tasks. Connect all tasks into one flow before saving.");
           return;
         }
         setStatus(`"${disconnectedNode?.label ?? "Task"}" is disconnected. Connect every task into one flow or remove the disconnected task before saving.`);
@@ -632,7 +632,7 @@ export function TaskFlowEditorCard({
       }
     }
     if (taskFlowHasCycle(localNodes, localEdges)) {
-      setStatus("Task flow has a dependency loop. Remove one link before saving.");
+      setStatus("This task flow has a dependency loop. Remove one link before saving.");
       return;
     }
     const staleTypeNode = localNodes.find((node) => !isCurrentTaskType(node.taskType));
@@ -653,7 +653,7 @@ export function TaskFlowEditorCard({
     try {
       scheduleProblem = taskFlowScheduleProblem(localNodes, localEdges);
     } catch (error) {
-      setStatus(error instanceof Error ? error.message : "Task flow schedule problem. Reconnect the arrows before saving.");
+      setStatus(error instanceof Error ? error.message : "This task flow has a scheduling problem. Reconnect the arrows before saving.");
       return;
     }
     if (scheduleProblem) {
@@ -697,12 +697,12 @@ export function TaskFlowEditorCard({
         nextId = result.id ?? null;
       }
       if (nextId == null) {
-        throw new Error("Task flow save failed.");
+        throw new Error("Could not save task flow.");
       }
       setStatus("Saved.");
       await onSaved(nextId);
     } catch (error) {
-      setStatus(error instanceof Error ? error.message : "Task flow save failed.");
+      setStatus(error instanceof Error ? error.message : "Could not save task flow.");
     } finally {
       setSaving(false);
     }
@@ -712,7 +712,7 @@ export function TaskFlowEditorCard({
     <div className="card">
       <h2>{template ? "Edit task flow" : "New task flow"}</h2>
       {status && <p className="muted"><strong>{status}</strong></p>}
-      <p className="muted">Build a work recipe for a crop. Each card is one job. The days between jobs are stored on the connecting arrows.</p>
+      <p className="muted">Build a task flow for a crop. Each card is one job. The days between jobs are stored on the arrows.</p>
       {tutorialHint && (
         <div className="tutorial-helper-bubble">
           <strong>Tutorial next:</strong> {tutorialHint}
@@ -729,12 +729,12 @@ export function TaskFlowEditorCard({
       <div className="form-grid">
         <label>
           <span>Name</span>
-          <input value={name} onChange={(event) => setName(event.target.value)} placeholder="Lettuce quick turn flow" />
+          <input value={name} onChange={(event) => setName(event.target.value)} placeholder="Lettuce quick-turn flow" />
         </label>
         <label>
           <span>Crop</span>
           <select value={cropId} onChange={(event) => setCropId(event.target.value)}>
-            <option value="">General</option>
+            <option value="">General / not crop-specific</option>
             {crops.map((crop) => <option key={crop.id} value={crop.id}>{crop.name}</option>)}
           </select>
         </label>
@@ -785,7 +785,7 @@ export function TaskFlowEditorCard({
                 </div>
               </div>
             </div>
-            <p className="muted">Click an arrow's day label to edit it. Click an arrow to show grips, then drag either grip to reconnect that end.</p>
+            <p className="muted">Click an arrow's day label to edit it. Click an arrow to show handles, then drag a handle to reconnect that end.</p>
           </div>
           <div
             ref={canvasRef}
@@ -1049,7 +1049,7 @@ export function TaskFlowEditorCard({
                       >
                         <span>Counts from</span>
                         <strong>{formatTaskAnchorLabel("planned_sow")}</strong>
-                        <p className="muted flow-node-menu-note">Add an arrow if this job should count from another job instead.</p>
+                        <p className="muted flow-node-menu-note">Add an arrow if this job is scheduled from  other task</p>
                       </div>
                     )}
                   <label className="full-span">
@@ -1073,7 +1073,7 @@ export function TaskFlowEditorCard({
                                   className="secondary-button compact-button"
                                   onClick={() => removeEdge(edge.fromNodeKey, edge.toNodeKey)}
                                 >
-                                  Remove
+                                  Remove connection
                                 </button>
                               </div>
                             );
@@ -1117,7 +1117,7 @@ export function TaskFlowEditorCard({
                   beginConnection(openNodeMenuNode.nodeKey, "upstream");
                 }}
               >
-                Add upstream dependency
+                Add previous task
               </button>
               <button
                 type="button"
@@ -1133,7 +1133,7 @@ export function TaskFlowEditorCard({
                   beginConnection(openNodeMenuNode.nodeKey, "downstream");
                 }}
               >
-                Add downstream dependent
+                Add next task
               </button>
               {localEdges.some((edge) => edge.fromNodeKey === openNodeMenuNode.nodeKey || edge.toNodeKey === openNodeMenuNode.nodeKey) && (
                 <p className="muted flow-node-menu-note">
@@ -1148,7 +1148,7 @@ export function TaskFlowEditorCard({
       <div className="task-flow-editor-grid">
         <div className="task-flow-panel">
           <div className="task-flow-step-header">
-            <strong>Selected node</strong>
+            <strong>Selected task</strong>
             {selectedNode && <span className="small-chip">{selectedNode.nodeKey}</span>}
           </div>
           {selectedNode ? (
@@ -1163,7 +1163,7 @@ export function TaskFlowEditorCard({
               <div><dt>Edit</dt><dd>Use the node card controls to save or cancel inline edits.</dd></div>
             </dl>
           ) : (
-            <p className="muted">Select a node on the chart to edit it.</p>
+            <p className="muted">Select a task on the chart to edit it.</p>
           )}
         </div>
 
@@ -1172,10 +1172,10 @@ export function TaskFlowEditorCard({
             <strong>Dependencies</strong>
             <span className="small-chip">{localEdges.length} links</span>
           </div>
-          <p className="muted">Click a line to edit its days or drag either end grip to another task.</p>
+          <p className="muted">Click a line to edit its days, or drag either end to another task.</p>
           <div className="flow-edge-list">
             {localEdges.length === 0 ? (
-              <p className="muted">No dependencies yet. Start by connecting two nodes.</p>
+              <p className="muted">No dependencies yet. Connect two tasks to start.</p>
             ) : (
               localEdges.map((edge) => (
                 <div key={`${edge.fromNodeKey}-${edge.toNodeKey}`} className="flow-edge-row">
@@ -1187,7 +1187,7 @@ export function TaskFlowEditorCard({
                       removeEdge(edge.fromNodeKey, edge.toNodeKey);
                     }}
                   >
-                    Remove
+                    Remove connection
                   </button>
                 </div>
               ))

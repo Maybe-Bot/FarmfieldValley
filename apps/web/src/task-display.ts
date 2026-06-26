@@ -52,7 +52,7 @@ const taskTypeLabels: Record<string, string> = {
   transplant: "transplanting",
   cultivation: "cultivation",
   cleanup: "cleanup",
-  cover_crop: "covercrop"
+  cover_crop: "cover crop"
 };
 
 const taskAnchorLabels: Record<string, string> = {

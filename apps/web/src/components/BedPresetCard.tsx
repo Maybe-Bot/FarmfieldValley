@@ -22,7 +22,7 @@ export function BedPresetCard({
   const [isRoadPreset, setIsRoadPreset] = useState(false);
 
   async function deletePreset(id: number, name: string) {
-    const confirmed = window.confirm(`Delete bed preset "${name}"? Existing beds will stay on the map.`);
+    const confirmed = window.confirm(`Delete bed preset "${name}"? Existing map beds will not be deleted.`);
     if (!confirmed) {
       return;
     }
@@ -40,7 +40,7 @@ export function BedPresetCard({
   return (
     <details className="full-span foldout-panel" open={bedPresets.length === 0 ? true : undefined}>
       <summary>Manage bed presets</summary>
-      <p className="muted">Store each farm bed system once, then reuse it when filling blocks. Bed width is the plantable bed only; path spacing is left as open space. Use a road/path preset for non-plantable access lanes.</p>
+      <p className="muted">Save each bed or road setup once, then reuse it when filling blocks. Bed width is the plantable bed only. Path spacing is open space. Use a road/path preset for access lanes.</p>
       {notice && <p className="muted"><strong>{notice}</strong></p>}
       {bedPresets.length > 0 && (
         <MobileListLimiter itemCount={bedPresets.length} itemLabel="bed presets">
@@ -66,7 +66,7 @@ export function BedPresetCard({
             const bedWidthM = parseLengthInputValue(form.get("bedWidthM"), distanceUnit);
             const pathSpacingM = isRoadPreset ? 0 : parseLengthInputValue(form.get("pathSpacingM"), distanceUnit);
             if (bedWidthM == null || pathSpacingM == null) {
-              throw new Error(isRoadPreset ? "Road/path width is required" : "Bed width and path spacing are required");
+              throw new Error(isRoadPreset ? "Enter road/path width." : "Enter bed width and path spacing.");
             }
             await api.createBedPreset({
               farmId,
@@ -84,7 +84,7 @@ export function BedPresetCard({
         <label><span>Name</span><input key={isRoadPreset ? "road-name" : "bed-name"} name="name" defaultValue={isRoadPreset ? "Farm road 12 ft" : "Bare bed 3 ft"} /></label>
         <label className="inline-checkbox">
           <input type="checkbox" checked={isRoadPreset} onChange={(event) => setIsRoadPreset(event.target.checked)} />
-          <span>Road/path preset, not plantable</span>
+          <span>Road or path, not plantable</span>
         </label>
         <label>
           <span>{isRoadPreset ? "Road/path width" : "Bed width"} ({distanceUnit})</span>
