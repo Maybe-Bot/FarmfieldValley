@@ -65,3 +65,9 @@ test("dashboard farm settings and offline imagery require the current authentica
   assert.match(dashboard, /from farms where id = \$1 limit 1/);
   assert.match(admin, /update farms set maps_private = \$2, updated_at = now\(\) where id = \$1/);
 });
+
+test("admin soft-delete releases account email for reuse", () => {
+  const admin = compact(readSource("routes/admin.ts"));
+
+  assert.match(admin, /email = 'deleted-' \|\| id \|\| '-' \|\| email, is_active = false/);
+});

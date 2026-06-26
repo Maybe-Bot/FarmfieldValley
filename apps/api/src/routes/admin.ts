@@ -149,7 +149,10 @@ export function registerAdminRoutes(app: express.Express) {
       await client.query(
         `
           update app_users
-          set is_active = false, updated_at = now()
+          set
+            email = 'deleted-' || id || '-' || email,
+            is_active = false,
+            updated_at = now()
           where id = $1
         `,
         [userId]
