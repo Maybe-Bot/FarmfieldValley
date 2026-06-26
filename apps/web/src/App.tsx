@@ -27,6 +27,7 @@ import {
   MapDrawingEvents,
   MapLineDragEvents,
   MapZoomTracker,
+  mapViewStorageKey,
   PersistMapView,
   readStoredMapView,
   ResponsiveBasemap,
@@ -468,7 +469,10 @@ function App() {
   const [editCoverCropTerminateDate, setEditCoverCropTerminateDate] = useState("");
   const [selectedVertexIndex, setSelectedVertexIndex] = useState<number | null>(null);
   const [mapNotice, setMapNotice] = useState<string | null>(null);
-  const [initialView] = useState(() => readStoredMapView());
+  const currentMapViewStorageKey = session?.authenticated
+    ? mapViewStorageKey(session.user.id, session.user.farmId)
+    : mapViewStorageKey(null, null);
+  const [initialView] = useState(() => readStoredMapView(currentMapViewStorageKey));
   const [mapZoom, setMapZoom] = useState(initialView.zoom);
   const [distanceUnit, setDistanceUnit] = useState<DistanceUnit>(() => readSettings().distanceUnit);
   const [themeMode, setThemeMode] = useState<ThemeMode>(() => readSettings().themeMode);
@@ -4217,8 +4221,8 @@ function App() {
                   <AttributionControl position="bottomright" prefix={false} />
                   <ResponsiveBasemap />
                   <MapZoomTracker onZoomChange={setMapZoom} />
-                  <FitToFarm fields={visibleFields} blocks={visibleBlocks} />
-                  <PersistMapView />
+                  <FitToFarm fields={visibleFields} blocks={visibleBlocks} storageKey={currentMapViewStorageKey} />
+                  <PersistMapView storageKey={currentMapViewStorageKey} />
                   <FocusSelection
                     selection={selection}
                     fields={visibleFields}

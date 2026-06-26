@@ -142,14 +142,30 @@ export function MapLineDragEvents({
   return null;
 }
 
+export function mapViewStorageKey(userId: number | null | undefined, farmId: number | null | undefined) {
+  if (userId == null || farmId == null) {
+    return VIEW_STORAGE_KEY;
+  }
+
+  return `${VIEW_STORAGE_KEY}:${userId}:${farmId}`;
+}
+
 // On first load, zoom to saved farm geometry unless the user already has a
 // manually stored map position.
-export function FitToFarm({ fields, blocks }: { fields: Field[]; blocks: Block[] }) {
+export function FitToFarm({
+  fields,
+  blocks,
+  storageKey = VIEW_STORAGE_KEY
+}: {
+  fields: Field[];
+  blocks: Block[];
+  storageKey?: string;
+}) {
   const map = useMap();
   const [hasFit, setHasFit] = useState(false);
 
   useEffect(() => {
-    if (hasFit || hasStoredMapView()) {
+    if (hasFit || hasStoredMapView(storageKey)) {
       return;
     }
 
@@ -162,7 +178,7 @@ export function FitToFarm({ fields, blocks }: { fields: Field[]; blocks: Block[]
       map.fitBounds(allPoints, { padding: [30, 30] });
       setHasFit(true);
     }
-  }, [fields, blocks, hasFit, map]);
+  }, [fields, blocks, hasFit, map, storageKey]);
 
   return null;
 }
@@ -291,14 +307,14 @@ export function ResponsiveBasemap() {
 
 // Saves the user's last map position in this browser so refreshes do not jump
 // back to the default starting location.
-export function PersistMapView() {
+export function PersistMapView({ storageKey = VIEW_STORAGE_KEY }: { storageKey?: string }) {
   const map = useMap();
 
   useEffect(() => {
     const persist = () => {
       const center = map.getCenter();
       window.localStorage.setItem(
-        VIEW_STORAGE_KEY,
+        storageKey,
         JSON.stringify({
           center: [center.lat, center.lng],
           zoom: map.getZoom()
@@ -312,25 +328,25 @@ export function PersistMapView() {
       map.off("moveend", persist);
       map.off("zoomend", persist);
     };
-  }, [map]);
+  }, [map, storageKey]);
 
   return null;
 }
 
-export function hasStoredMapView() {
+export function hasStoredMapView(storageKey = VIEW_STORAGE_KEY) {
   if (typeof window === "undefined") {
     return false;
   }
 
-  return Boolean(window.localStorage.getItem(VIEW_STORAGE_KEY));
+  return Boolean(window.localStorage.getItem(storageKey));
 }
 
-export function readStoredMapView(): { center: LatLngTuple; zoom: number } {
+export function readStoredMapView(storageKey = VIEW_STORAGE_KEY): { center: LatLngTuple; zoom: number } {
   if (typeof window === "undefined") {
     return { center: DEFAULT_CENTER, zoom: DEFAULT_ZOOM };
   }
 
-  const raw = window.localStorage.getItem(VIEW_STORAGE_KEY);
+  const raw = window.localStorage.getItem(storageKey);
   if (!raw) {
     return { center: DEFAULT_CENTER, zoom: DEFAULT_ZOOM };
   }
