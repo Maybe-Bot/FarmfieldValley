@@ -7,6 +7,7 @@ import { AdminUser, FeedbackReport, UsageEvent } from "../types";
 import { MobileListLimiter } from "./MobileListLimiter";
 
 type AdminPanelProps = {
+  currentUserId: number;
   reports: FeedbackReport[];
   onRefresh: () => Promise<void>;
   onOpenFeedback: () => void;
@@ -14,7 +15,7 @@ type AdminPanelProps = {
 
 // Bare-bones global admin screen. Farm-level tools should stay elsewhere so
 // normal farm users do not need to understand global admin controls.
-export function AdminPanel({ reports, onRefresh, onOpenFeedback }: AdminPanelProps) {
+export function AdminPanel({ currentUserId, reports, onRefresh, onOpenFeedback }: AdminPanelProps) {
   const [users, setUsers] = useState<AdminUser[]>([]);
   const [usageEvents, setUsageEvents] = useState<UsageEvent[]>([]);
   const [usageRetentionDays, setUsageRetentionDays] = useState(90);
@@ -149,7 +150,7 @@ export function AdminPanel({ reports, onRefresh, onOpenFeedback }: AdminPanelPro
                       <button
                         type="button"
                         className="danger-button compact-button"
-                        disabled={!user.isActive || user.isAdmin}
+                        disabled={!user.isActive || user.id === currentUserId}
                         onClick={() => void deleteUser(user)}
                       >
                         Delete

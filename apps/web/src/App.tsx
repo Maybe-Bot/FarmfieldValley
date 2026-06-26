@@ -6149,6 +6149,7 @@ function App() {
 
         {view === "admin" && isAdmin && (
           <AdminPanel
+            currentUserId={session.user.id}
             reports={feedbackReports}
             onRefresh={() => load(true, true)}
             onOpenFeedback={() => {
