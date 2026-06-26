@@ -75,6 +75,7 @@ export function normalizeAdminUsers(input: unknown): AdminUser[] {
       }
       return {
         id,
+        email: asString(item.email),
         username,
         displayName: asNullableString(item.displayName),
         isActive: asBoolean(item.isActive, true),

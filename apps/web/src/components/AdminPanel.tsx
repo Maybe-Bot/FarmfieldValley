@@ -123,6 +123,7 @@ export function AdminPanel({ reports, onRefresh, onOpenFeedback }: AdminPanelPro
               <thead>
                 <tr>
                   <th>User</th>
+                  <th>Email</th>
                   <th>Status</th>
                   <th>Farms</th>
                   <th>Created</th>
@@ -138,6 +139,7 @@ export function AdminPanel({ reports, onRefresh, onOpenFeedback }: AdminPanelPro
                       <strong>{user.username}</strong>
                       <div className="table-subtle">{user.displayName ?? "No display name"}{user.isAdmin ? " / admin" : ""}</div>
                     </td>
+                    <td>{user.email || "—"}</td>
                     <td>{user.isActive ? "active" : "deleted"}</td>
                     <td>{user.memberships.map((membership) => `${membership.farmName} (${roleLabel(membership.role)})`).join(", ") || "—"}</td>
                     <td>{formatDate(user.createdAt)}</td>
@@ -156,7 +158,7 @@ export function AdminPanel({ reports, onRefresh, onOpenFeedback }: AdminPanelPro
                   </tr>
                 ))}
                 {safeUsers.length === 0 && (
-                  <tr><td colSpan={7}>{loadingUsers ? "Loading users..." : "No users found."}</td></tr>
+                  <tr><td colSpan={8}>{loadingUsers ? "Loading users..." : "No users found."}</td></tr>
                 )}
               </tbody>
               </table>

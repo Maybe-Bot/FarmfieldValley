@@ -12,6 +12,7 @@ test("normalizeAdminUsers keeps the admin table renderable when memberships is n
   const users = normalizeAdminUsers([
     {
       id: 1,
+      email: "admin@example.com",
       username: "admin",
       displayName: null,
       isActive: true,
@@ -24,6 +25,7 @@ test("normalizeAdminUsers keeps the admin table renderable when memberships is n
   ]);
 
   assert.equal(users.length, 1);
+  assert.equal(users[0].email, "admin@example.com");
   assert.deepEqual(users[0].memberships, []);
 });
 
@@ -31,6 +33,7 @@ test("normalizeAdminUsers parses JSON membership arrays from database drivers", 
   const users = normalizeAdminUsers([
     {
       id: 1,
+      email: "admin@example.com",
       username: "admin",
       createdAt: "2026-06-25T12:00:00.000Z",
       memberships: JSON.stringify([{ farmId: 2, farmName: "North Farm", role: "planner" }])

@@ -79,6 +79,7 @@ export function registerAdminRoutes(app: express.Express) {
   app.get("/api/admin/users", requireAdmin(), asyncHandler(async (_req, res) => {
     const result = await pool.query<{
       id: number;
+      email: string;
       username: string;
       display_name: string | null;
       is_active: boolean;
@@ -91,6 +92,7 @@ export function registerAdminRoutes(app: express.Express) {
       `
         select
           app_user.id,
+          app_user.email,
           app_user.username,
           app_user.display_name,
           app_user.is_active,
@@ -120,6 +122,7 @@ export function registerAdminRoutes(app: express.Express) {
 
     res.json(result.rows.map((row) => ({
       id: row.id,
+      email: row.email,
       username: row.username,
       displayName: row.display_name,
       isActive: row.is_active,

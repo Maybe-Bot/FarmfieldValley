@@ -504,6 +504,7 @@ export type AuthCapabilities = {
 
 export type AdminUser = {
   id: number;
+  email: string;
   username: string;
   displayName: string | null;
   isActive: boolean;
