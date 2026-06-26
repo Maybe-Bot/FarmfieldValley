@@ -1,6 +1,12 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { normalizeAdminUsers, normalizeFeedbackReports, normalizeUsageEventsResponse } from "./admin-panel-data";
+import {
+  normalizeAdminUsers,
+  normalizeFeedbackReports,
+  normalizeUndoState,
+  normalizeUsageEventsResponse,
+  normalizeUserMessages
+} from "./admin-panel-data";
 
 test("normalizeAdminUsers keeps the admin table renderable when memberships is not an array", () => {
   const users = normalizeAdminUsers([
@@ -42,4 +48,12 @@ test("normalizeUsageEventsResponse defaults non-array event payloads", () => {
 
 test("normalizeFeedbackReports defaults bad report payloads to an empty list", () => {
   assert.deepEqual(normalizeFeedbackReports({ reports: [] }), []);
+});
+
+test("normalizeUserMessages defaults bad message payloads to an empty list", () => {
+  assert.deepEqual(normalizeUserMessages({ messages: [] }), []);
+});
+
+test("normalizeUndoState defaults bad undo payloads to empty history lists", () => {
+  assert.deepEqual(normalizeUndoState({ undo: { id: 1 }, redo: "bad" }), { undo: [], redo: [] });
 });

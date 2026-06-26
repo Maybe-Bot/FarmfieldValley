@@ -21,6 +21,8 @@ export function AdminPanel({ reports, onRefresh, onOpenFeedback }: AdminPanelPro
   const [status, setStatus] = useState<string | null>(null);
   const [loadingUsers, setLoadingUsers] = useState(false);
   const [loadingUsage, setLoadingUsage] = useState(false);
+  const safeUsers = normalizeAdminUsers(users);
+  const safeUsageEvents = normalizeUsageEventsResponse({ events: usageEvents, retentionDays: usageRetentionDays }).events;
   const safeReports = normalizeFeedbackReports(reports);
 
   async function loadUsers() {
@@ -115,7 +117,7 @@ export function AdminPanel({ reports, onRefresh, onOpenFeedback }: AdminPanelPro
         </div>
         <div className="card">
           <h2>Users</h2>
-          <MobileListLimiter itemCount={users.length} itemLabel="users">
+          <MobileListLimiter itemCount={safeUsers.length} itemLabel="users">
             <div className="table-wrap">
               <table className="data-table">
               <thead>
@@ -130,7 +132,7 @@ export function AdminPanel({ reports, onRefresh, onOpenFeedback }: AdminPanelPro
                 </tr>
               </thead>
               <tbody>
-                {users.map((user) => (
+                {safeUsers.map((user) => (
                   <tr key={user.id}>
                     <td>
                       <strong>{user.username}</strong>
@@ -153,7 +155,7 @@ export function AdminPanel({ reports, onRefresh, onOpenFeedback }: AdminPanelPro
                     </td>
                   </tr>
                 ))}
-                {users.length === 0 && (
+                {safeUsers.length === 0 && (
                   <tr><td colSpan={7}>{loadingUsers ? "Loading users..." : "No users found."}</td></tr>
                 )}
               </tbody>
@@ -164,7 +166,7 @@ export function AdminPanel({ reports, onRefresh, onOpenFeedback }: AdminPanelPro
       </div>
       <div className="stack">
         <UsageEventsCard
-          events={usageEvents}
+          events={safeUsageEvents}
           loading={loadingUsage}
           retentionDays={usageRetentionDays}
           onDelete={deleteUsageEvents}

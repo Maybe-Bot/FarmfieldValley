@@ -1,4 +1,4 @@
-import type { AdminUser, FeedbackReport, UsageEvent } from "./types";
+import type { AdminUser, FeedbackReport, UndoSnapshotSummary, UndoState, UsageEvent, UserMessage } from "./types";
 
 type UnknownRecord = Record<string, unknown>;
 type AdminMembership = AdminUser["memberships"][number];
@@ -145,4 +145,59 @@ export function normalizeFeedbackReports(input: unknown): FeedbackReport[] {
       };
     })
     .filter((item): item is FeedbackReport => item != null);
+}
+
+export function normalizeUserMessages(input: unknown): UserMessage[] {
+  return asArray(input)
+    .map((item): UserMessage | null => {
+      if (!isRecord(item)) {
+        return null;
+      }
+      const id = asNumber(item.id, NaN);
+      const recipientUserId = asNumber(item.recipientUserId, NaN);
+      if (!Number.isFinite(id) || !Number.isFinite(recipientUserId)) {
+        return null;
+      }
+      return {
+        id,
+        farmId: item.farmId == null ? null : asNumber(item.farmId),
+        senderUserId: item.senderUserId == null ? null : asNumber(item.senderUserId),
+        senderUsername: asNullableString(item.senderUsername),
+        senderDisplayName: asNullableString(item.senderDisplayName),
+        recipientUserId,
+        relatedFeedbackReportId: item.relatedFeedbackReportId == null ? null : asNumber(item.relatedFeedbackReportId),
+        subject: asString(item.subject, "Message"),
+        body: asString(item.body),
+        readAt: asNullableString(item.readAt),
+        createdAt: asString(item.createdAt)
+      };
+    })
+    .filter((item): item is UserMessage => item != null);
+}
+
+function normalizeUndoSnapshots(input: unknown): UndoSnapshotSummary[] {
+  return asArray(input)
+    .map((item): UndoSnapshotSummary | null => {
+      if (!isRecord(item)) {
+        return null;
+      }
+      const id = asNumber(item.id, NaN);
+      if (!Number.isFinite(id)) {
+        return null;
+      }
+      return {
+        id,
+        label: asString(item.label, "Recent change"),
+        createdAt: asString(item.createdAt)
+      };
+    })
+    .filter((item): item is UndoSnapshotSummary => item != null);
+}
+
+export function normalizeUndoState(input: unknown): UndoState {
+  const payload = isRecord(input) ? input : {};
+  return {
+    undo: normalizeUndoSnapshots(payload.undo),
+    redo: normalizeUndoSnapshots(payload.redo)
+  };
 }

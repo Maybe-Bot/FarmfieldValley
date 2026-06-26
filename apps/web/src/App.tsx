@@ -9,6 +9,7 @@
  */
 import { CSSProperties, FormEvent, Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { AttributionControl, Circle, CircleMarker, MapContainer, Marker, Polygon, Polyline, Tooltip } from "react-leaflet";
+import { normalizeFeedbackReports, normalizeUndoState, normalizeUserMessages } from "./admin-panel-data";
 import { api } from "./api";
 import { buildBedAllocationPreview, estimatePlantCountFromPlan } from "./bed-allocation";
 import { AdminPanel } from "./components/AdminPanel";
@@ -710,10 +711,11 @@ function App() {
         ? { ...current, ...next }
         : next as DashboardData
       );
-      setFeedbackReports(nextFeedbackReports);
-      setMessages(nextMessages);
-      setUndoSnapshots(nextUndoSnapshots.undo);
-      setRedoSnapshots(nextUndoSnapshots.redo);
+      const normalizedUndoState = normalizeUndoState(nextUndoSnapshots);
+      setFeedbackReports(normalizeFeedbackReports(nextFeedbackReports));
+      setMessages(normalizeUserMessages(nextMessages));
+      setUndoSnapshots(normalizedUndoState.undo);
+      setRedoSnapshots(normalizedUndoState.redo);
       if (selectedPlantingId == null && next.plantings?.[0]) {
         setSelectedPlantingId(next.plantings[0].id);
       }
@@ -2341,7 +2343,7 @@ function App() {
       setFeedbackComment("");
       setFeedbackStatus("Feedback saved.");
       if (isAdmin) {
-        setFeedbackReports(await api.getFeedbackReports().catch(() => feedbackReports));
+        setFeedbackReports(normalizeFeedbackReports(await api.getFeedbackReports().catch(() => feedbackReports)));
       }
       window.setTimeout(() => {
         setFeedbackOpen(false);
@@ -6168,7 +6170,7 @@ function App() {
               )));
             }}
             onRefresh={async () => {
-              setMessages(await api.getMessages());
+              setMessages(normalizeUserMessages(await api.getMessages()));
             }}
           />
         )}
