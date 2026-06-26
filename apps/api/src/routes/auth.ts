@@ -2,6 +2,7 @@ import express from "express";
 import { PoolClient } from "pg";
 import { z } from "zod";
 import { normalizeAccountEmail } from "../account-email";
+import { accountUniqueViolationMessage } from "../account-unique-errors";
 import { accountTokenHash, createAccountToken } from "../account-tokens";
 import {
   clearSessionCookie,
@@ -340,9 +341,9 @@ export function registerAuthRoutes(app: express.Express) {
       }));
     } catch (error) {
       await client.query("rollback");
-      const maybeError = error as { code?: string };
-      if (maybeError.code === "23505") {
-        res.status(400).json({ error: "That username is already taken. Choose a new username, or use a different email." });
+      const uniqueMessage = accountUniqueViolationMessage(error);
+      if (uniqueMessage) {
+        res.status(400).json({ error: uniqueMessage });
         return;
       }
       throw error;

@@ -3,6 +3,7 @@ import { AuthContext, createSessionToken, csrfTokenForSession, hashPassword, rea
 import { enforceRateLimit, requestIp } from "../auth-rate-limit";
 import { accountTokenHash, createAccountToken } from "../account-tokens";
 import { normalizeAccountEmail } from "../account-email";
+import { accountUniqueViolationMessage } from "../account-unique-errors";
 import { config } from "../config";
 import { pool } from "../db";
 import { deliverAccountEmail } from "../email-delivery";
@@ -466,9 +467,9 @@ export function registerAccountManagementRoutes(app: express.Express) {
       });
     } catch (error) {
       await client.query("rollback");
-      const maybeError = error as { code?: string };
-      if (maybeError.code === "23505") {
-        res.status(400).json({ error: "That username is already taken. Choose another username." });
+      const uniqueMessage = accountUniqueViolationMessage(error);
+      if (uniqueMessage) {
+        res.status(400).json({ error: uniqueMessage });
         return;
       }
       throw error;
