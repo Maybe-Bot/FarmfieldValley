@@ -230,9 +230,25 @@ export function registerAuthRoutes(app: express.Express) {
           select membership.farm_id, farm.name as farm_name, membership.role
           from farm_memberships membership
           join farms farm on farm.id = membership.farm_id
+          left join lateral (
+            select max(session.created_at) as last_session_at
+            from user_sessions session
+            where session.user_id = membership.user_id
+              and session.farm_id = membership.farm_id
+          ) recent_session on true
+          left join lateral (
+            select
+              (select count(*) from fields field where field.farm_id = membership.farm_id) +
+              (select count(*) from plantings planting where planting.farm_id = membership.farm_id) +
+              (select count(*) from tasks task where task.farm_id = membership.farm_id) as content_count
+          ) farm_content on true
           where membership.user_id = $1
             and ($2::integer is null or membership.farm_id = $2)
-          order by membership.farm_id
+          order by
+            case when coalesce(farm_content.content_count, 0) > 0 then 0 else 1 end,
+            recent_session.last_session_at desc nulls last,
+            coalesce(farm_content.content_count, 0) desc,
+            membership.farm_id
         `,
         [user.id, body.farmId ?? null]
       );
