@@ -37,6 +37,7 @@ export function registerDashboardRoutes(app: express.Express) {
       );
       return result ?? { rows: [] };
     };
+    const mapQueryValues = [auth.farmId, auth.isAdmin];
     const [farm, fields, blocks, blockZones, beds, bedPresets, coverCropNames, seedItems, crops, varieties, taskFlowTemplates, taskFlowNodes, taskFlowEdges, tractorProfiles, plantings, placements, placementGaps, placementOverflows, events, tasks, harvests] = await runDashboardQueryBatch([
       () => dashboardQuery("farm", `
         select
@@ -60,9 +61,9 @@ export function registerDashboardRoutes(app: express.Express) {
           ST_AsGeoJSON(field.centroid)::json as centroid
         from fields field
         join farms farm on farm.id = field.farm_id
-        where field.farm_id = $1
+        where $2::boolean = true or field.farm_id = $1
         order by farm.name, field.id
-      `, [auth.farmId]),
+      `, mapQueryValues),
       () => dashboardQuery("blocks", `
         select
           b.id,
@@ -79,9 +80,9 @@ export function registerDashboardRoutes(app: express.Express) {
         from blocks b
         join fields f on f.id = b.field_id
         join farms farm on farm.id = f.farm_id
-        where f.farm_id = $1
+        where $2::boolean = true or f.farm_id = $1
         order by farm.name, f.id, b.id
-      `, [auth.farmId]),
+      `, mapQueryValues),
       () => dashboardQuery("blockZones", `
         select
           zone.id,
@@ -109,9 +110,9 @@ export function registerDashboardRoutes(app: express.Express) {
         join fields field on field.id = block.field_id
         join farms farm on farm.id = field.farm_id
         left join cover_crop_names cover_crop on cover_crop.id = zone.cover_crop_name_id
-        where field.farm_id = $1
+        where $2::boolean = true or field.farm_id = $1
         order by farm.name, field.id, block.id, zone.id
-      `, [auth.farmId]),
+      `, mapQueryValues),
       () => dashboardQuery("beds", `
         select
           b.id,
@@ -146,11 +147,11 @@ export function registerDashboardRoutes(app: express.Express) {
         join farms farm on farm.id = field.farm_id
         left join block_zones zone on zone.id = b.zone_id
         left join bed_presets bp on bp.id = b.bed_preset_id
-        left join planting_placements pp on pp.bed_id = b.id and field.farm_id = $1
-        where field.farm_id = $1
+        left join planting_placements pp on pp.bed_id = b.id
+        where $2::boolean = true or field.farm_id = $1
         group by b.id, field.id, field.farm_id, farm.name, bl.id, bl.name, zone.id, zone.name, bp.id, bp.name
         order by farm.name, field.id, bl.id, b.id
-      `, [auth.farmId]),
+      `, mapQueryValues),
       () => dashboardQuery("bedPresets", `
         select
           id,

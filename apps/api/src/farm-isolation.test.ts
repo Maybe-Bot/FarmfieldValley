@@ -63,6 +63,8 @@ test("dashboard farm settings and offline imagery require the current authentica
   assert.match(server, /app\.get\("\/api\/offline-imagery\/tiles\/:z\/:x\/:y", requireRole\("worker"\)/);
   assert.match(server, /Cache-Control", "private, max-age=31536000, immutable"/);
   assert.match(dashboard, /from farms where id = \$1 limit 1/);
+  assert.match(dashboard, /where \$2::boolean = true or field\.farm_id = \$1/);
+  assert.match(dashboard, /const mapQueryValues = \[auth\.farmId, auth\.isAdmin\]/);
   assert.match(admin, /update farms set maps_private = \$2, updated_at = now\(\) where id = \$1/);
 });
 
