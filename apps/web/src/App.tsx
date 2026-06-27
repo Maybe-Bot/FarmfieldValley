@@ -374,20 +374,22 @@ type MapLayerSettings = {
   otherFarms: boolean;
 };
 
-function mapLayerStorageKey(userId: number) {
-  return `${MAP_LAYER_STORAGE_PREFIX}:user-${userId}`;
+function mapLayerStorageKey(userId: number, farmId: number | null | undefined) {
+  return farmId == null
+    ? `${MAP_LAYER_STORAGE_PREFIX}:user-${userId}`
+    : `${MAP_LAYER_STORAGE_PREFIX}:user-${userId}:farm-${farmId}`;
 }
 
 function defaultMapLayerSettings(): MapLayerSettings {
   return { planned: true, actual: true, tasks: true, otherFarms: true };
 }
 
-function readMapLayerSettings(userId: number | null | undefined) {
+function readMapLayerSettings(userId: number | null | undefined, farmId: number | null | undefined) {
   if (typeof window === "undefined" || userId == null) {
     return defaultMapLayerSettings();
   }
 
-  const raw = window.localStorage.getItem(mapLayerStorageKey(userId));
+  const raw = window.localStorage.getItem(mapLayerStorageKey(userId, farmId));
   if (!raw) {
     return defaultMapLayerSettings();
   }
@@ -481,7 +483,10 @@ function App() {
   const [isMobileViewport, setIsMobileViewport] = useState(() => (
     typeof window !== "undefined" ? window.matchMedia(MOBILE_MEDIA_QUERY).matches : false
   ));
-  const initialMapLayerSettings = readMapLayerSettings(session?.authenticated ? session.user.id : null);
+  const initialMapLayerSettings = readMapLayerSettings(
+    session?.authenticated ? session.user.id : null,
+    session?.authenticated ? session.user.farmId : null
+  );
   const [showPlannedPlantingsLayer, setShowPlannedPlantingsLayer] = useState(initialMapLayerSettings.planned);
   const [showActualPlacementsLayer, setShowActualPlacementsLayer] = useState(initialMapLayerSettings.actual);
   const [showTaskLayer, setShowTaskLayer] = useState(initialMapLayerSettings.tasks);
@@ -568,7 +573,7 @@ function App() {
     if (patch.tasks != null) setShowTaskLayer(patch.tasks);
     if (patch.otherFarms != null) setShowOtherFarmMaps(patch.otherFarms);
     if (typeof window !== "undefined" && session?.authenticated) {
-      window.localStorage.setItem(mapLayerStorageKey(session.user.id), JSON.stringify(next));
+      window.localStorage.setItem(mapLayerStorageKey(session.user.id, session.user.farmId), JSON.stringify(next));
     }
   }
 
@@ -596,12 +601,16 @@ function App() {
       return;
     }
 
-    const stored = readMapLayerSettings(session.user.id);
+    const stored = readMapLayerSettings(session.user.id, session.user.farmId);
     setShowPlannedPlantingsLayer(stored.planned);
     setShowActualPlacementsLayer(stored.actual);
     setShowTaskLayer(stored.tasks);
     setShowOtherFarmMaps(stored.otherFarms);
-  }, [session?.authenticated, session?.authenticated ? session.user.id : null]);
+  }, [
+    session?.authenticated,
+    session?.authenticated ? session.user.id : null,
+    session?.authenticated ? session.user.farmId : null
+  ]);
 
   useEffect(() => {
     if (typeof window === "undefined") {
