@@ -3828,11 +3828,11 @@ function App() {
     }
 
     if (tutorialHighlightPlanningMode) {
-      return "Click the highlighted Plan button in the map toolbar.";
+      return "Click the highlighted Map tools button in the map toolbar.";
     }
 
     if (tutorialHighlightWorkMode) {
-      return "Click the highlighted Work button in the map toolbar.";
+      return "Click the highlighted Work tools button in the map toolbar.";
     }
 
     if (activeTutorialStep === tutorialDrawFieldStep) {
@@ -4958,24 +4958,15 @@ function App() {
                 )}
               </MapContainer>
                 <div className={`map-mode-overlay${mapIsPointSelectionMode ? " point-selection-active" : ""}`} aria-label="Map mode and tools">
-                  <div className="map-workflow-toggle" aria-label="Map workflow">
-                    <button
-                      type="button"
-                      className={`${mapWorkflowMode === "planning" ? "primary-button" : "secondary-button"} compact-button${tutorialTargetClass(tutorialHighlightPlanningMode)}`}
-                      onClick={() => changeMapWorkflowMode("planning")}
-                      disabled={!canPlan}
-                    >
-                      Plan
-                    </button>
-                    <button
-                      type="button"
-                      className={`${mapWorkflowMode === "field_work" ? "primary-button" : "secondary-button"} compact-button${tutorialTargetClass(tutorialHighlightWorkMode)}`}
-                      onClick={() => changeMapWorkflowMode("field_work")}
-                    >
-                      Work
-                    </button>
-                  </div>
-                  {mapWorkflowMode === "planning" ? (
+                  <button
+                    type="button"
+                    className={`primary-button compact-button map-tools-toggle${tutorialTargetClass(tutorialHighlightPlanningMode || tutorialHighlightWorkMode)}`}
+                    onClick={() => changeMapWorkflowMode(mapWorkflowMode === "planning" ? "field_work" : "planning")}
+                    disabled={mapWorkflowMode === "field_work" && !canPlan}
+                  >
+                    {mapWorkflowMode === "planning" ? "Work tools" : "Map tools"}
+                  </button>
+                  {mapWorkflowMode === "planning" && (
                     <div className="map-overlay-tools" aria-label="Planning map tools">
                       <button type="button" className={`${mapMode === "select" ? "primary-button" : "secondary-button"} compact-button${tutorialTargetClass(tutorialHighlightMapSelect)}`} onClick={() => resetMapDrafts("select")}>Select</button>
                       <button type="button" className={`${mapMode === "draw_field" ? "primary-button" : "secondary-button"} compact-button${tutorialTargetClass(tutorialHighlightDrawField)}`} onClick={startDrawField} disabled={!canPlan}>Draw field</button>
@@ -4990,8 +4981,6 @@ function App() {
                         Make beds
                       </button>
                     </div>
-                  ) : (
-                    <div className="map-work-mode-hint">Select beds or crop areas to record work.</div>
                   )}
                 </div>
               </div>

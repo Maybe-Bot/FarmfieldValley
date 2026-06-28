@@ -440,14 +440,19 @@ textarea {
 .map-mode-overlay {
   position: absolute;
   top: 0.75rem;
-  left: 0.75rem;
+  left: 3.8rem;
   z-index: 1000;
   display: flex;
   flex-direction: column;
   gap: 0.45rem;
-  width: min(12.5rem, calc(100% - 1.5rem));
-  max-width: calc(100% - 1.5rem);
+  width: min(12.5rem, calc(100% - 4.55rem));
+  max-width: calc(100% - 4.55rem);
   pointer-events: none;
+}
+
+.map-tools-toggle {
+  width: 100%;
+  pointer-events: auto;
 }
 
 .map-mode-overlay .map-workflow-toggle {
@@ -498,17 +503,6 @@ textarea {
   padding: 0.45rem 0.65rem;
   line-height: 1.05;
   white-space: nowrap;
-}
-
-.map-work-mode-hint {
-  border-radius: 8px;
-  padding: 0.52rem 0.6rem;
-  border: 1px solid var(--card-border);
-  background: rgba(19, 25, 20, 0.92);
-  color: var(--button-secondary-text);
-  font-size: 0.88rem;
-  line-height: 1.25;
-  box-shadow: 0 12px 28px rgba(0, 0, 0, 0.26);
 }
 
 .map-location-panel {

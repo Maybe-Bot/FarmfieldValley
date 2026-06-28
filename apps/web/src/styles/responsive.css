@@ -312,7 +312,7 @@
   }
 
   .mobile-shell .map-mode-overlay {
-    width: min(11.5rem, calc(100% - 1.5rem));
+    width: min(11.5rem, calc(100% - 4.55rem));
   }
 
   .mobile-shell .map-overlay-tools button {
