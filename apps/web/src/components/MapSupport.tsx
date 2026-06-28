@@ -1,5 +1,5 @@
 import { LatLngTuple, latLngBounds, point as leafletPoint } from "leaflet";
-import { useEffect, useRef, useState } from "react";
+import { type MutableRefObject, useEffect, useRef, useState } from "react";
 import { TileLayer, useMap, useMapEvents } from "react-leaflet";
 import { basemaps } from "../map-config";
 import { CoordinateDraft } from "../map-geometry";
@@ -9,6 +9,7 @@ import { Bed, Block, BlockZone, Field } from "../types";
 type MapMode = "select" | "draw_field" | "draw_block" | "draw_zone" | "draw_zone_split" | "bed_tools" | "draw_bed_line" | "pick_bed_edge" | "edit";
 type MapSelection = { type: "field" | "block" | "zone" | "bed"; id: number } | null;
 type UserLocation = { lat: number; lng: number; accuracyM: number | null };
+export type MapViewSnapshot = { center: LatLngTuple; zoom: number };
 
 const VIEW_STORAGE_KEY = "loam-ledger-map-view";
 const DEFAULT_CENTER: LatLngTuple = [40.0448, -76.2662];
@@ -190,7 +191,8 @@ export function FocusSelection({
   blocks,
   zones,
   beds,
-  disabled = false
+  disabled = false,
+  lastHandledSelectionKeyRef
 }: {
   selection: MapSelection;
   fields: Field[];
@@ -198,9 +200,11 @@ export function FocusSelection({
   zones: BlockZone[];
   beds: Bed[];
   disabled?: boolean;
+  lastHandledSelectionKeyRef?: MutableRefObject<string | null>;
 }) {
   const map = useMap();
-  const lastHandledSelectionKey = useRef<string | null>(null);
+  const internalLastHandledSelectionKey = useRef<string | null>(null);
+  const lastHandledSelectionKey = lastHandledSelectionKeyRef ?? internalLastHandledSelectionKey;
   const selectionKey = selection ? `${selection.type}:${selection.id}` : null;
 
   useEffect(() => {
@@ -239,7 +243,7 @@ export function FocusSelection({
         maxZoom: targetZoom
       });
     }
-  }, [selection, selectionKey, fields, blocks, zones, beds, disabled, map]);
+  }, [selection, selectionKey, fields, blocks, zones, beds, disabled, map, lastHandledSelectionKey]);
 
   return null;
 }
@@ -307,19 +311,24 @@ export function ResponsiveBasemap() {
 
 // Saves the user's last map position in this browser so refreshes do not jump
 // back to the default starting location.
-export function PersistMapView({ storageKey = VIEW_STORAGE_KEY }: { storageKey?: string }) {
+export function PersistMapView({
+  storageKey = VIEW_STORAGE_KEY,
+  onViewChange
+}: {
+  storageKey?: string;
+  onViewChange?: (view: MapViewSnapshot) => void;
+}) {
   const map = useMap();
 
   useEffect(() => {
     const persist = () => {
       const center = map.getCenter();
-      window.localStorage.setItem(
-        storageKey,
-        JSON.stringify({
-          center: [center.lat, center.lng],
-          zoom: map.getZoom()
-        })
-      );
+      const view: MapViewSnapshot = {
+        center: [center.lat, center.lng],
+        zoom: map.getZoom()
+      };
+      window.localStorage.setItem(storageKey, JSON.stringify(view));
+      onViewChange?.(view);
     };
 
     map.on("moveend", persist);
@@ -328,7 +337,7 @@ export function PersistMapView({ storageKey = VIEW_STORAGE_KEY }: { storageKey?:
       map.off("moveend", persist);
       map.off("zoomend", persist);
     };
-  }, [map, storageKey]);
+  }, [map, onViewChange, storageKey]);
 
   return null;
 }
@@ -341,7 +350,7 @@ export function hasStoredMapView(storageKey = VIEW_STORAGE_KEY) {
   return Boolean(window.localStorage.getItem(storageKey));
 }
 
-export function readStoredMapView(storageKey = VIEW_STORAGE_KEY): { center: LatLngTuple; zoom: number } {
+export function readStoredMapView(storageKey = VIEW_STORAGE_KEY): MapViewSnapshot {
   if (typeof window === "undefined") {
     return { center: DEFAULT_CENTER, zoom: DEFAULT_ZOOM };
   }

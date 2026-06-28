@@ -27,6 +27,7 @@ import {
   MapDrawingEvents,
   MapLineDragEvents,
   MapZoomTracker,
+  type MapViewSnapshot,
   mapViewStorageKey,
   PersistMapView,
   readStoredMapView,
@@ -474,8 +475,9 @@ function App() {
   const currentMapViewStorageKey = session?.authenticated
     ? mapViewStorageKey(session.user.id, session.user.farmId)
     : mapViewStorageKey(null, null);
-  const [initialView] = useState(() => readStoredMapView(currentMapViewStorageKey));
-  const [mapZoom, setMapZoom] = useState(initialView.zoom);
+  const [mapView, setMapView] = useState<MapViewSnapshot>(() => readStoredMapView(currentMapViewStorageKey));
+  const [mapZoom, setMapZoom] = useState(mapView.zoom);
+  const lastFocusedMapSelectionRef = useRef<string | null>(null);
   const [distanceUnit, setDistanceUnit] = useState<DistanceUnit>(() => readSettings().distanceUnit);
   const [themeMode, setThemeMode] = useState<ThemeMode>(() => readSettings().themeMode);
   const [usageTrackingEnabled, setUsageTrackingEnabled] = useState(false);
@@ -503,6 +505,12 @@ function App() {
   const [feedbackStatus, setFeedbackStatus] = useState<string | null>(null);
   const [isSavingFeedback, setIsSavingFeedback] = useState(false);
   const [mobileToolbarOpen, setMobileToolbarOpen] = useState(false);
+
+  useEffect(() => {
+    const storedView = readStoredMapView(currentMapViewStorageKey);
+    setMapView(storedView);
+    setMapZoom(storedView.zoom);
+  }, [currentMapViewStorageKey]);
   const [mobileMapPanel, setMobileMapPanel] = useState<MobileMapPanel>(null);
 
   useEffect(() => {
@@ -4217,9 +4225,10 @@ function App() {
             <div className="map-main-stack">
               <div className={`card map-card${tutorialTargetClass(tutorialHighlightMapSurface || tutorialHighlightEntrancePreview)}`}>
                 <MapContainer
+                  key={currentMapViewStorageKey}
                   className={mapIsPointSelectionMode ? "point-select-map" : undefined}
-                  center={initialView.center}
-                  zoom={initialView.zoom}
+                  center={mapView.center}
+                  zoom={mapView.zoom}
                   minZoom={3}
                   maxZoom={24}
                   attributionControl={false}
@@ -4231,7 +4240,7 @@ function App() {
                   <ResponsiveBasemap />
                   <MapZoomTracker onZoomChange={setMapZoom} />
                   <FitToFarm fields={visibleFields} blocks={visibleBlocks} storageKey={currentMapViewStorageKey} />
-                  <PersistMapView storageKey={currentMapViewStorageKey} />
+                  <PersistMapView storageKey={currentMapViewStorageKey} onViewChange={setMapView} />
                   <FocusSelection
                     selection={selection}
                     fields={visibleFields}
@@ -4239,6 +4248,7 @@ function App() {
                     zones={visibleBlockZones}
                     beds={visibleBeds}
                     disabled={mapWorkflowMode === "field_work"}
+                    lastHandledSelectionKeyRef={lastFocusedMapSelectionRef}
                   />
                   <FocusUserLocation location={userLocation} />
                   <MapDrawingEvents
