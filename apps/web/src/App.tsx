@@ -2092,8 +2092,6 @@ function App() {
       : defaultEntranceTractorProfile;
     return {
       key: `placement-plan-entrance-${selectedBlockContext.id}-${firstBed.id}-${entranceSide}-${profile.id}`,
-      blockName: selectedBlockContext.name,
-      bedName: firstBed.name,
       entranceSide,
       center: pose.center,
       bearing: pose.bearing,
@@ -2875,7 +2873,35 @@ function App() {
     setSelection({ type: "block", id: blockId });
     resetMapDrafts("bed_tools");
     setBedLineSource("manual");
-    setMapNotice("Pick the first bed edge, then choose the entrance side before generating beds.");
+    setMapNotice("Pick the first bed edge before generating beds.");
+  }
+
+  function coordinatesNearlyEqual(left: CoordinateDraft, right: CoordinateDraft) {
+    return Math.abs(left.lat - right.lat) < 0.000000001 && Math.abs(left.lng - right.lng) < 0.000000001;
+  }
+
+  function bedLineMatchesEdge(edgeLine: CoordinateDraft[], block: Block | null) {
+    if (edgeLine.length < 2 || bedLineCoordinates.length < 2 || !block) {
+      return false;
+    }
+
+    const boundary = geoJsonPolygonToLatLngs(block.boundary);
+    const orientedEdge = orientLineLeftTowardPoint(edgeLine, polygonCenter(boundary));
+    return (
+      coordinatesNearlyEqual(orientedEdge[0], bedLineCoordinates[0])
+      && coordinatesNearlyEqual(orientedEdge[orientedEdge.length - 1], bedLineCoordinates[bedLineCoordinates.length - 1])
+    );
+  }
+
+  function toggleBlockEntranceSide(blockId: number | null | undefined = selectedBlockContext?.id) {
+    if (blockId == null) {
+      return;
+    }
+    const block = data.blocks.find((item) => item.id === blockId) ?? null;
+    const currentEntranceSide = bedEntranceSideDrafts[blockId] ?? block?.bedStartEntranceSide ?? "start";
+    const nextEntranceSide = currentEntranceSide === "start" ? "end" : "start";
+    setBedEntranceSideDrafts((current) => ({ ...current, [blockId]: nextEntranceSide }));
+    setMapNotice(null);
   }
 
   function selectBedEdgeLine(edgeLine: CoordinateDraft[]) {
@@ -2885,6 +2911,12 @@ function App() {
     }
 
     const edgePickBlock = bedEdgePickBlockId == null ? selectedBlockContext : data.blocks.find((block) => block.id === bedEdgePickBlockId) ?? selectedBlockContext;
+    if (bedLineMatchesEdge(edgeLine, edgePickBlock)) {
+      toggleBlockEntranceSide(edgePickBlock?.id);
+      setMapMode("bed_tools");
+      setBedEdgePickBlockId(null);
+      return;
+    }
     const boundary = geoJsonPolygonToLatLngs(edgePickBlock?.boundary ?? null);
     setBedLineCoordinates(orientLineLeftTowardPoint(edgeLine, polygonCenter(boundary)));
     setBedLineMode("straight");
@@ -3694,12 +3726,12 @@ function App() {
     },
     {
       title: "Make beds",
-      body: "Generate beds in the block. This checks bed tools, bed presets, and the first-bed entrance setting.",
+      body: "Generate beds in the block. This checks bed tools and bed presets.",
       clickTarget: "Select the block, click Make beds, choose the begining of first bed, then fill the block."
     },
     {
-      title: "Check entrance movement",
-      body: "Before creating the crop sample, watch the first-bed entrance vehicle. It should drive into the first bed, reset, and drive in again without turning around.",
+      title: "Check bed preview",
+      body: "Before creating the crop sample, review the highlighted map preview.",
       clickTarget: "Watch the highlighted map preview. If it looks right, click Next to load the tutorial seed, task flow, and planting draft."
     },
     {
@@ -3888,7 +3920,7 @@ function App() {
     }
 
     if (tutorialKind === "full_workflow" && activeTutorialStep === 4) {
-      return "Watch the first-bed entrance marker. If it drives into the bed and resets correctly, click Next.";
+      return "Review the highlighted map preview, then click Next.";
     }
 
     if (activeTutorialStep === tutorialCreatePlantingStep) {
@@ -4740,11 +4772,7 @@ function App() {
                     )}
                     interactive={false}
                     zIndexOffset={520}
-                  >
-                    <Tooltip direction="top" className="polygon-label">
-                      First bed entrance: {placementPlanEntranceMarker.blockName} / {placementPlanEntranceMarker.bedName}
-                    </Tooltip>
-                  </Marker>
+                  />
                 )}
 
                 {showWeeklyTaskMarkers && mapTasksThisWeek.map(({ key, task, center, bearing, runDistancePx, runDurationSec, animationDelaySec, oneWayRun, animated }) => (
@@ -4910,15 +4938,30 @@ function App() {
                 {bedLineCoordinates.length > 0 && (
                   <>
                     <Polyline positions={polygonPositions(bedLineCoordinates)} pathOptions={{ color: "#cfe7ff", weight: 3 }} />
-                {bedLineCoordinates.map((point, index) => (
-                  <Marker
-                    key={`bed-line-point-${index}`}
-                    position={[point.lat, point.lng]}
-                    icon={vertexIcon(index === 0 ? "start" : "vertex")}
-                  />
-                ))}
-              </>
-            )}
+                    {bedGeneratorCardVisible && bedLineSource !== "selected_bed" && mapMode !== "draw_bed_line" && selectedBlockContext && (
+                      <Polyline
+                        positions={polygonPositions(bedLineCoordinates)}
+                        interactive
+                        bubblingMouseEvents={false}
+                        pathOptions={{ color: "#cfe7ff", weight: 26, opacity: 0.01 }}
+                        eventHandlers={{
+                          click: (event) => {
+                            event.originalEvent?.preventDefault();
+                            event.originalEvent?.stopPropagation();
+                            toggleBlockEntranceSide(selectedBlockContext.id);
+                          }
+                        }}
+                      />
+                    )}
+                    {bedLineCoordinates.map((point, index) => (
+                      <Marker
+                        key={`bed-line-point-${index}`}
+                        position={[point.lat, point.lng]}
+                        icon={vertexIcon(index === 0 ? "start" : "vertex")}
+                      />
+                    ))}
+                  </>
+                )}
 
                 {mapMode === "edit" && editCoordinates.length >= 3 && (
                   <>
@@ -5113,6 +5156,7 @@ function App() {
                       bedLineSource={bedLineSource}
                       bedLineMode={bedLineMode}
                       invertSide={bedInvertSide}
+                      entranceSide={selectedBlockEntranceSide}
                       isPickingLine={mapMode === "draw_bed_line"}
                       isPickingEdge={mapMode === "pick_bed_edge"}
                       selectedCultivationBedIds={workSelectedBedIds}
@@ -5125,9 +5169,6 @@ function App() {
                       onStartBedLine={startBedLineDraw}
                       onCancelBedLine={cancelBedLinePick}
                       onInvertSideChange={setBedInvertSide}
-                      onEntranceSideChange={(blockId, entranceSide) => {
-                        setBedEntranceSideDrafts((current) => ({ ...current, [blockId]: entranceSide }));
-                      }}
                       onPreviewChange={setBedPreviewCoordinates}
                       onStatusChange={setMapNotice}
                       onSelectSection={(zoneId) => {
@@ -5412,6 +5453,7 @@ function App() {
                   bedLineSource={bedLineSource}
                   bedLineMode={bedLineMode}
                   invertSide={bedInvertSide}
+                  entranceSide={selectedBlockEntranceSide}
                   isPickingLine={mapMode === "draw_bed_line"}
                   isPickingEdge={mapMode === "pick_bed_edge"}
                   tutorialActive={activeTutorialStep === tutorialMakeBedsStep && tutorialMapPlanningReady}
@@ -5419,9 +5461,6 @@ function App() {
                   onStartLine={startBedLineDraw}
                   onCancelLine={cancelBedLinePick}
                   onInvertSideChange={setBedInvertSide}
-                  onEntranceSideChange={(blockId, entranceSide) => {
-                    setBedEntranceSideDrafts((current) => ({ ...current, [blockId]: entranceSide }));
-                  }}
                   onPreviewChange={setBedPreviewCoordinates}
                   onStatusChange={setMapNotice}
                   onSave={() => loadDashboardResources(dashboardRefreshResources.map)}
@@ -5435,7 +5474,7 @@ function App() {
                       setSelection({ type: "block", id: selectedBlockContext.id });
                       if (tutorialKind === "full_workflow") {
                         setTutorialStepIndex(4);
-                        setTutorialStatus("Beds created. Watch the first-bed entrance vehicle, then click Next to load the planting sample.");
+                        setTutorialStatus("Beds created. Click Next to load the planting sample.");
                       } else {
                         void prepareCabbageTutorial(firstBedId == null ? null : { id: firstBedId, blockId: selectedBlockContext.id });
                       }
@@ -5587,6 +5626,7 @@ function App() {
                   bedLineSource={bedLineSource}
                   bedLineMode={bedLineMode}
                   invertSide={bedInvertSide}
+                  entranceSide={selectedBlockEntranceSide}
                   isPickingLine={mapMode === "draw_bed_line"}
                   isPickingEdge={mapMode === "pick_bed_edge"}
                   selectedCultivationBedIds={workSelectedBedIds}
@@ -5599,9 +5639,6 @@ function App() {
                   onStartBedLine={startBedLineDraw}
                   onCancelBedLine={cancelBedLinePick}
                   onInvertSideChange={setBedInvertSide}
-                  onEntranceSideChange={(blockId, entranceSide) => {
-                    setBedEntranceSideDrafts((current) => ({ ...current, [blockId]: entranceSide }));
-                  }}
                   onPreviewChange={setBedPreviewCoordinates}
                   onStatusChange={setMapNotice}
                   onSelectSection={(zoneId) => {
@@ -8734,6 +8771,7 @@ function UnplannedWorkCard({
   bedLineSource,
   bedLineMode,
   invertSide,
+  entranceSide,
   isPickingLine,
   isPickingEdge,
   selectedCultivationBedIds,
@@ -8746,7 +8784,6 @@ function UnplannedWorkCard({
   onStartBedLine,
   onCancelBedLine,
   onInvertSideChange,
-  onEntranceSideChange,
   onPreviewChange,
   onStatusChange,
   onSelectSection,
@@ -8772,6 +8809,7 @@ function UnplannedWorkCard({
   bedLineSource: BedLineSource;
   bedLineMode: "straight" | "curved";
   invertSide: boolean;
+  entranceSide: "start" | "end";
   isPickingLine: boolean;
   isPickingEdge: boolean;
   selectedCultivationBedIds: number[];
@@ -8784,7 +8822,6 @@ function UnplannedWorkCard({
   onStartBedLine: (mode: "straight" | "curved") => void;
   onCancelBedLine: () => void;
   onInvertSideChange: (value: boolean) => void;
-  onEntranceSideChange: (blockId: number, entranceSide: "start" | "end") => void;
   onPreviewChange: (points: CoordinateDraft[]) => void;
   onStatusChange: (message: string | null) => void;
   onSelectSection: (zoneId: number) => void;
@@ -8806,7 +8843,6 @@ function UnplannedWorkCard({
   const [bedMakingNamePrefix, setBedMakingNamePrefix] = useState(`${block?.name ?? "Bed"}-`);
   const [bedMakingStartNumber, setBedMakingStartNumber] = useState(existingBeds.length + 1);
   const [bedMakingReplaceExisting, setBedMakingReplaceExisting] = useState(false);
-  const [bedMakingEntranceSide, setBedMakingEntranceSide] = useState<"start" | "end">(block?.bedStartEntranceSide ?? "start");
   const [bedMakingHarvestRoadsEnabled, setBedMakingHarvestRoadsEnabled] = useState(false);
   const [bedMakingHarvestRoadEveryBeds, setBedMakingHarvestRoadEveryBeds] = useState("12");
   const [bedMakingHarvestRoadWidthBeds, setBedMakingHarvestRoadWidthBeds] = useState("2");
@@ -8966,8 +9002,7 @@ function UnplannedWorkCard({
 
   useEffect(() => {
     setBedMakingNamePrefix(`${block?.name ?? "Bed"}-`);
-    setBedMakingEntranceSide(block?.bedStartEntranceSide ?? "start");
-  }, [block?.bedStartEntranceSide, block?.id, block?.name]);
+  }, [block?.id, block?.name]);
 
   useEffect(() => {
     if (!hasExistingBeds && bedMakingReplaceExisting) {
@@ -9214,7 +9249,7 @@ function UnplannedWorkCard({
           isPermanent: true,
           replaceExisting: bedMakingReplaceExisting,
           invertSide,
-          entranceSide: bedMakingEntranceSide,
+          entranceSide,
           fillWholeBlock: bedMakingBlockFull,
           harvestRoadEveryBeds: bedMakingHarvestRoadsEnabled ? bedMakingHarvestRoadEveryValue : null,
           harvestRoadWidthBeds: bedMakingHarvestRoadsEnabled ? bedMakingHarvestRoadWidthValue : 0
@@ -9556,22 +9591,6 @@ function UnplannedWorkCard({
                   >
                     <option value="false">{hasExistingBeds ? "Keep existing beds" : "No existing beds"}</option>
                     <option value="true">Replace beds in block</option>
-                  </select>
-                </label>
-                <label>
-                  <span>First-bed entrance side</span>
-                  <select
-                    value={bedMakingEntranceSide}
-                    onChange={(event) => {
-                      const nextEntranceSide = event.target.value as "start" | "end";
-                      setBedMakingEntranceSide(nextEntranceSide);
-                      if (block) {
-                        onEntranceSideChange(block.id, nextEntranceSide);
-                      }
-                    }}
-                  >
-                    <option value="start">Start side of first bed</option>
-                    <option value="end">Far side of first bed</option>
                   </select>
                 </label>
                 <label className="inline-checkbox full-span">

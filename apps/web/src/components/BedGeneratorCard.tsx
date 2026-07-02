@@ -44,6 +44,7 @@ export function BedGeneratorCard({
   bedLineSource,
   bedLineMode,
   invertSide,
+  entranceSide,
   isPickingLine,
   isPickingEdge,
   tutorialActive,
@@ -51,7 +52,6 @@ export function BedGeneratorCard({
   onStartLine,
   onCancelLine,
   onInvertSideChange,
-  onEntranceSideChange,
   onPreviewChange,
   onStatusChange,
   onSave,
@@ -69,6 +69,7 @@ export function BedGeneratorCard({
   bedLineSource: "manual" | "selected_bed";
   bedLineMode: "straight" | "curved";
   invertSide: boolean;
+  entranceSide: "start" | "end";
   isPickingLine: boolean;
   isPickingEdge: boolean;
   tutorialActive: boolean;
@@ -76,7 +77,6 @@ export function BedGeneratorCard({
   onStartLine: (mode: "straight" | "curved") => void;
   onCancelLine: () => void;
   onInvertSideChange: (value: boolean) => void;
-  onEntranceSideChange?: (blockId: number, entranceSide: "start" | "end") => void;
   onPreviewChange: (points: CoordinateDraft[]) => void;
   onStatusChange: (message: string | null) => void;
   onSave: () => Promise<void>;
@@ -91,7 +91,6 @@ export function BedGeneratorCard({
   const [namePrefix, setNamePrefix] = useState(`${block.name}-`);
   const [startNumber, setStartNumber] = useState(existingBeds.length + 1);
   const [replaceExisting, setReplaceExisting] = useState(false);
-  const [entranceSide, setEntranceSide] = useState<"start" | "end">(block.bedStartEntranceSide ?? "start");
   const [harvestRoadsEnabled, setHarvestRoadsEnabled] = useState(false);
   const [harvestRoadEveryBeds, setHarvestRoadEveryBeds] = useState("12");
   const [harvestRoadWidthBeds, setHarvestRoadWidthBeds] = useState("2");
@@ -116,8 +115,7 @@ export function BedGeneratorCard({
 
   useEffect(() => {
     setNamePrefix(`${block.name}-`);
-    setEntranceSide(block.bedStartEntranceSide ?? "start");
-  }, [block.id, block.name, block.bedStartEntranceSide]);
+  }, [block.id, block.name]);
 
   useEffect(() => {
     if (!hasExistingBeds && replaceExisting) {
@@ -313,12 +311,6 @@ export function BedGeneratorCard({
     }
   }
 
-  function updateEntranceSide(checked: boolean) {
-    const nextEntranceSide = checked ? "end" : "start";
-    setEntranceSide(nextEntranceSide);
-    onEntranceSideChange?.(block.id, nextEntranceSide);
-  }
-
   return (
     <div className="card">
       <h2>Generate beds</h2>
@@ -399,18 +391,6 @@ export function BedGeneratorCard({
                 ))}
               </select>
             </label>
-            {!selectedPreset?.isRoad && (
-              <label>
-                <span>First-bed entrance side</span>
-                <select
-                  value={entranceSide}
-                  onChange={(event) => updateEntranceSide(event.target.value === "end")}
-                >
-                  <option value="start">Start side of first bed</option>
-                  <option value="end">Far side of first bed</option>
-                </select>
-              </label>
-            )}
             <div className="button-row">
               <button
                 type="button"

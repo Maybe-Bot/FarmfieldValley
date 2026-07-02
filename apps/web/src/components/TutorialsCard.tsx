@@ -94,16 +94,16 @@ const tutorialWorkflows: TutorialWorkflow[] = [
       },
       {
         title: "Make beds",
-        goal: "Create beds in the block and check the first-bed entrance.",
+        goal: "Create beds in the block.",
         action: "Select the block, open bed tools, choose the beginning of the first bed, and fill the block.",
-        check: "Beds appear and the first-bed entrance looks right.",
+        check: "Beds appear in the block.",
         legacyStepIndex: 3
       },
       {
         title: "Check bed direction",
-        goal: "Confirm the first-bed entrance marker moves the right way before planning crops.",
-        action: "Watch the first-bed entrance preview, then continue when it looks right.",
-        check: "The marker drives into the first bed and resets correctly.",
+        goal: "Review the map preview before planning crops.",
+        action: "Watch the highlighted map preview, then continue when it looks right.",
+        check: "The preview appears on the map.",
         legacyStepIndex: 4,
         extraHighlightTarget: "entrance_preview"
       },
